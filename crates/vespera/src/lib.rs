@@ -16,8 +16,9 @@ use syn::parse::{Parse, ParseStream};
 
 use crate::collector::collect_metadata;
 use crate::file_utils::{file_to_segments, get_function_list};
-use crate::method::Method;
+use crate::method::http_method_to_token_stream;
 use crate::openapi_generator::generate_openapi_doc_with_metadata;
+use vespera_core::route::HttpMethod;
 
 /// route attribute macro
 #[proc_macro_attribute]
@@ -145,10 +146,8 @@ fn generate_router_code(folder_path: &Path, folder_name: &str) -> TokenStream {
                 let final_path = custom_path.unwrap_or_else(|| route_path.clone());
 
                 // Use full path for axum routing methods
-                let method_path: proc_macro2::TokenStream = Method::try_from(method.as_str())
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
+                let http_method = HttpMethod::from(method.as_str());
+                let method_path = http_method_to_token_stream(http_method);
                 router_nests.push(quote!(
                     .route(#final_path, #method_path(#mod_name::#fn_name))
                 ));

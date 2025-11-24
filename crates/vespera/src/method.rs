@@ -1,43 +1,17 @@
 use proc_macro2::TokenStream;
 use quote::quote;
+use vespera_core::route::HttpMethod;
 
-pub enum Method {
-    Get,
-    Post,
-    Put,
-    Patch,
-    Delete,
-    Head,
-    Options,
-}
-
-impl TryFrom<&str> for Method {
-    type Error = String;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.to_lowercase().as_str() {
-            "get" => Ok(Method::Get),
-            "post" => Ok(Method::Post),
-            "put" => Ok(Method::Put),
-            "patch" => Ok(Method::Patch),
-            "delete" => Ok(Method::Delete),
-            "head" => Ok(Method::Head),
-            "options" => Ok(Method::Options),
-            _ => return Err(format!("Invalid method: {}", value)),
-        }
-    }
-}
-
-impl TryFrom<Method> for TokenStream {
-    type Error = String;
-    fn try_from(value: Method) -> Result<Self, Self::Error> {
-        match value {
-            Method::Get => Ok(quote! { axum::routing::get }),
-            Method::Post => Ok(quote! { axum::routing::post }),
-            Method::Put => Ok(quote! { axum::routing::put }),
-            Method::Patch => Ok(quote! { axum::routing::patch }),
-            Method::Delete => Ok(quote! { axum::routing::delete }),
-            Method::Head => Ok(quote! { axum::routing::head }),
-            Method::Options => Ok(quote! { axum::routing::options }),
-        }
+/// Convert HttpMethod to axum routing TokenStream
+pub fn http_method_to_token_stream(method: HttpMethod) -> TokenStream {
+    match method {
+        HttpMethod::Get => quote! { axum::routing::get },
+        HttpMethod::Post => quote! { axum::routing::post },
+        HttpMethod::Put => quote! { axum::routing::put },
+        HttpMethod::Patch => quote! { axum::routing::patch },
+        HttpMethod::Delete => quote! { axum::routing::delete },
+        HttpMethod::Head => quote! { axum::routing::head },
+        HttpMethod::Options => quote! { axum::routing::options },
+        HttpMethod::Trace => quote! { axum::routing::trace },
     }
 }
