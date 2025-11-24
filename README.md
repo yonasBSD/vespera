@@ -138,8 +138,8 @@ pub struct User {
     pub name: String,
 }
 
-/// `/users/{id}`
-#[vespera::route(method = "get", path = "/{id}")]
+/// `/users/{id}` - default method is get
+#[vespera::route(path = "/{id}")]
 pub async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<i32>) -> Json<User> {
@@ -206,19 +206,19 @@ Specify HTTP method and path for handler functions.
 
 ```rust
 // GET request
-#[vespera::route(method = "get")]
+#[vespera::route(get)]
 pub async fn list_users() -> Json<Vec<User>> {
     // ...
 }
 
 // POST request (custom path)
-#[vespera::route(method = "post", path = "/users")]
+#[vespera::route(post, path = "/users")]
 pub async fn create_user(Json(user): Json<User>) -> Json<User> {
     // ...
 }
 
 // Path parameter support
-#[vespera::route(method = "get", path = "/users/:id")]
+#[vespera::route(get, path = "/users/:id")]
 pub async fn get_user(id: u32) -> Json<User> {
     // ...
 }
