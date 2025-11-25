@@ -1,4 +1,5 @@
 use axum_example::create_app;
+use vespera::axum;
 
 #[tokio::main]
 async fn main() {

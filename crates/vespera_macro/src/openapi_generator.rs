@@ -21,7 +21,8 @@ pub fn generate_openapi_doc_with_metadata(
 ) -> OpenApi {
     let mut paths: BTreeMap<String, PathItem> = BTreeMap::new();
     let mut schemas: BTreeMap<String, vespera_core::schema::Schema> = BTreeMap::new();
-    let mut known_schema_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut known_schema_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     // First, collect all struct schemas
     for struct_meta in &metadata.structs {

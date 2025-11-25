@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 vespera-core = { path = "../vespera-core" }
 vespera-macro = { path = "../vespera_macro", package = "vespera_macro" }
+axum = "0.8"

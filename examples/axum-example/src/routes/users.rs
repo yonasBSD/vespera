@@ -1,5 +1,5 @@
-use axum::{Json, extract::Path};
 use serde::{Deserialize, Serialize};
+use vespera::axum::{Json, extract::Path};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct User {

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use axum::{Json, extract::Query};
 use serde::Deserialize;
-use vespera::Schema;
+use vespera::{
+    Schema,
+    axum::{Json, extract::Query},
+};
 
 pub mod health;
 pub mod path;
