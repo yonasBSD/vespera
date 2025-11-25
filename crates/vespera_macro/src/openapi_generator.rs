@@ -1,6 +1,6 @@
 //! OpenAPI document generator
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use vespera_core::{
     openapi::{Info, OpenApi, OpenApiVersion, Server},
@@ -9,7 +9,7 @@ use vespera_core::{
 };
 
 use crate::metadata::CollectedMetadata;
-use crate::parser::build_operation_from_function;
+use crate::parser::{build_operation_from_function, parse_struct_to_schema};
 
 /// Generate OpenAPI document from collected metadata
 pub fn generate_openapi_doc_with_metadata(
@@ -20,6 +20,45 @@ pub fn generate_openapi_doc_with_metadata(
     metadata: &CollectedMetadata,
 ) -> OpenApi {
     let mut paths: BTreeMap<String, PathItem> = BTreeMap::new();
+    let mut schemas: HashMap<String, vespera_core::schema::Schema> = HashMap::new();
+    let mut known_schema_names: HashMap<String, String> = HashMap::new();
+
+    // First, collect all struct schemas
+    for struct_meta in &metadata.structs {
+        let content = match std::fs::read_to_string(&struct_meta.file_path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to read file {}: {}",
+                    struct_meta.file_path, e
+                );
+                continue;
+            }
+        };
+
+        let file_ast = match syn::parse_file(&content) {
+            Ok(ast) => ast,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to parse file {}: {}",
+                    struct_meta.file_path, e
+                );
+                continue;
+            }
+        };
+
+        for item in file_ast.items {
+            if let syn::Item::Struct(struct_item) = item
+                && struct_item.ident == struct_meta.name
+            {
+                let schema = parse_struct_to_schema(&struct_item, &known_schema_names);
+                let schema_name = struct_meta.name.clone();
+                schemas.insert(schema_name.clone(), schema);
+                known_schema_names.insert(schema_name.clone(), schema_name);
+                break;
+            }
+        }
+    }
 
     // Process routes from metadata
     for route_meta in &metadata.routes {
@@ -48,34 +87,38 @@ pub fn generate_openapi_doc_with_metadata(
 
         for item in file_ast.items {
             if let syn::Item::Fn(fn_item) = item
-                && fn_item.sig.ident == route_meta.function_name {
-                    let method = HttpMethod::from(route_meta.method.as_str());
+                && fn_item.sig.ident == route_meta.function_name
+            {
+                let method = HttpMethod::from(route_meta.method.as_str());
 
-                    // Build operation from function signature
-                    let operation = build_operation_from_function(&fn_item.sig, &route_meta.path);
+                // Build operation from function signature
+                let operation = build_operation_from_function(
+                    &fn_item.sig,
+                    &route_meta.path,
+                    &known_schema_names,
+                );
 
-                    // Get or create PathItem
-                    let path_item =
-                        paths
-                            .entry(route_meta.path.clone())
-                            .or_insert_with(|| PathItem {
-                                get: None,
-                                post: None,
-                                put: None,
-                                patch: None,
-                                delete: None,
-                                head: None,
-                                options: None,
-                                trace: None,
-                                parameters: None,
-                                summary: None,
-                                description: None,
-                            });
+                // Get or create PathItem
+                let path_item = paths
+                    .entry(route_meta.path.clone())
+                    .or_insert_with(|| PathItem {
+                        get: None,
+                        post: None,
+                        put: None,
+                        patch: None,
+                        delete: None,
+                        head: None,
+                        options: None,
+                        trace: None,
+                        parameters: None,
+                        summary: None,
+                        description: None,
+                    });
 
-                    // Set operation for the method
-                    path_item.set_operation(method, operation);
-                    break;
-                }
+                // Set operation for the method
+                path_item.set_operation(method, operation);
+                break;
+            }
         }
     }
 
@@ -98,7 +141,11 @@ pub fn generate_openapi_doc_with_metadata(
         }]),
         paths,
         components: Some(Components {
-            schemas: None,
+            schemas: if schemas.is_empty() {
+                None
+            } else {
+                Some(schemas)
+            },
             responses: None,
             parameters: None,
             examples: None,
@@ -111,4 +158,3 @@ pub fn generate_openapi_doc_with_metadata(
         external_docs: None,
     }
 }
-

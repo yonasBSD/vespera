@@ -1,9 +1,10 @@
 //! Parser module for analyzing function signatures and converting to OpenAPI structures
 
-use syn::{FnArg, Pat, PatType, ReturnType, Type};
+use std::collections::HashMap;
+use syn::{Fields, FnArg, Pat, PatType, ReturnType, Type};
 use vespera_core::{
     route::{MediaType, Operation, Parameter, ParameterLocation, RequestBody, Response},
-    schema::{Schema, SchemaRef, SchemaType},
+    schema::{Reference, Schema, SchemaRef, SchemaType},
 };
 
 /// Extract path parameters from a path string
@@ -25,7 +26,11 @@ pub fn extract_path_parameters(path: &str) -> Vec<String> {
 }
 
 /// Analyze function parameter and convert to OpenAPI Parameter
-pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<Parameter> {
+pub fn parse_function_parameter(
+    arg: &FnArg,
+    path_params: &[String],
+    known_schemas: &HashMap<String, String>,
+) -> Option<Parameter> {
     match arg {
         FnArg::Receiver(_) => None,
         FnArg::Typed(PatType { pat, ty, .. }) => {
@@ -72,7 +77,7 @@ pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<P
                                     r#in: ParameterLocation::Path,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty)),
+                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
                                     example: None,
                                 });
                             }
@@ -88,7 +93,7 @@ pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<P
                                     r#in: ParameterLocation::Query,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty)),
+                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
                                     example: None,
                                 });
                             }
@@ -104,7 +109,7 @@ pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<P
                                     r#in: ParameterLocation::Header,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty)),
+                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
                                     example: None,
                                 });
                             }
@@ -125,7 +130,7 @@ pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<P
                     r#in: ParameterLocation::Path,
                     description: None,
                     required: Some(true),
-                    schema: Some(parse_type_to_schema_ref(ty)),
+                    schema: Some(parse_type_to_schema_ref(ty, known_schemas)),
                     example: None,
                 });
             }
@@ -137,7 +142,7 @@ pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<P
                     r#in: ParameterLocation::Query,
                     description: None,
                     required: Some(true),
-                    schema: Some(parse_type_to_schema_ref(ty)),
+                    schema: Some(parse_type_to_schema_ref(ty, known_schemas)),
                     example: None,
                 });
             }
@@ -177,8 +182,71 @@ fn is_primitive_type(ty: &Type) -> bool {
     }
 }
 
+/// Parse struct definition to OpenAPI Schema
+pub fn parse_struct_to_schema(
+    struct_item: &syn::ItemStruct,
+    known_schemas: &HashMap<String, String>,
+) -> Schema {
+    let mut properties = HashMap::new();
+    let mut required = Vec::new();
+
+    match &struct_item.fields {
+        Fields::Named(fields_named) => {
+            for field in &fields_named.named {
+                let field_name = field
+                    .ident
+                    .as_ref()
+                    .map(|i| i.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let field_type = &field.ty;
+                let schema_ref = parse_type_to_schema_ref(field_type, known_schemas);
+
+                properties.insert(field_name.clone(), schema_ref);
+
+                // Check if field is Option<T>
+                let is_optional = matches!(
+                    field_type,
+                    Type::Path(type_path)
+                        if type_path
+                            .path
+                            .segments
+                            .first()
+                            .map(|s| s.ident == "Option")
+                            .unwrap_or(false)
+                );
+
+                if !is_optional {
+                    required.push(field_name);
+                }
+            }
+        }
+        Fields::Unnamed(_) => {
+            // Tuple structs are not supported for now
+        }
+        Fields::Unit => {
+            // Unit structs have no fields
+        }
+    }
+
+    Schema {
+        schema_type: Some(SchemaType::Object),
+        properties: if properties.is_empty() {
+            None
+        } else {
+            Some(properties)
+        },
+        required: if required.is_empty() {
+            None
+        } else {
+            Some(required)
+        },
+        ..Schema::object()
+    }
+}
+
 /// Parse Rust type to OpenAPI SchemaRef
-pub fn parse_type_to_schema_ref(ty: &Type) -> SchemaRef {
+pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, String>) -> SchemaRef {
     match ty {
         Type::Path(type_path) => {
             let path = &type_path.path;
@@ -194,7 +262,7 @@ pub fn parse_type_to_schema_ref(ty: &Type) -> SchemaRef {
                 match ident_str.as_str() {
                     "Vec" | "Option" => {
                         if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                            let inner_schema = parse_type_to_schema_ref(inner_ty);
+                            let inner_schema = parse_type_to_schema_ref(inner_ty, known_schemas);
                             if ident_str == "Vec" {
                                 return SchemaRef::Inline(Box::new(Schema::array(inner_schema)));
                             } else {
@@ -218,23 +286,37 @@ pub fn parse_type_to_schema_ref(ty: &Type) -> SchemaRef {
                 "f32" | "f64" => SchemaRef::Inline(Box::new(Schema::number())),
                 "bool" => SchemaRef::Inline(Box::new(Schema::boolean())),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
-                _ => {
-                    // For custom types, create a reference
-                    // This will be resolved later when we have schema registry
+                // Standard library types that should not be referenced
+                "HashMap" | "BTreeMap" | "Vec" | "Option" | "Result" | "Json" | "Path"
+                | "Query" | "Header" => {
+                    // These are not schema types, return object schema
                     SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
+                }
+                _ => {
+                    // Check if this is a known schema (struct with Schema derive)
+                    if known_schemas.contains_key(&ident_str) {
+                        SchemaRef::Ref(Reference::schema(&ident_str))
+                    } else {
+                        // For unknown custom types, return object schema instead of reference
+                        // This prevents creating invalid references to non-existent schemas
+                        SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
+                    }
                 }
             }
         }
         Type::Reference(type_ref) => {
             // Handle &T, &mut T, etc.
-            parse_type_to_schema_ref(&type_ref.elem)
+            parse_type_to_schema_ref(&type_ref.elem, known_schemas)
         }
         _ => SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object))),
     }
 }
 
 /// Analyze function signature and extract RequestBody
-pub fn parse_request_body(arg: &FnArg) -> Option<RequestBody> {
+pub fn parse_request_body(
+    arg: &FnArg,
+    known_schemas: &HashMap<String, String>,
+) -> Option<RequestBody> {
     match arg {
         FnArg::Receiver(_) => None,
         FnArg::Typed(PatType { ty, .. }) => {
@@ -251,8 +333,8 @@ pub fn parse_request_body(arg: &FnArg) -> Option<RequestBody> {
                     && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
-                    let schema = parse_type_to_schema_ref(inner_ty);
-                    let mut content = std::collections::HashMap::new();
+                    let schema = parse_type_to_schema_ref(inner_ty, known_schemas);
+                    let mut content = HashMap::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
@@ -274,10 +356,13 @@ pub fn parse_request_body(arg: &FnArg) -> Option<RequestBody> {
 }
 
 /// Analyze return type and convert to Response
-pub fn parse_return_type(return_type: &ReturnType) -> Response {
+pub fn parse_return_type(
+    return_type: &ReturnType,
+    known_schemas: &HashMap<String, String>,
+) -> Response {
     let schema = match return_type {
         ReturnType::Default => None,
-        ReturnType::Type(_, ty) => Some(parse_type_to_schema_ref(ty)),
+        ReturnType::Type(_, ty) => Some(parse_type_to_schema_ref(ty, known_schemas)),
     };
 
     let mut content = std::collections::HashMap::new();
@@ -304,7 +389,11 @@ pub fn parse_return_type(return_type: &ReturnType) -> Response {
 }
 
 /// Build Operation from function signature
-pub fn build_operation_from_function(sig: &syn::Signature, path: &str) -> Operation {
+pub fn build_operation_from_function(
+    sig: &syn::Signature,
+    path: &str,
+    known_schemas: &HashMap<String, String>,
+) -> Operation {
     let path_params = extract_path_parameters(path);
     let mut parameters = Vec::new();
     let mut request_body = None;
@@ -312,15 +401,15 @@ pub fn build_operation_from_function(sig: &syn::Signature, path: &str) -> Operat
     // Parse function parameters
     for input in &sig.inputs {
         // Check if it's a request body (Json<T>)
-        if let Some(body) = parse_request_body(input) {
+        if let Some(body) = parse_request_body(input, known_schemas) {
             request_body = Some(body);
-        } else if let Some(param) = parse_function_parameter(input, &path_params) {
+        } else if let Some(param) = parse_function_parameter(input, &path_params, known_schemas) {
             parameters.push(param);
         }
     }
 
     // Parse return type
-    let response = parse_return_type(&sig.output);
+    let response = parse_return_type(&sig.output, known_schemas);
     let mut responses = std::collections::HashMap::new();
     responses.insert("200".to_string(), response);
 
@@ -339,4 +428,3 @@ pub fn build_operation_from_function(sig: &syn::Signature, path: &str) -> Operat
         security: None,
     }
 }
-
