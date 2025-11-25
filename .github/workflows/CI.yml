@@ -65,6 +65,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Release
         uses: softprops/action-gh-release@v2
+        with:
+          tag_name: a
 
       - uses: changepacks/action@main
         with:
