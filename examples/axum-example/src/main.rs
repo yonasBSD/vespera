@@ -8,11 +8,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     println!("🚀 Server running on http://localhost:3000");
-    println!("📝 Available routes:");
-    println!("   GET  /health");
-    println!("   GET  /users");
-    println!("   GET  /users/:id");
-    println!("   POST /users");
 
     axum::serve(listener, app).await.unwrap();
 }

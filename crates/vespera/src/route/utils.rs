@@ -23,10 +23,8 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
     for attr in attrs {
         // Check if attribute path is "vespera" or "route"
         if check_route_by_meta(&attr.meta) {
-            println!("attr.meta: {:?}", attr.meta);
             match &attr.meta {
                 syn::Meta::List(meta_list) => {
-                    println!("inner flag1");
                     // Try to parse as RouteArgs
                     if let Ok(route_args) = meta_list.parse_args::<RouteArgs>() {
                         let method = route_args

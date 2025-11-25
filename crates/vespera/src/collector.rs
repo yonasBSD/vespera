@@ -45,15 +45,11 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> CollectedMetad
 
         let file_path = file.display().to_string();
 
-        println!("flag5 --------------------- {:?}", file);
-
         // Collect routes
         for item in &file_ast.items {
             if let Item::Fn(fn_item) = item
                 && let Some(route_info) = extract_route_info(&fn_item.attrs)
             {
-                println!("route_info: {:?}", route_info);
-
                 let route_path = if let Some(custom_path) = &route_info.path {
                     let base = format!("/{}", segments.join("/"));
                     let trimmed_base = base.trim_end_matches('/');
