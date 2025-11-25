@@ -1,6 +1,6 @@
 //! OpenAPI document generator
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 use vespera_core::{
     openapi::{Info, OpenApi, OpenApiVersion, Server},
@@ -20,8 +20,8 @@ pub fn generate_openapi_doc_with_metadata(
     metadata: &CollectedMetadata,
 ) -> OpenApi {
     let mut paths: BTreeMap<String, PathItem> = BTreeMap::new();
-    let mut schemas: HashMap<String, vespera_core::schema::Schema> = HashMap::new();
-    let mut known_schema_names: HashMap<String, String> = HashMap::new();
+    let mut schemas: BTreeMap<String, vespera_core::schema::Schema> = BTreeMap::new();
+    let mut known_schema_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     // First, collect all struct schemas
     for struct_meta in &metadata.structs {

@@ -1,7 +1,7 @@
 //! Route-related structure definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::SchemaRef;
 
@@ -78,7 +78,7 @@ pub struct RequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
     /// Schema per Content-Type
-    pub content: HashMap<String, MediaType>,
+    pub content: BTreeMap<String, MediaType>,
 }
 
 /// Media type definition
@@ -122,7 +122,7 @@ pub struct Response {
     pub headers: Option<HashMap<String, Header>>,
     /// Schema per Content-Type
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<HashMap<String, MediaType>>,
+    pub content: Option<BTreeMap<String, MediaType>>,
 }
 
 /// Header definition
@@ -160,7 +160,7 @@ pub struct Operation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<RequestBody>,
     /// Response definitions (status code -> Response)
-    pub responses: HashMap<String, Response>,
+    pub responses: BTreeMap<String, Response>,
     /// Security requirements
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<Vec<HashMap<String, Vec<String>>>>,

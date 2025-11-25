@@ -1,5 +1,6 @@
 ---
 source: examples/axum-example/tests/integration_test.rs
+assertion_line: 128
 expression: openapi
 ---
 {
@@ -146,6 +147,33 @@ expression: openapi
         }
       }
     },
+    "/struct-body-with-optional": {
+      "post": {
+        "operationId": "mod_file_with_struct_body_with_optional",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructBodyWithOptional"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/struct-query": {
       "get": {
         "operationId": "mod_file_with_struct_query",
@@ -245,14 +273,14 @@ expression: openapi
   },
   "components": {
     "schemas": {
-      "StructQuery": {
+      "StructBody": {
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string"
-          },
           "age": {
             "type": "integer"
+          },
+          "name": {
+            "type": "string"
           }
         },
         "required": [
@@ -260,7 +288,20 @@ expression: openapi
           "age"
         ]
       },
-      "StructBody": {
+      "StructBodyWithOptional": {
+        "type": "object",
+        "properties": {
+          "age": {
+            "type": "integer",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "StructQuery": {
         "type": "object",
         "properties": {
           "age": {

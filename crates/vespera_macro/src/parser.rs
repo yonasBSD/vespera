@@ -1,6 +1,6 @@
 //! Parser module for analyzing function signatures and converting to OpenAPI structures
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use syn::{Fields, FnArg, Pat, PatType, ReturnType, Type};
 use vespera_core::{
     route::{MediaType, Operation, Parameter, ParameterLocation, RequestBody, Response},
@@ -187,7 +187,7 @@ pub fn parse_struct_to_schema(
     struct_item: &syn::ItemStruct,
     known_schemas: &HashMap<String, String>,
 ) -> Schema {
-    let mut properties = HashMap::new();
+    let mut properties = BTreeMap::new();
     let mut required = Vec::new();
 
     match &struct_item.fields {
@@ -334,7 +334,7 @@ pub fn parse_request_body(
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
                     let schema = parse_type_to_schema_ref(inner_ty, known_schemas);
-                    let mut content = HashMap::new();
+                    let mut content = BTreeMap::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
@@ -365,7 +365,7 @@ pub fn parse_return_type(
         ReturnType::Type(_, ty) => Some(parse_type_to_schema_ref(ty, known_schemas)),
     };
 
-    let mut content = std::collections::HashMap::new();
+    let mut content = BTreeMap::new();
     if let Some(schema) = schema {
         content.insert(
             "application/json".to_string(),
@@ -410,7 +410,7 @@ pub fn build_operation_from_function(
 
     // Parse return type
     let response = parse_return_type(&sig.output, known_schemas);
-    let mut responses = std::collections::HashMap::new();
+    let mut responses = BTreeMap::new();
     responses.insert("200".to_string(), response);
 
     Operation {

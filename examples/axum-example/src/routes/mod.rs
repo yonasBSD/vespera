@@ -47,3 +47,16 @@ pub struct StructBody {
 pub async fn mod_file_with_struct_body(Json(body): Json<StructBody>) -> String {
     format!("name: {}, age: {}", body.name, body.age)
 }
+
+#[derive(Deserialize, Schema)]
+pub struct StructBodyWithOptional {
+    pub name: Option<String>,
+    pub age: Option<u32>,
+}
+
+#[vespera::route(post, path = "/struct-body-with-optional")]
+pub async fn mod_file_with_struct_body_with_optional(
+    Json(body): Json<StructBodyWithOptional>,
+) -> String {
+    format!("name: {:?}, age: {:?}", body.name, body.age)
+}

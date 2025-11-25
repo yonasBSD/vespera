@@ -1,7 +1,7 @@
 //! Schema-related structure definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Schema reference or inline schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,7 +147,7 @@ pub struct Schema {
     // Object constraints
     /// Property definitions
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, SchemaRef>>,
+    pub properties: Option<BTreeMap<String, SchemaRef>>,
     /// List of required properties
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
@@ -263,7 +263,7 @@ impl Schema {
     /// Create an object schema
     pub fn object() -> Self {
         Self {
-            properties: Some(HashMap::new()),
+            properties: Some(BTreeMap::new()),
             required: Some(Vec::new()),
             ..Self::new(SchemaType::Object)
         }
@@ -287,7 +287,7 @@ pub struct ExternalDocumentation {
 pub struct Components {
     /// Schema definitions
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub schemas: Option<HashMap<String, Schema>>,
+    pub schemas: Option<BTreeMap<String, Schema>>,
     /// Response definitions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub responses: Option<HashMap<String, crate::route::Response>>,
