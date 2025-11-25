@@ -182,6 +182,86 @@ fn is_primitive_type(ty: &Type) -> bool {
     }
 }
 
+/// Extract rename_all attribute from struct attributes
+fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("serde") {
+            // Parse the attribute tokens manually
+            // Format: #[serde(rename_all = "camelCase")]
+            let tokens = attr.meta.require_list().ok()?;
+            let token_str = tokens.tokens.to_string();
+
+            // Look for rename_all = "..." pattern
+            if let Some(start) = token_str.find("rename_all") {
+                let remaining = &token_str[start + "rename_all".len()..];
+                if let Some(equals_pos) = remaining.find('=') {
+                    let value_part = &remaining[equals_pos + 1..].trim();
+                    // Extract string value (remove quotes)
+                    if value_part.starts_with('"') && value_part.ends_with('"') {
+                        let value = &value_part[1..value_part.len() - 1];
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Convert field name according to rename_all rule
+fn rename_field(field_name: &str, rename_all: Option<&str>) -> String {
+    match rename_all {
+        Some("camelCase") => {
+            // Convert snake_case to camelCase
+            let mut result = String::new();
+            let mut capitalize_next = false;
+            for ch in field_name.chars() {
+                if ch == '_' {
+                    capitalize_next = true;
+                } else if capitalize_next {
+                    result.push(ch.to_uppercase().next().unwrap_or(ch));
+                    capitalize_next = false;
+                } else {
+                    result.push(ch);
+                }
+            }
+            result
+        }
+        Some("snake_case") => {
+            // Convert camelCase to snake_case
+            let mut result = String::new();
+            for (i, ch) in field_name.chars().enumerate() {
+                if ch.is_uppercase() && i > 0 {
+                    result.push('_');
+                }
+                result.push(ch.to_lowercase().next().unwrap_or(ch));
+            }
+            result
+        }
+        Some("kebab-case") => {
+            // Convert snake_case to kebab-case
+            field_name.replace('_', "-")
+        }
+        Some("PascalCase") => {
+            // Convert snake_case to PascalCase
+            let mut result = String::new();
+            let mut capitalize_next = true;
+            for ch in field_name.chars() {
+                if ch == '_' {
+                    capitalize_next = true;
+                } else if capitalize_next {
+                    result.push(ch.to_uppercase().next().unwrap_or(ch));
+                    capitalize_next = false;
+                } else {
+                    result.push(ch);
+                }
+            }
+            result
+        }
+        _ => field_name.to_string(),
+    }
+}
+
 /// Parse struct definition to OpenAPI Schema
 pub fn parse_struct_to_schema(
     struct_item: &syn::ItemStruct,
@@ -190,14 +270,20 @@ pub fn parse_struct_to_schema(
     let mut properties = BTreeMap::new();
     let mut required = Vec::new();
 
+    // Extract rename_all attribute from struct
+    let rename_all = extract_rename_all(&struct_item.attrs);
+
     match &struct_item.fields {
         Fields::Named(fields_named) => {
             for field in &fields_named.named {
-                let field_name = field
+                let rust_field_name = field
                     .ident
                     .as_ref()
                     .map(|i| i.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
+
+                // Apply rename_all transformation if present
+                let field_name = rename_field(&rust_field_name, rename_all.as_deref());
 
                 let field_type = &field.ty;
                 let schema_ref = parse_type_to_schema_ref(field_type, known_schemas);

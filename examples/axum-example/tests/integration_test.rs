@@ -122,6 +122,187 @@ async fn test_invalid_path() {
 }
 
 #[tokio::test]
+async fn test_mod_file_with_complex_struct_body() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    let complex_body = json!({
+        "name": "Test User",
+        "age": 30,
+        "nested_struct": {
+            "name": "Nested Name",
+            "age": 25
+        },
+        "array": ["item1", "item2", "item3"],
+        "map": {
+            "key1": "value1",
+            "key2": "value2"
+        },
+        "nested_array": [
+            {
+                "name": "Array Item 1",
+                "age": 20
+            },
+            {
+                "name": "Array Item 2",
+                "age": 21
+            }
+        ],
+        "nested_map": {
+            "map_key1": {
+                "name": "Map Value 1",
+                "age": 22
+            },
+            "map_key2": {
+                "name": "Map Value 2",
+                "age": 23
+            }
+        },
+        "nested_struct_array": [
+            {
+                "name": "Struct Array 1",
+                "age": 24
+            }
+        ],
+        "nested_struct_map": {
+            "struct_map_key": {
+                "name": "Struct Map Value",
+                "age": 26
+            }
+        },
+        "nested_struct_array_map": [
+            {
+                "array_map_key1": {
+                    "name": "Array Map Value 1",
+                    "age": 27
+                },
+                "array_map_key2": {
+                    "name": "Array Map Value 2",
+                    "age": 28
+                }
+            }
+        ],
+        "nested_struct_map_array": {
+            "map_array_key": [
+                {
+                    "name": "Map Array Value 1",
+                    "age": 29
+                },
+                {
+                    "name": "Map Array Value 2",
+                    "age": null
+                }
+            ]
+        }
+    });
+
+    let response = server
+        .post("/complex-struct-body")
+        .json(&complex_body)
+        .await;
+
+    response.assert_status_ok();
+    let response_text = response.text();
+
+    // 응답에 포함된 주요 필드들이 올바르게 포맷되었는지 확인
+    assert!(response_text.contains("name: Test User"));
+    assert!(response_text.contains("age: 30"));
+    assert!(response_text.contains("item1"));
+    assert!(response_text.contains("value1"));
+}
+
+#[tokio::test]
+async fn test_mod_file_with_complex_struct_body_with_rename() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    // camelCase로 변환된 필드명 사용 (rename_all = "camelCase")
+    let complex_body = json!({
+        "name": "Test User Renamed",
+        "age": 35,
+        "nestedStruct": {
+            "name": "Nested Name Renamed",
+            "age": 30
+        },
+        "array": ["renamed1", "renamed2", "renamed3"],
+        "map": {
+            "key1": "renamed_value1",
+            "key2": "renamed_value2"
+        },
+        "nestedArray": [
+            {
+                "name": "Renamed Array Item 1",
+                "age": 25
+            },
+            {
+                "name": "Renamed Array Item 2",
+                "age": 26
+            }
+        ],
+        "nestedMap": {
+            "map_key1": {
+                "name": "Renamed Map Value 1",
+                "age": 27
+            },
+            "map_key2": {
+                "name": "Renamed Map Value 2",
+                "age": 28
+            }
+        },
+        "nestedStructArray": [
+            {
+                "name": "Renamed Struct Array 1",
+                "age": 29
+            }
+        ],
+        "nestedStructMap": {
+            "struct_map_key": {
+                "name": "Renamed Struct Map Value",
+                "age": 31
+            }
+        },
+        "nestedStructArrayMap": [
+            {
+                "array_map_key1": {
+                    "name": "Renamed Array Map Value 1",
+                    "age": 32
+                },
+                "array_map_key2": {
+                    "name": "Renamed Array Map Value 2",
+                    "age": 33
+                }
+            }
+        ],
+        "nestedStructMapArray": {
+            "map_array_key": [
+                {
+                    "name": "Renamed Map Array Value 1",
+                    "age": 34
+                },
+                {
+                    "name": "Renamed Map Array Value 2",
+                    "age": null
+                }
+            ]
+        }
+    });
+
+    let response = server
+        .post("/complex-struct-body-with-rename")
+        .json(&complex_body)
+        .await;
+
+    response.assert_status_ok();
+    let response_text = response.text();
+
+    // 응답에 포함된 주요 필드들이 올바르게 포맷되었는지 확인
+    assert!(response_text.contains("name: Test User Renamed"));
+    assert!(response_text.contains("age: 35"));
+    assert!(response_text.contains("renamed1"));
+    assert!(response_text.contains("renamed_value1"));
+}
+
+#[tokio::test]
 async fn test_openapi() {
     let openapi = vespera_openapi!();
 

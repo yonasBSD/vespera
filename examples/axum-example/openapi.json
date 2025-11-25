@@ -54,6 +54,33 @@
         }
       }
     },
+    "/complex-struct-body-with-rename": {
+      "post": {
+        "operationId": "mod_file_with_complex_struct_body_with_rename",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplexStructBodyWithRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health",
@@ -356,6 +383,69 @@
           "nested_struct_map",
           "nested_struct_array_map",
           "nested_struct_map_array"
+        ]
+      },
+      "ComplexStructBodyWithRename": {
+        "type": "object",
+        "properties": {
+          "age": {
+            "type": "integer"
+          },
+          "array": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "map": {
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nestedArray": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
+          },
+          "nestedMap": {
+            "type": "object"
+          },
+          "nestedStruct": {
+            "$ref": "#/components/schemas/StructBodyWithOptional"
+          },
+          "nestedStructArray": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
+          },
+          "nestedStructArrayMap": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nestedStructMap": {
+            "type": "object"
+          },
+          "nestedStructMapArray": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "age",
+          "nestedStruct",
+          "array",
+          "map",
+          "nestedArray",
+          "nestedMap",
+          "nestedStructArray",
+          "nestedStructMap",
+          "nestedStructArrayMap",
+          "nestedStructMapArray"
         ]
       },
       "StructBody": {
