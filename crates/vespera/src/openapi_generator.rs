@@ -1,15 +1,15 @@
 //! OpenAPI document generator
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 use vespera_core::{
-    openapi::{OpenApi, OpenApiVersion, Info, Server},
-    route::{PathItem, HttpMethod},
+    openapi::{Info, OpenApi, OpenApiVersion, Server},
+    route::{HttpMethod, PathItem},
     schema::Components,
 };
 
-use crate::parser::build_operation_from_function;
 use crate::metadata::CollectedMetadata;
+use crate::parser::build_operation_from_function;
 
 /// Generate OpenAPI document from collected metadata
 pub fn generate_openapi_doc_with_metadata(
@@ -19,7 +19,7 @@ pub fn generate_openapi_doc_with_metadata(
     version: Option<String>,
     metadata: &CollectedMetadata,
 ) -> OpenApi {
-    let mut paths: HashMap<String, PathItem> = HashMap::new();
+    let mut paths: BTreeMap<String, PathItem> = BTreeMap::new();
 
     // Process routes from metadata
     for route_meta in &metadata.routes {
@@ -47,35 +47,35 @@ pub fn generate_openapi_doc_with_metadata(
         };
 
         for item in file_ast.items {
-            if let syn::Item::Fn(fn_item) = item {
-                if fn_item.sig.ident.to_string() == route_meta.function_name {
+            if let syn::Item::Fn(fn_item) = item
+                && fn_item.sig.ident == route_meta.function_name {
                     let method = HttpMethod::from(route_meta.method.as_str());
 
                     // Build operation from function signature
                     let operation = build_operation_from_function(&fn_item.sig, &route_meta.path);
 
                     // Get or create PathItem
-                    let path_item = paths.entry(route_meta.path.clone()).or_insert_with(|| {
-                        PathItem {
-                            get: None,
-                            post: None,
-                            put: None,
-                            patch: None,
-                            delete: None,
-                            head: None,
-                            options: None,
-                            trace: None,
-                            parameters: None,
-                            summary: None,
-                            description: None,
-                        }
-                    });
+                    let path_item =
+                        paths
+                            .entry(route_meta.path.clone())
+                            .or_insert_with(|| PathItem {
+                                get: None,
+                                post: None,
+                                put: None,
+                                patch: None,
+                                delete: None,
+                                head: None,
+                                options: None,
+                                trace: None,
+                                parameters: None,
+                                summary: None,
+                                description: None,
+                            });
 
                     // Set operation for the method
                     path_item.set_operation(method, operation);
                     break;
                 }
-            }
         }
     }
 
@@ -111,4 +111,3 @@ pub fn generate_openapi_doc_with_metadata(
         external_docs: None,
     }
 }
-

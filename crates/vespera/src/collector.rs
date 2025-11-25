@@ -47,8 +47,8 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> CollectedMetad
 
         // Collect routes
         for item in &file_ast.items {
-            if let Item::Fn(fn_item) = item {
-                if let Some(route_info) = extract_route_info(&fn_item.attrs) {
+            if let Item::Fn(fn_item) = item
+                && let Some(route_info) = extract_route_info(&fn_item.attrs) {
                     let route_path = if let Some(custom_path) = &route_info.path {
                         let base = format!("/{}", segments.join("/"));
                         let trimmed_base = base.trim_end_matches('/');
@@ -66,7 +66,6 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> CollectedMetad
                         signature: quote::quote!(#fn_item).to_string(),
                     });
                 }
-            }
 
             // Collect structs with Schema derive
             if let Item::Struct(struct_item) = item {

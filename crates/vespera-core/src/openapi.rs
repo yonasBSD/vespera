@@ -3,10 +3,11 @@
 use crate::route::PathItem;
 use crate::schema::{Components, ExternalDocumentation};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// OpenAPI document version
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OpenApiVersion {
     #[serde(rename = "3.0.0")]
     V3_0_0,
@@ -17,14 +18,10 @@ pub enum OpenApiVersion {
     #[serde(rename = "3.0.3")]
     V3_0_3,
     #[serde(rename = "3.1.0")]
+    #[default]
     V3_1_0,
 }
 
-impl Default for OpenApiVersion {
-    fn default() -> Self {
-        OpenApiVersion::V3_1_0
-    }
-}
 
 /// Contact information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,7 +128,7 @@ pub struct OpenApi {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub servers: Option<Vec<Server>>,
     /// Path definitions
-    pub paths: HashMap<String, PathItem>,
+    pub paths: BTreeMap<String, PathItem>,
     /// Components (reusable components)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub components: Option<Components>,

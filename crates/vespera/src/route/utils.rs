@@ -26,13 +26,12 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
             match &attr.meta {
                 syn::Meta::List(meta_list) => {
                     // Try to parse as RouteArgs
-                    if let Ok(route_args) = meta_list.parse_args::<RouteArgs>() {
-                        if let Some(method_ident) = route_args.method {
+                    if let Ok(route_args) = meta_list.parse_args::<RouteArgs>()
+                        && let Some(method_ident) = route_args.method {
                             let method = method_ident.to_string().to_lowercase();
                             let path = route_args.path.map(|lit_str| lit_str.value());
                             return Some(RouteInfo { method, path });
                         }
-                    }
 
                     // Fallback: try to parse as single identifier
                     if let Ok(ident) = meta_list.parse_args::<syn::Ident>() {

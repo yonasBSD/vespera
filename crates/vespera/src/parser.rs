@@ -1,8 +1,8 @@
 //! Parser module for analyzing function signatures and converting to OpenAPI structures
 
-use syn::{FnArg, Pat, PatType, Type, ReturnType};
+use syn::{FnArg, Pat, PatType, ReturnType, Type};
 use vespera_core::{
-    route::{Operation, Parameter, ParameterLocation, RequestBody, Response, MediaType},
+    route::{MediaType, Operation, Parameter, ParameterLocation, RequestBody, Response},
     schema::{Schema, SchemaRef, SchemaType},
 };
 
@@ -10,7 +10,7 @@ use vespera_core::{
 pub fn extract_path_parameters(path: &str) -> Vec<String> {
     let mut params = Vec::new();
     let segments: Vec<&str> = path.split('/').collect();
-    
+
     for segment in segments {
         if segment.starts_with('{') && segment.ends_with('}') {
             let param = segment.trim_start_matches('{').trim_end_matches('}');
@@ -20,15 +20,12 @@ pub fn extract_path_parameters(path: &str) -> Vec<String> {
             params.push(param.to_string());
         }
     }
-    
+
     params
 }
 
 /// Analyze function parameter and convert to OpenAPI Parameter
-pub fn parse_function_parameter(
-    arg: &FnArg,
-    path_params: &[String],
-) -> Option<Parameter> {
+pub fn parse_function_parameter(arg: &FnArg, path_params: &[String]) -> Option<Parameter> {
     match arg {
         FnArg::Receiver(_) => None,
         FnArg::Typed(PatType { pat, ty, .. }) => {
@@ -62,8 +59,8 @@ pub fn parse_function_parameter(
                 match ident_str.as_str() {
                     "Path" => {
                         // Path<T> extractor
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 return Some(Parameter {
                                     name: param_name.clone(),
                                     r#in: ParameterLocation::Path,
@@ -73,12 +70,11 @@ pub fn parse_function_parameter(
                                     example: None,
                                 });
                             }
-                        }
                     }
                     "Query" => {
                         // Query<T> extractor
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 return Some(Parameter {
                                     name: param_name.clone(),
                                     r#in: ParameterLocation::Query,
@@ -88,12 +84,11 @@ pub fn parse_function_parameter(
                                     example: None,
                                 });
                             }
-                        }
                     }
                     "Header" => {
                         // Header<T> extractor
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 return Some(Parameter {
                                     name: param_name.clone(),
                                     r#in: ParameterLocation::Header,
@@ -103,7 +98,6 @@ pub fn parse_function_parameter(
                                     example: None,
                                 });
                             }
-                        }
                     }
                     "Json" => {
                         // Json<T> extractor - this will be handled as RequestBody
@@ -138,8 +132,18 @@ fn is_primitive_type(ty: &Type) -> bool {
                 let ident = path.segments[0].ident.to_string();
                 matches!(
                     ident.as_str(),
-                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32"
-                        | "f64" | "bool" | "String" | "str"
+                    "i8" | "i16"
+                        | "i32"
+                        | "i64"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "f32"
+                        | "f64"
+                        | "bool"
+                        | "String"
+                        | "str"
                 )
             } else {
                 false
@@ -219,9 +223,9 @@ pub fn parse_request_body(arg: &FnArg) -> Option<RequestBody> {
                 let segment = &path.segments[0];
                 let ident_str = segment.ident.to_string();
 
-                if ident_str == "Json" {
-                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                if ident_str == "Json"
+                    && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                             let schema = parse_type_to_schema_ref(inner_ty);
                             let mut content = std::collections::HashMap::new();
                             content.insert(
@@ -238,8 +242,6 @@ pub fn parse_request_body(arg: &FnArg) -> Option<RequestBody> {
                                 content,
                             });
                         }
-                    }
-                }
             }
             None
         }
@@ -268,15 +270,16 @@ pub fn parse_return_type(return_type: &ReturnType) -> Response {
     Response {
         description: "Successful response".to_string(),
         headers: None,
-        content: if content.is_empty() { None } else { Some(content) },
+        content: if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        },
     }
 }
 
 /// Build Operation from function signature
-pub fn build_operation_from_function(
-    sig: &syn::Signature,
-    path: &str,
-) -> Operation {
+pub fn build_operation_from_function(sig: &syn::Signature, path: &str) -> Operation {
     let path_params = extract_path_parameters(path);
     let mut parameters = Vec::new();
     let mut request_body = None;
@@ -311,4 +314,3 @@ pub fn build_operation_from_function(
         security: None,
     }
 }
-
