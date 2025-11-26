@@ -132,7 +132,7 @@ fn generate_router_code(folder_path: &Path, folder_name: &str) -> TokenStream {
     }
 
     let expanded = quote! {
-        axum::Router::new()
+        vespera::axum::Router::new()
             #( #router_nests )*
     };
 
