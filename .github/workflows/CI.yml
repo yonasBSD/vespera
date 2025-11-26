@@ -42,6 +42,7 @@ jobs:
   changepacks:
     name: changepacks
     runs-on: ubuntu-latest
+    needs: test
     permissions:
       # create pull request comments
       pull-requests: write
