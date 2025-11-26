@@ -53,9 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: changepacks/action@main
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         id: changepacks
       - name: Publish
         run: cargo publish --workspace
-        if: ${{ steps.changepacks.outputs.changepacks != '[]' }}
+        if: ${{ contains(steps.changepacks.outputs.changepacks, 'crates/vespera/Cargo.toml') }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
