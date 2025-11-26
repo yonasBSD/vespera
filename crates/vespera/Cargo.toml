@@ -2,8 +2,11 @@
 name = "vespera"
 version = "0.1.0"
 edition = "2024"
+description = "A fully automated OpenAPI engine for Axum with zero-config route and schema discovery"
+license = "Apache-2.0"
+repository = "https://github.com/dev-five-git/vespera"
 
 [dependencies]
-vespera_core = { path = "../vespera_core" }
-vespera-macro = { path = "../vespera_macro", package = "vespera_macro" }
+vespera_core = { workspace = true }
+vespera_macro = { workspace = true }
 axum = "0.8"
