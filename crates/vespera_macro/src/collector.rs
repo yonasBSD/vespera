@@ -72,27 +72,25 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> Result<Collect
             }
 
             // Collect structs with Schema derive
-            if let Item::Struct(struct_item) = item {
-                // Check if struct has Schema derive by checking attribute tokens
-                let has_schema = struct_item.attrs.iter().any(|attr| {
-                    if attr.path().is_ident("derive") {
-                        // Convert attribute to tokens and check for Schema
-                        let tokens = quote::quote!(#attr).to_string();
-                        tokens.contains("Schema")
-                    } else {
-                        false
-                    }
-                });
+            // if let Item::Struct(struct_item) = item {
+            //     // Check if struct has Schema derive by checking attribute tokens
+            //     let has_schema = struct_item.attrs.iter().any(|attr| {
+            //         if attr.path().is_ident("derive") {
+            //             // Convert attribute to tokens and check for Schema
+            //             let tokens = quote::quote!(#attr).to_string();
+            //             tokens.contains("Schema")
+            //         } else {
+            //             false
+            //         }
+            //     });
 
-                if has_schema {
-                    metadata.structs.push(StructMetadata {
-                        name: struct_item.ident.to_string(),
-                        module_path: module_path.clone(),
-                        file_path: file_path.clone(),
-                        definition: quote::quote!(#struct_item).to_string(),
-                    });
-                }
-            }
+            //     if has_schema {
+            //         metadata.structs.push(StructMetadata {
+            //             name: struct_item.ident.to_string(),
+            //             definition: quote::quote!(#struct_item).to_string(),
+            //         });
+            //     }
+            // }
         }
     }
 
@@ -302,7 +300,6 @@ pub struct User {
 
         let struct_meta = &metadata.structs[0];
         assert_eq!(struct_meta.name, "User");
-        assert_eq!(struct_meta.module_path, "routes::user");
 
         drop(temp_dir);
     }
@@ -326,7 +323,7 @@ pub struct User {
         let metadata = collect_metadata(temp_dir.path(), folder_name).unwrap();
 
         assert_eq!(metadata.routes.len(), 0);
-        assert_eq!(metadata.structs.len(), 0); // Schema derive가 없으므로 수집되지 않음
+        assert_eq!(metadata.structs.len(), 0);
 
         drop(temp_dir);
     }
@@ -485,7 +482,7 @@ pub fn index() -> String {
         assert_eq!(metadata.routes.len(), 1);
         let route = &metadata.routes[0];
         assert_eq!(route.function_name, "index");
-        assert_eq!(route.path, "/"); // mod.rs는 빈 경로
+        assert_eq!(route.path, "/");
         assert_eq!(route.module_path, "routes::");
 
         drop(temp_dir);
@@ -511,7 +508,7 @@ pub fn get_users() -> String {
 
         assert_eq!(metadata.routes.len(), 1);
         let route = &metadata.routes[0];
-        assert_eq!(route.module_path, "users"); // 빈 folder_name이면 segments만 사용
+        assert_eq!(route.module_path, "users");
 
         drop(temp_dir);
     }

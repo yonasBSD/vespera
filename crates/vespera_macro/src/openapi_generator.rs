@@ -23,39 +23,13 @@ pub fn generate_openapi_doc_with_metadata(
 
     // First, collect all struct schemas
     for struct_meta in &metadata.structs {
-        let content = match std::fs::read_to_string(&struct_meta.file_path) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to read file {}: {}",
-                    struct_meta.file_path, e
-                );
-                continue;
-            }
-        };
-
-        let file_ast = match syn::parse_file(&content) {
-            Ok(ast) => ast,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to parse file {}: {}",
-                    struct_meta.file_path, e
-                );
-                continue;
-            }
-        };
-
-        for item in file_ast.items {
-            if let syn::Item::Struct(struct_item) = item
-                && struct_item.ident == struct_meta.name
-            {
-                let schema = parse_struct_to_schema(&struct_item, &known_schema_names);
-                let schema_name = struct_meta.name.clone();
-                schemas.insert(schema_name.clone(), schema);
-                known_schema_names.insert(schema_name.clone(), schema_name);
-                break;
-            }
-        }
+        let schema = parse_struct_to_schema(
+            &syn::parse_str(&struct_meta.definition).unwrap(),
+            &known_schema_names,
+        );
+        let schema_name = struct_meta.name.clone();
+        schemas.insert(schema_name.clone(), schema);
+        known_schema_names.insert(schema_name.clone(), schema_name);
     }
 
     // Process routes from metadata
@@ -261,8 +235,6 @@ pub struct User {
         let mut metadata = CollectedMetadata::new();
         metadata.structs.push(StructMetadata {
             name: "User".to_string(),
-            module_path: "test::user".to_string(),
-            file_path: struct_file.to_string_lossy().to_string(),
             definition: "struct User { id: i32, name: String }".to_string(),
         });
 
@@ -301,8 +273,6 @@ pub fn get_user() -> User {
         let mut metadata = CollectedMetadata::new();
         metadata.structs.push(StructMetadata {
             name: "User".to_string(),
-            module_path: "test::user".to_string(),
-            file_path: struct_file.to_string_lossy().to_string(),
             definition: "struct User { id: i32, name: String }".to_string(),
         });
         metadata.routes.push(RouteMetadata {
@@ -383,8 +353,6 @@ pub fn create_user() -> String {
     #[case::struct_file_read_failure(
         Some(StructMetadata {
             name: "User".to_string(),
-            module_path: "test::user".to_string(),
-            file_path: "/nonexistent/struct.rs".to_string(),
             definition: "struct User { id: i32 }".to_string(),
         }),
         None,
@@ -409,8 +377,6 @@ pub fn create_user() -> String {
     #[case::struct_file_parse_failure(
         Some(StructMetadata {
             name: "User".to_string(),
-            module_path: "test::user".to_string(),
-            file_path: "".to_string(), // Will be set to temp file with invalid syntax
             definition: "struct User { id: i32 }".to_string(),
         }),
         None,
@@ -441,13 +407,8 @@ pub fn create_user() -> String {
         let mut metadata = CollectedMetadata::new();
 
         // Handle struct metadata
-        if let Some(mut struct_m) = struct_meta {
+        if let Some(struct_m) = struct_meta {
             // If file_path is empty, create invalid syntax file
-            if struct_m.file_path.is_empty() {
-                let invalid_file =
-                    create_temp_file(&temp_dir, "invalid_struct.rs", "invalid rust syntax {");
-                struct_m.file_path = invalid_file.to_string_lossy().to_string();
-            }
             metadata.structs.push(struct_m);
         }
 
