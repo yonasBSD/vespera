@@ -1,6 +1,16 @@
 # Vespera
 A fully automated OpenAPI engine for Axum with zero-config route and schema discovery.
 
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![GitHub Actions](https://img.shields.io/github/actions/workflow/status/dev-five-git/vespera/CI.yml?branch=main&label=CI)](https://github.com/dev-five-git/vespera/actions)
+[![Codecov](https://img.shields.io/codecov/c/github/dev-five-git/vespera)](https://codecov.io/gh/dev-five-git/vespera)
+[![GitHub stars](https://img.shields.io/github/stars/dev-five-git/vespera.svg?style=social&label=Star)](https://github.com/dev-five-git/vespera)
+[![GitHub forks](https://img.shields.io/github/forks/dev-five-git/vespera.svg?style=social&label=Fork)](https://github.com/dev-five-git/vespera/fork)
+[![GitHub issues](https://img.shields.io/github/issues/dev-five-git/vespera.svg)](https://github.com/dev-five-git/vespera/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/dev-five-git/vespera.svg)](https://github.com/dev-five-git/vespera/pulls)
+[![GitHub last commit](https://img.shields.io/github/last-commit/dev-five-git/vespera.svg)](https://github.com/dev-five-git/vespera/commits/main)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-green.svg)](https://www.openapis.org/)
+
 ---
 
 ## Introduction
