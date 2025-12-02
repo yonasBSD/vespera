@@ -27,10 +27,6 @@ pub struct RouteMetadata {
 pub struct StructMetadata {
     /// Struct name
     pub name: String,
-    /// Module path
-    pub module_path: String,
-    /// File path
-    pub file_path: String,
     /// Struct definition (as string for serialization)
     pub definition: String,
 }

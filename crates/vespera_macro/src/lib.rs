@@ -11,10 +11,12 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
 use std::path::Path;
+use std::sync::{LazyLock, Mutex};
 use syn::LitStr;
 use syn::parse::{Parse, ParseStream};
 
 use crate::collector::collect_metadata;
+use crate::metadata::{CollectedMetadata, StructMetadata};
 use crate::method::http_method_to_token_stream;
 use crate::openapi_generator::generate_openapi_doc_with_metadata;
 use vespera_core::route::HttpMethod;
@@ -25,11 +27,21 @@ pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+// Schema Storage global variable
+static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
 /// Derive macro for Schema
 #[proc_macro_derive(Schema)]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let name = &input.ident;
+
+    let mut schema_storage = SCHEMA_STORAGE.lock().unwrap();
+    schema_storage.push(StructMetadata {
+        name: name.to_string(),
+        definition: quote::quote!(#input).to_string(),
+    });
 
     // For now, we just mark the struct as having SchemaBuilder
     // The actual schema generation will be done at runtime
@@ -41,18 +53,79 @@ pub fn derive_schema(input: TokenStream) -> TokenStream {
 }
 
 struct AutoRouterInput {
-    folder: Option<LitStr>,
+    dir: Option<LitStr>,
+    openapi: Option<LitStr>,
+    title: Option<LitStr>,
+    version: Option<LitStr>,
+    docs_url: Option<LitStr>,
 }
 
 impl Parse for AutoRouterInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(AutoRouterInput { folder: None });
+        let mut dir = None;
+        let mut openapi = None;
+        let mut title = None;
+        let mut version = None;
+        let mut docs_url = None;
+
+        while !input.is_empty() {
+            let lookahead = input.lookahead1();
+
+            if lookahead.peek(syn::Ident) {
+                let ident: syn::Ident = input.parse()?;
+                let ident_str = ident.to_string();
+
+                match ident_str.as_str() {
+                    "dir" => {
+                        input.parse::<syn::Token![=]>()?;
+                        dir = Some(input.parse()?);
+                    }
+                    "openapi" => {
+                        input.parse::<syn::Token![=]>()?;
+                        openapi = Some(input.parse()?);
+                    }
+                    "docs_url" => {
+                        input.parse::<syn::Token![=]>()?;
+                        docs_url = Some(input.parse()?);
+                    }
+                    "title" => {
+                        input.parse::<syn::Token![=]>()?;
+                        title = Some(input.parse()?);
+                    }
+                    "version" => {
+                        input.parse::<syn::Token![=]>()?;
+                        version = Some(input.parse()?);
+                    }
+                    _ => {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            format!(
+                                "unknown field: `{}`. Expected `dir` or `openapi`",
+                                ident_str
+                            ),
+                        ));
+                    }
+                }
+            } else if lookahead.peek(syn::LitStr) {
+                // If just a string, treat it as dir (for backward compatibility)
+                dir = Some(input.parse()?);
+            } else {
+                return Err(lookahead.error());
+            }
+
+            if input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+            } else {
+                break;
+            }
         }
 
-        let folder = input.parse::<LitStr>()?;
         Ok(AutoRouterInput {
-            folder: Some(folder),
+            dir,
+            openapi,
+            title,
+            version,
+            docs_url,
         })
     }
 }
@@ -62,9 +135,15 @@ pub fn vespera(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AutoRouterInput);
 
     let folder_name = input
-        .folder
+        .dir
         .map(|f| f.value())
         .unwrap_or_else(|| "routes".to_string());
+
+    let openapi_file_name = input.openapi.map(|f| f.value());
+
+    let title = input.title.map(|t| t.value());
+    let version = input.version.map(|v| v.value());
+    let docs_url = input.docs_url.map(|u| u.value());
 
     let folder_path = find_folder_path(&folder_name);
 
@@ -77,7 +156,49 @@ pub fn vespera(input: TokenStream) -> TokenStream {
         .into();
     }
 
-    generate_router_code(&folder_path, &folder_name).into()
+    let mut metadata = match collect_metadata(&folder_path, &folder_name) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            return syn::Error::new(
+                Span::call_site(),
+                format!("Failed to collect metadata: {}", e),
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
+    let schemas = SCHEMA_STORAGE.lock().unwrap().clone();
+
+    metadata.structs.extend(schemas);
+
+    let mut docs_info = None;
+
+    if openapi_file_name.is_some() || docs_url.is_some() {
+        // Generate OpenAPI document using collected metadata
+
+        // Serialize to JSON
+        let json_str = match serde_json::to_string_pretty(&generate_openapi_doc_with_metadata(
+            title, version, &metadata,
+        )) {
+            Ok(json) => json,
+            Err(e) => {
+                return syn::Error::new(
+                    Span::call_site(),
+                    format!("Failed to serialize OpenAPI document: {}", e),
+                )
+                .to_compile_error()
+                .into();
+            }
+        };
+        if let Some(openapi_file_name) = openapi_file_name {
+            std::fs::write(openapi_file_name, &json_str).unwrap();
+        }
+        if let Some(docs_url) = docs_url {
+            docs_info = Some((docs_url, json_str));
+        }
+    }
+
+    generate_router_code(&metadata, docs_info).into()
 }
 
 fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
@@ -91,27 +212,18 @@ fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
     Path::new(folder_name).to_path_buf()
 }
 
-fn generate_router_code(folder_path: &Path, folder_name: &str) -> proc_macro2::TokenStream {
-    // Collect metadata (routes and structs) - used by vespera_openapi!() as well
-    let metadata = match collect_metadata(folder_path, folder_name) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to collect metadata: {}", e),
-            )
-            .to_compile_error();
-        }
-    };
-
+fn generate_router_code(
+    metadata: &CollectedMetadata,
+    docs_info: Option<(String, String)>,
+) -> proc_macro2::TokenStream {
     let mut router_nests = Vec::new();
 
-    for route in metadata.routes {
+    for route in &metadata.routes {
         let http_method = HttpMethod::from(route.method.as_str());
         let method_path = http_method_to_token_stream(http_method);
-        let path = route.path;
-        let module_path = route.module_path;
-        let function_name = route.function_name;
+        let path = &route.path;
+        let module_path = &route.module_path;
+        let function_name = &route.function_name;
 
         let mut p: syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]> =
             syn::punctuated::Punctuated::new();
@@ -137,6 +249,52 @@ fn generate_router_code(folder_path: &Path, folder_name: &str) -> proc_macro2::T
         let func_name = syn::Ident::new(&function_name, Span::call_site());
         router_nests.push(quote!(
             .route(#path, #method_path(#p::#func_name))
+        ));
+    }
+
+    if let Some((docs_url, spec)) = docs_info {
+        let method_path = http_method_to_token_stream(HttpMethod::Get);
+
+        let html = format!(
+            r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+</head>
+<body style="margin: 0; padding: 0;">
+<div id="swagger-ui"></div>
+
+<script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+<script src="https://unpkg.com/swagger-ui-dist/swagger-ui-standalone-preset.js"></script>
+
+<script>
+  const openapiSpec = {spec_json};
+
+  window.onload = () => {{
+    SwaggerUIBundle({{
+      spec: openapiSpec,
+      dom_id: "\#swagger-ui",
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIStandalonePreset
+      ],
+      layout: "StandaloneLayout"
+    }});
+  }};
+</script>
+
+</body>
+</html>
+"#,
+            spec_json = spec
+        )
+        .replace("\n", "");
+
+        router_nests.push(quote!(
+            .route(#docs_url, #method_path(|| async { vespera::axum::response::Html(#html) }))
         ));
     }
 
@@ -167,7 +325,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let folder_name = "routes";
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Should generate empty router
@@ -320,7 +481,10 @@ pub fn get_users() -> String {
             create_temp_file(&temp_dir, filename, content);
         }
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -401,7 +565,10 @@ pub fn update_user() -> String {
 "#,
         );
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -451,7 +618,10 @@ pub fn create_users() -> String {
 "#,
         );
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -493,7 +663,10 @@ pub fn index() -> String {
 "#,
         );
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -525,7 +698,10 @@ pub fn get_users() -> String {
 "#,
         );
 
-        let result = generate_router_code(temp_dir.path(), folder_name);
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -539,126 +715,4 @@ pub fn get_users() -> String {
 
         drop(temp_dir);
     }
-}
-
-struct OpenApiInput {
-    folder: Option<LitStr>,
-    title: Option<LitStr>,
-    version: Option<LitStr>,
-}
-
-impl Parse for OpenApiInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut folder = None;
-        let mut title = None;
-        let mut version = None;
-
-        while !input.is_empty() {
-            let lookahead = input.lookahead1();
-
-            if lookahead.peek(syn::Ident) {
-                let ident: syn::Ident = input.parse()?;
-                let ident_str = ident.to_string();
-
-                match ident_str.as_str() {
-                    "folder" => {
-                        input.parse::<syn::Token![=]>()?;
-                        folder = Some(input.parse()?);
-                    }
-                    "title" => {
-                        input.parse::<syn::Token![=]>()?;
-                        title = Some(input.parse()?);
-                    }
-                    "version" => {
-                        input.parse::<syn::Token![=]>()?;
-                        version = Some(input.parse()?);
-                    }
-                    _ => {
-                        return Err(lookahead.error());
-                    }
-                }
-            } else if lookahead.peek(syn::LitStr) {
-                // If just a string, treat it as folder
-                folder = Some(input.parse()?);
-            } else {
-                return Err(lookahead.error());
-            }
-
-            if input.peek(syn::Token![,]) {
-                input.parse::<syn::Token![,]>()?;
-            } else {
-                break;
-            }
-        }
-
-        Ok(OpenApiInput {
-            folder,
-            title,
-            version,
-        })
-    }
-}
-
-/// Generate OpenAPI JSON string from routes
-#[proc_macro]
-pub fn vespera_openapi(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as OpenApiInput);
-
-    let folder_name = input
-        .folder
-        .as_ref()
-        .map(|f| f.value())
-        .unwrap_or_else(|| "routes".to_string());
-    let title = input.title.map(|t| t.value());
-    let version = input.version.map(|v| v.value());
-
-    let folder_path = find_folder_path(&folder_name);
-
-    if !folder_path.exists() {
-        return syn::Error::new(
-            Span::call_site(),
-            format!(
-                "Folder not found: {}. Make sure vespera!() uses the same folder name.",
-                folder_name
-            ),
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    // Collect metadata (same as vespera!() does)
-    let metadata = match collect_metadata(&folder_path, &folder_name) {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to collect metadata: {}", e),
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-
-    // Generate OpenAPI document using collected metadata
-    let openapi_doc = generate_openapi_doc_with_metadata(title, version, &metadata);
-
-    // Serialize to JSON
-    let json_str = match serde_json::to_string_pretty(&openapi_doc) {
-        Ok(json) => json,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to serialize OpenAPI document: {}", e),
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-
-    // Return as a string literal
-    let expanded = quote! {
-        #json_str
-    };
-
-    expanded.into()
 }

@@ -17,7 +17,7 @@ pub mod openapi {
 }
 
 // Re-export macros from vespera_macro
-pub use vespera_macro::{Schema, route, vespera, vespera_openapi};
+pub use vespera_macro::{Schema, route, vespera};
 
 // Re-export axum for convenience
 pub mod axum {
