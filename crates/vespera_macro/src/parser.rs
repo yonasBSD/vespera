@@ -715,7 +715,9 @@ pub fn parse_return_type(
                 }
             } else {
                 // Not a Result type - regular response
-                let schema = parse_type_to_schema_ref(ty, known_schemas);
+                // Unwrap Json<T> if present
+                let unwrapped_ty = unwrap_json(ty);
+                let schema = parse_type_to_schema_ref(unwrapped_ty, known_schemas);
                 let mut content = BTreeMap::new();
                 content.insert(
                     "application/json".to_string(),
@@ -1115,27 +1117,53 @@ mod tests {
     fn test_parse_return_type_with_known_schema() {
         let mut known_schemas = HashMap::new();
         known_schemas.insert("User".to_string(), "User".to_string());
+        {
+            let return_type_str = "-> User";
+            let full_signature = format!("fn test() {}", return_type_str);
+            let parsed: syn::Signature =
+                syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-        let return_type_str = "-> User";
-        let full_signature = format!("fn test() {}", return_type_str);
-        let parsed: syn::Signature =
-            syn::parse_str(&full_signature).expect("Failed to parse return type");
+            let responses = parse_return_type(&parsed.output, &known_schemas);
 
-        let responses = parse_return_type(&parsed.output, &known_schemas);
+            assert_eq!(responses.len(), 1);
+            assert!(responses.contains_key("200"));
+            let response = responses.get("200").unwrap();
+            assert!(response.content.is_some());
 
-        assert_eq!(responses.len(), 1);
-        assert!(responses.contains_key("200"));
-        let response = responses.get("200").unwrap();
-        assert!(response.content.is_some());
+            let content = response.content.as_ref().unwrap();
+            let media_type = content.get("application/json").unwrap();
 
-        let content = response.content.as_ref().unwrap();
-        let media_type = content.get("application/json").unwrap();
+            // Should be a reference to the known schema
+            if let SchemaRef::Ref(ref_ref) = media_type.schema.as_ref().unwrap() {
+                assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
+            } else {
+                panic!("Expected schema reference for known type");
+            }
+        }
+        {
+            let return_type_str = "-> Json<User>";
+            let full_signature = format!("fn test() {}", return_type_str);
+            let parsed: syn::Signature =
+                syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-        // Should be a reference to the known schema
-        if let SchemaRef::Ref(ref_ref) = media_type.schema.as_ref().unwrap() {
-            assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
-        } else {
-            panic!("Expected schema reference for known type");
+            println!("parsed: {:?}", parsed.output);
+            let responses = parse_return_type(&parsed.output, &known_schemas);
+            println!("responses: {:?}", responses);
+
+            assert_eq!(responses.len(), 1);
+            assert!(responses.contains_key("200"));
+            let response = responses.get("200").unwrap();
+            assert!(response.content.is_some());
+
+            let content = response.content.as_ref().unwrap();
+            let media_type = content.get("application/json").unwrap();
+
+            // Should be a reference to the known schema
+            if let SchemaRef::Ref(ref_ref) = media_type.schema.as_ref().unwrap() {
+                assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
+            } else {
+                panic!("Expected schema reference for Json<User>");
+            }
         }
     }
 

@@ -1,14 +1,17 @@
 use serde::{Deserialize, Serialize};
-use vespera::axum::{Json, extract::Path};
+use vespera::{
+    Schema,
+    axum::{Json, extract::Path},
+};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Schema)]
 pub struct User {
     pub id: u32,
     pub name: String,
     pub email: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Schema)]
 pub struct CreateUserRequest {
     pub name: String,
     pub email: String,

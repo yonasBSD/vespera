@@ -57,6 +57,7 @@ struct AutoRouterInput {
     openapi: Option<LitStr>,
     title: Option<LitStr>,
     version: Option<LitStr>,
+    docs_url: Option<LitStr>,
 }
 
 impl Parse for AutoRouterInput {
@@ -65,6 +66,7 @@ impl Parse for AutoRouterInput {
         let mut openapi = None;
         let mut title = None;
         let mut version = None;
+        let mut docs_url = None;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -81,6 +83,10 @@ impl Parse for AutoRouterInput {
                     "openapi" => {
                         input.parse::<syn::Token![=]>()?;
                         openapi = Some(input.parse()?);
+                    }
+                    "docs_url" => {
+                        input.parse::<syn::Token![=]>()?;
+                        docs_url = Some(input.parse()?);
                     }
                     "title" => {
                         input.parse::<syn::Token![=]>()?;
@@ -119,6 +125,7 @@ impl Parse for AutoRouterInput {
             openapi,
             title,
             version,
+            docs_url,
         })
     }
 }
@@ -136,6 +143,7 @@ pub fn vespera(input: TokenStream) -> TokenStream {
 
     let title = input.title.map(|t| t.value());
     let version = input.version.map(|v| v.value());
+    let docs_url = input.docs_url.map(|u| u.value());
 
     let folder_path = find_folder_path(&folder_name);
 
@@ -163,12 +171,15 @@ pub fn vespera(input: TokenStream) -> TokenStream {
 
     metadata.structs.extend(schemas);
 
-    if let Some(openapi_file_name) = openapi_file_name {
+    let mut docs_info = None;
+
+    if openapi_file_name.is_some() || docs_url.is_some() {
         // Generate OpenAPI document using collected metadata
-        let openapi_doc = generate_openapi_doc_with_metadata(title, version, &metadata);
 
         // Serialize to JSON
-        let json_str = match serde_json::to_string_pretty(&openapi_doc) {
+        let json_str = match serde_json::to_string_pretty(&generate_openapi_doc_with_metadata(
+            title, version, &metadata,
+        )) {
             Ok(json) => json,
             Err(e) => {
                 return syn::Error::new(
@@ -179,10 +190,15 @@ pub fn vespera(input: TokenStream) -> TokenStream {
                 .into();
             }
         };
-        std::fs::write(openapi_file_name, json_str).unwrap();
+        if let Some(openapi_file_name) = openapi_file_name {
+            std::fs::write(openapi_file_name, &json_str).unwrap();
+        }
+        if let Some(docs_url) = docs_url {
+            docs_info = Some((docs_url, json_str));
+        }
     }
 
-    generate_router_code(&metadata).into()
+    generate_router_code(&metadata, docs_info).into()
 }
 
 fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
@@ -196,7 +212,10 @@ fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
     Path::new(folder_name).to_path_buf()
 }
 
-fn generate_router_code(metadata: &CollectedMetadata) -> proc_macro2::TokenStream {
+fn generate_router_code(
+    metadata: &CollectedMetadata,
+    docs_info: Option<(String, String)>,
+) -> proc_macro2::TokenStream {
     let mut router_nests = Vec::new();
 
     for route in &metadata.routes {
@@ -233,6 +252,52 @@ fn generate_router_code(metadata: &CollectedMetadata) -> proc_macro2::TokenStrea
         ));
     }
 
+    if let Some((docs_url, spec)) = docs_info {
+        let method_path = http_method_to_token_stream(HttpMethod::Get);
+
+        let html = format!(
+            r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+</head>
+<body style="margin: 0; padding: 0;">
+<div id="swagger-ui"></div>
+
+<script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+<script src="https://unpkg.com/swagger-ui-dist/swagger-ui-standalone-preset.js"></script>
+
+<script>
+  const openapiSpec = {spec_json};
+
+  window.onload = () => {{
+    SwaggerUIBundle({{
+      spec: openapiSpec,
+      dom_id: "\#swagger-ui",
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIStandalonePreset
+      ],
+      layout: "StandaloneLayout"
+    }});
+  }};
+</script>
+
+</body>
+</html>
+"#,
+            spec_json = spec
+        )
+        .replace("\n", "");
+
+        router_nests.push(quote!(
+            .route(#docs_url, #method_path(|| async { vespera::axum::response::Html(#html) }))
+        ));
+    }
+
     quote! {
         vespera::axum::Router::new()
             #( #router_nests )*
@@ -260,8 +325,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let folder_name = "routes";
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Should generate empty router
@@ -414,8 +481,10 @@ pub fn get_users() -> String {
             create_temp_file(&temp_dir, filename, content);
         }
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -496,8 +565,10 @@ pub fn update_user() -> String {
 "#,
         );
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -547,8 +618,10 @@ pub fn create_users() -> String {
 "#,
         );
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -590,8 +663,10 @@ pub fn index() -> String {
 "#,
         );
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
@@ -623,8 +698,10 @@ pub fn get_users() -> String {
 "#,
         );
 
-        let result =
-            generate_router_code(&collect_metadata(&temp_dir.path(), folder_name).unwrap());
+        let result = generate_router_code(
+            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            None,
+        );
         let code = result.to_string();
 
         // Check router initialization (quote! generates "vespera :: axum :: Router :: new ()")
