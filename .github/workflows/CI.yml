@@ -36,7 +36,7 @@ jobs:
       - name: Build
         run: cargo check
       - name: Test
-        run: cargo tarpaulin
+        run: cargo tarpaulin --out Lcov
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5
         with:
