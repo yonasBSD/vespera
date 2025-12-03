@@ -21,16 +21,20 @@ pub fn generate_openapi_doc_with_metadata(
     let mut known_schema_names: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
-    // First, collect all struct and enum schemas
+    // First, register all schema names so they can be referenced during parsing
+    for struct_meta in &metadata.structs {
+        let schema_name = struct_meta.name.clone();
+        known_schema_names.insert(schema_name.clone(), schema_name);
+    }
+
+    // Then, parse all struct and enum schemas (now they can reference each other)
     for struct_meta in &metadata.structs {
         let parsed = syn::parse_str::<syn::Item>(&struct_meta.definition).unwrap();
         let schema = match parsed {
             syn::Item::Struct(struct_item) => {
                 parse_struct_to_schema(&struct_item, &known_schema_names)
             }
-            syn::Item::Enum(enum_item) => {
-                parse_enum_to_schema(&enum_item, &known_schema_names)
-            }
+            syn::Item::Enum(enum_item) => parse_enum_to_schema(&enum_item, &known_schema_names),
             _ => {
                 // Fallback to struct parsing for backward compatibility
                 parse_struct_to_schema(
@@ -41,7 +45,6 @@ pub fn generate_openapi_doc_with_metadata(
         };
         let schema_name = struct_meta.name.clone();
         schemas.insert(schema_name.clone(), schema);
-        known_schema_names.insert(schema_name.clone(), schema_name);
     }
 
     // Process routes from metadata

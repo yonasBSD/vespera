@@ -29,6 +29,10 @@ pub enum Enum2 {
     H(BTreeMap<String, String>),
     I(TestStruct),
     J(Vec<TestStruct>),
+    K(TestStruct, TestStruct),
+    L(Option<String>),
+    M(Vec<Option<String>>),
+    N(HashMap<String, Option<String>>),
 }
 
 #[vespera::route(get, path = "/enum2")]

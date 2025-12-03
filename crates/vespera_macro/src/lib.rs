@@ -283,7 +283,7 @@ fn generate_router_code(
                 })
                 .collect::<Vec<syn::PathSegment>>(),
         );
-        let func_name = syn::Ident::new(&function_name, Span::call_site());
+        let func_name = syn::Ident::new(function_name, Span::call_site());
         router_nests.push(quote!(
             .route(#path, #method_path(#p::#func_name))
         ));

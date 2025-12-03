@@ -635,7 +635,8 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                 return SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)));
             }
 
-            let segment = &path.segments[0];
+            // Get the last segment as the type name (handles paths like crate::TestStruct)
+            let segment = path.segments.last().unwrap();
             let ident_str = segment.ident.to_string();
 
             // Handle generic types
@@ -658,8 +659,8 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                     "HashMap" | "BTreeMap" => {
                         // HashMap<K, V> or BTreeMap<K, V> -> object with additionalProperties
                         // K is typically String, we use V as the value type
-                        if args.args.len() >= 2 {
-                            if let (
+                        if args.args.len() >= 2
+                            && let (
                                 Some(syn::GenericArgument::Type(_key_ty)),
                                 Some(syn::GenericArgument::Type(value_ty)),
                             ) = (args.args.get(0), args.args.get(1))
@@ -680,7 +681,6 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                                     ..Schema::object()
                                 }));
                             }
-                        }
                     }
                     _ => {}
                 }
@@ -702,8 +702,16 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                 }
                 _ => {
                     // Check if this is a known schema (struct with Schema derive)
-                    if known_schemas.contains_key(&ident_str) {
-                        SchemaRef::Ref(Reference::schema(&ident_str))
+                    // Try both the full path and just the type name
+                    let type_name = if path.segments.len() > 1 {
+                        // For paths like crate::TestStruct, use just the type name
+                        ident_str.clone()
+                    } else {
+                        ident_str.clone()
+                    };
+
+                    if known_schemas.contains_key(&type_name) {
+                        SchemaRef::Ref(Reference::schema(&type_name))
                     } else {
                         // For unknown custom types, return object schema instead of reference
                         // This prevents creating invalid references to non-existent schemas
@@ -769,13 +777,11 @@ fn unwrap_json(ty: &Type) -> &Type {
         let path = &type_path.path;
         if !path.segments.is_empty() {
             let segment = &path.segments[0];
-            if segment.ident == "Json" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+            if segment.ident == "Json"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return inner_ty;
                     }
-                }
-            }
         }
     }
     ty
@@ -811,10 +817,10 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
 
     if is_result {
         // Get the last segment (Result) to check for generics
-        if let Some(segment) = path.segments.last() {
-            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                if args.args.len() >= 2 {
-                    if let (
+        if let Some(segment) = path.segments.last()
+            && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                && args.args.len() >= 2
+                    && let (
                         Some(syn::GenericArgument::Type(ok_ty)),
                         Some(syn::GenericArgument::Type(err_ty)),
                     ) = (args.args.first(), args.args.get(1))
@@ -823,9 +829,6 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
                         let ok_ty_unwrapped = unwrap_json(ok_ty);
                         return Some((ok_ty_unwrapped.clone(), err_ty.clone()));
                     }
-                }
-            }
-        }
     }
     None
 }
@@ -833,8 +836,8 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
 /// Check if error type is a tuple (StatusCode, E) or (StatusCode, Json<E>)
 /// Returns the error type E and a default status code (400)
 fn extract_status_code_tuple(err_ty: &Type) -> Option<(u16, Type)> {
-    if let Type::Tuple(tuple) = err_ty {
-        if tuple.elems.len() == 2 {
+    if let Type::Tuple(tuple) = err_ty
+        && tuple.elems.len() == 2 {
             // Check if first element is StatusCode
             if let Type::Path(type_path) = &tuple.elems[0] {
                 let path = &type_path.path;
@@ -857,7 +860,6 @@ fn extract_status_code_tuple(err_ty: &Type) -> Option<(u16, Type)> {
                 }
             }
         }
-    }
     None
 }
 
@@ -1023,7 +1025,7 @@ pub fn build_operation_from_function(
             for &status_code in status_codes {
                 let status_str = status_code.to_string();
                 // Only add if not already present
-                if !responses.contains_key(&status_str) {
+                responses.entry(status_str).or_insert_with(|| {
                     let mut err_content = BTreeMap::new();
                     err_content.insert(
                         "application/json".to_string(),
@@ -1034,15 +1036,12 @@ pub fn build_operation_from_function(
                         },
                     );
 
-                    responses.insert(
-                        status_str,
-                        Response {
+                    Response {
                             description: "Error response".to_string(),
                             headers: None,
                             content: Some(err_content),
-                        },
-                    );
-                }
+                        }
+                });
             }
         }
     }
