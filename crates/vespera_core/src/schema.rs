@@ -152,7 +152,7 @@ pub struct Schema {
     /// List of required properties
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional properties are allowed
+    /// Whether additional properties are allowed (can be boolean or SchemaRef)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_properties: Option<serde_json::Value>,
     /// Minimum number of properties

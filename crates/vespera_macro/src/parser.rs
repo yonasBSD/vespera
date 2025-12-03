@@ -655,6 +655,33 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                             }
                         }
                     }
+                    "HashMap" | "BTreeMap" => {
+                        // HashMap<K, V> or BTreeMap<K, V> -> object with additionalProperties
+                        // K is typically String, we use V as the value type
+                        if args.args.len() >= 2 {
+                            if let (
+                                Some(syn::GenericArgument::Type(_key_ty)),
+                                Some(syn::GenericArgument::Type(value_ty)),
+                            ) = (args.args.get(0), args.args.get(1))
+                            {
+                                let value_schema =
+                                    parse_type_to_schema_ref(value_ty, known_schemas);
+                                // Convert SchemaRef to serde_json::Value for additional_properties
+                                let additional_props_value = match value_schema {
+                                    SchemaRef::Ref(ref_ref) => {
+                                        serde_json::json!({ "$ref": ref_ref.ref_path })
+                                    }
+                                    SchemaRef::Inline(schema) => serde_json::to_value(&*schema)
+                                        .unwrap_or(serde_json::json!({})),
+                                };
+                                return SchemaRef::Inline(Box::new(Schema {
+                                    schema_type: Some(SchemaType::Object),
+                                    additional_properties: Some(additional_props_value),
+                                    ..Schema::object()
+                                }));
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -668,8 +695,8 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                 "bool" => SchemaRef::Inline(Box::new(Schema::boolean())),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
                 // Standard library types that should not be referenced
-                "HashMap" | "BTreeMap" | "Vec" | "Option" | "Result" | "Json" | "Path"
-                | "Query" | "Header" => {
+                // Note: HashMap and BTreeMap are handled above in generic types
+                "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
                     // These are not schema types, return object schema
                     SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
                 }

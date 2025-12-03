@@ -1,10 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
-use vespera::{
-    Schema,
-    axum::{Json, extract::Query},
-};
+use vespera::{Schema, axum::Json};
 
 use crate::TestStruct;
 
@@ -29,7 +26,9 @@ pub enum Enum2 {
     E(Vec<String>),
     F(String, i32),
     G(HashMap<String, String>),
-    H(TestStruct),
+    H(BTreeMap<String, String>),
+    I(TestStruct),
+    J(Vec<TestStruct>),
 }
 
 #[vespera::route(get, path = "/enum2")]

@@ -323,7 +323,12 @@
             "in": "query",
             "required": true,
             "schema": {
-              "type": "object"
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           }
         ],
@@ -564,7 +569,12 @@
             }
           },
           "map": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "name": {
             "type": "string"
@@ -576,7 +586,12 @@
             }
           },
           "nested_map": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
           },
           "nested_struct": {
             "$ref": "#/components/schemas/StructBodyWithOptional"
@@ -590,14 +605,32 @@
           "nested_struct_array_map": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {
+                "$ref": "#/components/schemas/StructBodyWithOptional"
+              }
             }
           },
           "nested_struct_map": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
           },
           "nested_struct_map_array": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/StructBodyWithOptional"
+              },
+              "type": "array"
+            }
           }
         },
         "required": [
@@ -627,7 +660,12 @@
             }
           },
           "map": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "name": {
             "type": "string"
@@ -639,7 +677,12 @@
             }
           },
           "nestedMap": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
           },
           "nestedStruct": {
             "$ref": "#/components/schemas/StructBodyWithOptional"
@@ -653,14 +696,32 @@
           "nestedStructArrayMap": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": {
+                "$ref": "#/components/schemas/StructBodyWithOptional"
+              }
             }
           },
           "nestedStructMap": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StructBodyWithOptional"
+            }
           },
           "nestedStructMapArray": {
-            "type": "object"
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/StructBodyWithOptional"
+              },
+              "type": "array"
+            }
           }
         },
         "required": [
@@ -797,7 +858,12 @@
             "type": "object",
             "properties": {
               "G": {
-                "type": "object"
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -808,11 +874,41 @@
             "type": "object",
             "properties": {
               "H": {
-                "type": "object"
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
               "H"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "I": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "I"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "J": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "J"
             ]
           }
         ]
