@@ -54,10 +54,12 @@ pub fn parse_function_parameter(
             };
 
             // Check for common Axum extractors first (before checking path_params)
+            // Handle both Path<T> and vespera::axum::extract::Path<T> by checking the last segment
             if let Type::Path(type_path) = ty.as_ref() {
                 let path = &type_path.path;
                 if !path.segments.is_empty() {
-                    let segment = &path.segments[0];
+                    // Check the last segment (handles both Path<T> and vespera::axum::extract::Path<T>)
+                    let segment = path.segments.last().unwrap();
                     let ident_str = segment.ident.to_string();
 
                     match ident_str.as_str() {
@@ -958,7 +960,8 @@ pub fn parse_request_body(
                     return None;
                 }
 
-                let segment = &path.segments[0];
+                // Check the last segment (handles both Json<T> and vespera::axum::Json<T>)
+                let segment = path.segments.last().unwrap();
                 let ident_str = segment.ident.to_string();
 
                 if ident_str == "Json"
@@ -993,11 +996,13 @@ pub fn parse_request_body(
 }
 
 /// Unwrap Json<T> to get T
+/// Handles both Json<T> and vespera::axum::Json<T> by checking the last segment
 fn unwrap_json(ty: &Type) -> &Type {
     if let Type::Path(type_path) = ty {
         let path = &type_path.path;
         if !path.segments.is_empty() {
-            let segment = &path.segments[0];
+            // Check the last segment (handles both Json<T> and vespera::axum::Json<T>)
+            let segment = path.segments.last().unwrap();
             if segment.ident == "Json"
                 && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
                 && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()

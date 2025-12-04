@@ -289,7 +289,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "object"
+              "type": "string"
             }
           }
         ],
