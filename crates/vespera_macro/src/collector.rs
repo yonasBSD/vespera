@@ -59,6 +59,7 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> Result<Collect
                 } else {
                     format!("/{}", segments.join("/"))
                 };
+                let route_path = route_path.replace('_', "-");
 
                 metadata.routes.push(RouteMetadata {
                     method: route_info.method,
@@ -138,7 +139,7 @@ pub fn create_user() -> String {
         1,
         0,
         "post",
-        "/create_user",
+        "/create-user",
         "create_user",
         "routes::create_user",
     )]
