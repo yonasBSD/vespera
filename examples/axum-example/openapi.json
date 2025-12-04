@@ -280,6 +280,140 @@
         }
       }
     },
+    "/generic/generic/{value}": {
+      "get": {
+        "operationId": "generic_endpoint",
+        "parameters": [
+          {
+            "name": "value",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "name"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/generic/generic2": {
+      "get": {
+        "operationId": "generic_endpoint2",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "$ref": "#/components/schemas/TestStruct"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "name"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/generic/generic3": {
+      "get": {
+        "operationId": "generic_endpoint3",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "$ref": "#/components/schemas/TestStruct"
+                    },
+                    "value2": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "name",
+                    "value2"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/generic/generic4": {
+      "get": {
+        "operationId": "generic_endpoint4",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    },
+                    "value2": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "name",
+                    "value2"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health",
@@ -1006,6 +1140,40 @@
         "required": [
           "error",
           "code"
+        ]
+      },
+      "GenericStruct": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "value",
+          "name"
+        ]
+      },
+      "GenericStruct2": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "object"
+          },
+          "value2": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "value",
+          "name",
+          "value2"
         ]
       },
       "SignupRequest": {

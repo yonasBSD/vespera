@@ -30,6 +30,7 @@ pub fn parse_function_parameter(
     arg: &FnArg,
     path_params: &[String],
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
 ) -> Option<Parameter> {
     match arg {
         FnArg::Receiver(_) => None,
@@ -52,10 +53,12 @@ pub fn parse_function_parameter(
             };
 
             // Check for common Axum extractors first (before checking path_params)
+            // Handle both Path<T> and vespera::axum::extract::Path<T> by checking the last segment
             if let Type::Path(type_path) = ty.as_ref() {
                 let path = &type_path.path;
                 if !path.segments.is_empty() {
-                    let segment = &path.segments[0];
+                    // Check the last segment (handles both Path<T> and vespera::axum::extract::Path<T>)
+                    let segment = path.segments.last().unwrap();
                     let ident_str = segment.ident.to_string();
 
                     match ident_str.as_str() {
@@ -77,7 +80,11 @@ pub fn parse_function_parameter(
                                     r#in: ParameterLocation::Path,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
+                                    schema: Some(parse_type_to_schema_ref_with_schemas(
+                                        inner_ty,
+                                        known_schemas,
+                                        struct_definitions,
+                                    )),
                                     example: None,
                                 });
                             }
@@ -93,7 +100,11 @@ pub fn parse_function_parameter(
                                     r#in: ParameterLocation::Query,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
+                                    schema: Some(parse_type_to_schema_ref_with_schemas(
+                                        inner_ty,
+                                        known_schemas,
+                                        struct_definitions,
+                                    )),
                                     example: None,
                                 });
                             }
@@ -109,7 +120,11 @@ pub fn parse_function_parameter(
                                     r#in: ParameterLocation::Header,
                                     description: None,
                                     required: Some(true),
-                                    schema: Some(parse_type_to_schema_ref(inner_ty, known_schemas)),
+                                    schema: Some(parse_type_to_schema_ref_with_schemas(
+                                        inner_ty,
+                                        known_schemas,
+                                        struct_definitions,
+                                    )),
                                     example: None,
                                 });
                             }
@@ -130,7 +145,11 @@ pub fn parse_function_parameter(
                     r#in: ParameterLocation::Path,
                     description: None,
                     required: Some(true),
-                    schema: Some(parse_type_to_schema_ref(ty, known_schemas)),
+                    schema: Some(parse_type_to_schema_ref_with_schemas(
+                        ty,
+                        known_schemas,
+                        struct_definitions,
+                    )),
                     example: None,
                 });
             }
@@ -142,7 +161,11 @@ pub fn parse_function_parameter(
                     r#in: ParameterLocation::Query,
                     description: None,
                     required: Some(true),
-                    schema: Some(parse_type_to_schema_ref(ty, known_schemas)),
+                    schema: Some(parse_type_to_schema_ref_with_schemas(
+                        ty,
+                        known_schemas,
+                        struct_definitions,
+                    )),
                     example: None,
                 });
             }
@@ -345,6 +368,7 @@ fn rename_field(field_name: &str, rename_all: Option<&str>) -> String {
 pub fn parse_enum_to_schema(
     enum_item: &syn::ItemEnum,
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
 ) -> Schema {
     // Extract rename_all attribute from enum
     let rename_all = extract_rename_all(&enum_item.attrs);
@@ -413,7 +437,8 @@ pub fn parse_enum_to_schema(
                     if fields_unnamed.unnamed.len() == 1 {
                         // Single field tuple variant
                         let inner_type = &fields_unnamed.unnamed[0].ty;
-                        let inner_schema = parse_type_to_schema_ref(inner_type, known_schemas);
+                        let inner_schema =
+                            parse_type_to_schema_ref(inner_type, known_schemas, struct_definitions);
 
                         let mut properties = BTreeMap::new();
                         properties.insert(variant_key.clone(), inner_schema);
@@ -430,7 +455,11 @@ pub fn parse_enum_to_schema(
                         // For OpenAPI 3.1, we use prefixItems to represent tuple arrays
                         let mut tuple_item_schemas = Vec::new();
                         for field in &fields_unnamed.unnamed {
-                            let field_schema = parse_type_to_schema_ref(&field.ty, known_schemas);
+                            let field_schema = parse_type_to_schema_ref(
+                                &field.ty,
+                                known_schemas,
+                                struct_definitions,
+                            );
                             tuple_item_schemas.push(field_schema);
                         }
 
@@ -485,7 +514,8 @@ pub fn parse_enum_to_schema(
                         };
 
                         let field_type = &field.ty;
-                        let schema_ref = parse_type_to_schema_ref(field_type, known_schemas);
+                        let schema_ref =
+                            parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
 
                         variant_properties.insert(field_name.clone(), schema_ref);
 
@@ -556,6 +586,7 @@ pub fn parse_enum_to_schema(
 pub fn parse_struct_to_schema(
     struct_item: &syn::ItemStruct,
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
 ) -> Schema {
     let mut properties = BTreeMap::new();
     let mut required = Vec::new();
@@ -581,7 +612,9 @@ pub fn parse_struct_to_schema(
                 };
 
                 let field_type = &field.ty;
-                let schema_ref = parse_type_to_schema_ref(field_type, known_schemas);
+
+                let schema_ref =
+                    parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
 
                 properties.insert(field_name.clone(), schema_ref);
 
@@ -626,8 +659,55 @@ pub fn parse_struct_to_schema(
     }
 }
 
+/// Substitute generic parameters in a type with concrete types
+/// Uses quote! to regenerate the type with substitutions
+fn substitute_type(ty: &Type, generic_params: &[String], concrete_types: &[&Type]) -> Type {
+    // Check if this is a generic parameter
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        let ident_str = segment.ident.to_string();
+        if generic_params.contains(&ident_str) && segment.arguments.is_none() {
+            // Find the index and substitute
+            if let Some(index) = generic_params.iter().position(|p| p == &ident_str)
+                && let Some(concrete_ty) = concrete_types.get(index)
+            {
+                return (*concrete_ty).clone();
+            }
+        }
+    }
+
+    // For complex types, use quote! to regenerate with substitutions
+    let tokens = quote::quote! { #ty };
+    let mut new_tokens = tokens.to_string();
+
+    // Replace generic parameter names with concrete types
+    for (param, concrete_ty) in generic_params.iter().zip(concrete_types.iter()) {
+        // Replace standalone generic parameter (not part of another identifier)
+        let pattern = format!(r"\b{}\b", param);
+        let replacement = quote::quote! { #concrete_ty }.to_string();
+        new_tokens = new_tokens.replace(&pattern, &replacement);
+    }
+
+    // Parse the substituted type
+    syn::parse_str::<Type>(&new_tokens).unwrap_or_else(|_| ty.clone())
+}
+
 /// Parse Rust type to OpenAPI SchemaRef
-pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, String>) -> SchemaRef {
+pub fn parse_type_to_schema_ref(
+    ty: &Type,
+    known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
+) -> SchemaRef {
+    parse_type_to_schema_ref_with_schemas(ty, known_schemas, struct_definitions)
+}
+
+/// Parse Rust type to OpenAPI SchemaRef with optional schemas map for resolving references
+fn parse_type_to_schema_ref_with_schemas(
+    ty: &Type,
+    known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
+) -> SchemaRef {
     match ty {
         Type::Path(type_path) => {
             let path = &type_path.path;
@@ -644,7 +724,11 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                 match ident_str.as_str() {
                     "Vec" | "Option" => {
                         if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                            let inner_schema = parse_type_to_schema_ref(inner_ty, known_schemas);
+                            let inner_schema = parse_type_to_schema_ref(
+                                inner_ty,
+                                known_schemas,
+                                struct_definitions,
+                            );
                             if ident_str == "Vec" {
                                 return SchemaRef::Inline(Box::new(Schema::array(inner_schema)));
                             } else {
@@ -664,23 +748,27 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                                 Some(syn::GenericArgument::Type(_key_ty)),
                                 Some(syn::GenericArgument::Type(value_ty)),
                             ) = (args.args.get(0), args.args.get(1))
-                            {
-                                let value_schema =
-                                    parse_type_to_schema_ref(value_ty, known_schemas);
-                                // Convert SchemaRef to serde_json::Value for additional_properties
-                                let additional_props_value = match value_schema {
-                                    SchemaRef::Ref(ref_ref) => {
-                                        serde_json::json!({ "$ref": ref_ref.ref_path })
-                                    }
-                                    SchemaRef::Inline(schema) => serde_json::to_value(&*schema)
-                                        .unwrap_or(serde_json::json!({})),
-                                };
-                                return SchemaRef::Inline(Box::new(Schema {
-                                    schema_type: Some(SchemaType::Object),
-                                    additional_properties: Some(additional_props_value),
-                                    ..Schema::object()
-                                }));
-                            }
+                        {
+                            let value_schema = parse_type_to_schema_ref(
+                                value_ty,
+                                known_schemas,
+                                struct_definitions,
+                            );
+                            // Convert SchemaRef to serde_json::Value for additional_properties
+                            let additional_props_value = match value_schema {
+                                SchemaRef::Ref(ref_ref) => {
+                                    serde_json::json!({ "$ref": ref_ref.ref_path })
+                                }
+                                SchemaRef::Inline(schema) => {
+                                    serde_json::to_value(&*schema).unwrap_or(serde_json::json!({}))
+                                }
+                            };
+                            return SchemaRef::Inline(Box::new(Schema {
+                                schema_type: Some(SchemaType::Object),
+                                additional_properties: Some(additional_props_value),
+                                ..Schema::object()
+                            }));
+                        }
                     }
                     _ => {}
                 }
@@ -711,6 +799,67 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
                     };
 
                     if known_schemas.contains_key(&type_name) {
+                        // Check if this is a generic type with type parameters
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            // This is a concrete generic type like GenericStruct<String>
+                            // Inline the schema by substituting generic parameters with concrete types
+                            if let Some(base_def) = struct_definitions.get(&type_name)
+                                && let Ok(mut parsed) = syn::parse_str::<syn::ItemStruct>(base_def)
+                            {
+                                // Extract generic parameter names from the struct definition
+                                let generic_params: Vec<String> = parsed
+                                    .generics
+                                    .params
+                                    .iter()
+                                    .filter_map(|param| {
+                                        if let syn::GenericParam::Type(type_param) = param {
+                                            Some(type_param.ident.to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+
+                                // Extract concrete type arguments
+                                let concrete_types: Vec<&Type> = args
+                                    .args
+                                    .iter()
+                                    .filter_map(|arg| {
+                                        if let syn::GenericArgument::Type(ty) = arg {
+                                            Some(ty)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+
+                                // Substitute generic parameters with concrete types in all fields
+                                if generic_params.len() == concrete_types.len() {
+                                    if let syn::Fields::Named(fields_named) = &mut parsed.fields {
+                                        for field in &mut fields_named.named {
+                                            field.ty = substitute_type(
+                                                &field.ty,
+                                                &generic_params,
+                                                &concrete_types,
+                                            );
+                                        }
+                                    }
+
+                                    // Remove generics from the struct (it's now concrete)
+                                    parsed.generics.params.clear();
+                                    parsed.generics.where_clause = None;
+
+                                    // Parse the substituted struct to schema (inline)
+                                    let schema = parse_struct_to_schema(
+                                        &parsed,
+                                        known_schemas,
+                                        struct_definitions,
+                                    );
+                                    return SchemaRef::Inline(Box::new(schema));
+                                }
+                            }
+                        }
+                        // Non-generic type or generic without parameters - use reference
                         SchemaRef::Ref(Reference::schema(&type_name))
                     } else {
                         // For unknown custom types, return object schema instead of reference
@@ -722,7 +871,7 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
         }
         Type::Reference(type_ref) => {
             // Handle &T, &mut T, etc.
-            parse_type_to_schema_ref(&type_ref.elem, known_schemas)
+            parse_type_to_schema_ref_with_schemas(&type_ref.elem, known_schemas, struct_definitions)
         }
         _ => SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object))),
     }
@@ -732,6 +881,7 @@ pub fn parse_type_to_schema_ref(ty: &Type, known_schemas: &HashMap<String, Strin
 pub fn parse_request_body(
     arg: &FnArg,
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
 ) -> Option<RequestBody> {
     match arg {
         FnArg::Receiver(_) => None,
@@ -742,14 +892,19 @@ pub fn parse_request_body(
                     return None;
                 }
 
-                let segment = &path.segments[0];
+                // Check the last segment (handles both Json<T> and vespera::axum::Json<T>)
+                let segment = path.segments.last().unwrap();
                 let ident_str = segment.ident.to_string();
 
                 if ident_str == "Json"
                     && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
-                    let schema = parse_type_to_schema_ref(inner_ty, known_schemas);
+                    let schema = parse_type_to_schema_ref_with_schemas(
+                        inner_ty,
+                        known_schemas,
+                        struct_definitions,
+                    );
                     let mut content = BTreeMap::new();
                     content.insert(
                         "application/json".to_string(),
@@ -772,16 +927,19 @@ pub fn parse_request_body(
 }
 
 /// Unwrap Json<T> to get T
+/// Handles both Json<T> and vespera::axum::Json<T> by checking the last segment
 fn unwrap_json(ty: &Type) -> &Type {
     if let Type::Path(type_path) = ty {
         let path = &type_path.path;
         if !path.segments.is_empty() {
-            let segment = &path.segments[0];
+            // Check the last segment (handles both Json<T> and vespera::axum::Json<T>)
+            let segment = path.segments.last().unwrap();
             if segment.ident == "Json"
                 && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return inner_ty;
-                    }
+                && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+            {
+                return inner_ty;
+            }
         }
     }
     ty
@@ -819,16 +977,16 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
         // Get the last segment (Result) to check for generics
         if let Some(segment) = path.segments.last()
             && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                && args.args.len() >= 2
-                    && let (
-                        Some(syn::GenericArgument::Type(ok_ty)),
-                        Some(syn::GenericArgument::Type(err_ty)),
-                    ) = (args.args.first(), args.args.get(1))
-                    {
-                        // Unwrap Json from Ok type if present
-                        let ok_ty_unwrapped = unwrap_json(ok_ty);
-                        return Some((ok_ty_unwrapped.clone(), err_ty.clone()));
-                    }
+            && args.args.len() >= 2
+            && let (
+                Some(syn::GenericArgument::Type(ok_ty)),
+                Some(syn::GenericArgument::Type(err_ty)),
+            ) = (args.args.first(), args.args.get(1))
+        {
+            // Unwrap Json from Ok type if present
+            let ok_ty_unwrapped = unwrap_json(ok_ty);
+            return Some((ok_ty_unwrapped.clone(), err_ty.clone()));
+        }
     }
     None
 }
@@ -837,29 +995,30 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
 /// Returns the error type E and a default status code (400)
 fn extract_status_code_tuple(err_ty: &Type) -> Option<(u16, Type)> {
     if let Type::Tuple(tuple) = err_ty
-        && tuple.elems.len() == 2 {
-            // Check if first element is StatusCode
-            if let Type::Path(type_path) = &tuple.elems[0] {
-                let path = &type_path.path;
-                if !path.segments.is_empty() {
-                    let segment = &path.segments[0];
-                    // Check if it's StatusCode (could be qualified like axum::http::StatusCode)
-                    let is_status_code = segment.ident == "StatusCode"
-                        || (path.segments.len() > 1
-                            && path.segments.iter().any(|s| s.ident == "StatusCode"));
+        && tuple.elems.len() == 2
+    {
+        // Check if first element is StatusCode
+        if let Type::Path(type_path) = &tuple.elems[0] {
+            let path = &type_path.path;
+            if !path.segments.is_empty() {
+                let segment = &path.segments[0];
+                // Check if it's StatusCode (could be qualified like axum::http::StatusCode)
+                let is_status_code = segment.ident == "StatusCode"
+                    || (path.segments.len() > 1
+                        && path.segments.iter().any(|s| s.ident == "StatusCode"));
 
-                    if is_status_code {
-                        // Use 400 as default status code
-                        // The actual status code value is determined at runtime
-                        if let Some(error_type) = tuple.elems.get(1) {
-                            // Unwrap Json if present
-                            let error_type_unwrapped = unwrap_json(error_type);
-                            return Some((400, error_type_unwrapped.clone()));
-                        }
+                if is_status_code {
+                    // Use 400 as default status code
+                    // The actual status code value is determined at runtime
+                    if let Some(error_type) = tuple.elems.get(1) {
+                        // Unwrap Json if present
+                        let error_type_unwrapped = unwrap_json(error_type);
+                        return Some((400, error_type_unwrapped.clone()));
                     }
                 }
             }
         }
+    }
     None
 }
 
@@ -867,6 +1026,7 @@ fn extract_status_code_tuple(err_ty: &Type) -> Option<(u16, Type)> {
 pub fn parse_return_type(
     return_type: &ReturnType,
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
 ) -> BTreeMap<String, Response> {
     let mut responses = BTreeMap::new();
 
@@ -886,7 +1046,11 @@ pub fn parse_return_type(
             // Check if it's a Result<T, E>
             if let Some((ok_ty, err_ty)) = extract_result_types(ty) {
                 // Handle success response (200)
-                let ok_schema = parse_type_to_schema_ref(&ok_ty, known_schemas);
+                let ok_schema = parse_type_to_schema_ref_with_schemas(
+                    &ok_ty,
+                    known_schemas,
+                    struct_definitions,
+                );
                 let mut ok_content = BTreeMap::new();
                 ok_content.insert(
                     "application/json".to_string(),
@@ -910,7 +1074,11 @@ pub fn parse_return_type(
                 // Check if error is (StatusCode, E) tuple
                 if let Some((status_code, error_type)) = extract_status_code_tuple(&err_ty) {
                     // Use the status code from the tuple
-                    let err_schema = parse_type_to_schema_ref(&error_type, known_schemas);
+                    let err_schema = parse_type_to_schema_ref_with_schemas(
+                        &error_type,
+                        known_schemas,
+                        struct_definitions,
+                    );
                     let mut err_content = BTreeMap::new();
                     err_content.insert(
                         "application/json".to_string(),
@@ -933,7 +1101,11 @@ pub fn parse_return_type(
                     // Regular error type - use default 400
                     // Unwrap Json if present
                     let err_ty_unwrapped = unwrap_json(&err_ty);
-                    let err_schema = parse_type_to_schema_ref(err_ty_unwrapped, known_schemas);
+                    let err_schema = parse_type_to_schema_ref_with_schemas(
+                        err_ty_unwrapped,
+                        known_schemas,
+                        struct_definitions,
+                    );
                     let mut err_content = BTreeMap::new();
                     err_content.insert(
                         "application/json".to_string(),
@@ -957,7 +1129,11 @@ pub fn parse_return_type(
                 // Not a Result type - regular response
                 // Unwrap Json<T> if present
                 let unwrapped_ty = unwrap_json(ty);
-                let schema = parse_type_to_schema_ref(unwrapped_ty, known_schemas);
+                let schema = parse_type_to_schema_ref_with_schemas(
+                    unwrapped_ty,
+                    known_schemas,
+                    struct_definitions,
+                );
                 let mut content = BTreeMap::new();
                 content.insert(
                     "application/json".to_string(),
@@ -988,6 +1164,7 @@ pub fn build_operation_from_function(
     sig: &syn::Signature,
     path: &str,
     known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
     error_status: Option<&[u16]>,
 ) -> Operation {
     let path_params = extract_path_parameters(path);
@@ -997,15 +1174,17 @@ pub fn build_operation_from_function(
     // Parse function parameters
     for input in &sig.inputs {
         // Check if it's a request body (Json<T>)
-        if let Some(body) = parse_request_body(input, known_schemas) {
+        if let Some(body) = parse_request_body(input, known_schemas, struct_definitions) {
             request_body = Some(body);
-        } else if let Some(param) = parse_function_parameter(input, &path_params, known_schemas) {
+        } else if let Some(param) =
+            parse_function_parameter(input, &path_params, known_schemas, struct_definitions)
+        {
             parameters.push(param);
         }
     }
 
     // Parse return type - may return multiple responses (for Result types)
-    let mut responses = parse_return_type(&sig.output, known_schemas);
+    let mut responses = parse_return_type(&sig.output, known_schemas, struct_definitions);
 
     // Add additional error status codes from error_status attribute
     if let Some(status_codes) = error_status {
@@ -1037,10 +1216,10 @@ pub fn build_operation_from_function(
                     );
 
                     Response {
-                            description: "Error response".to_string(),
-                            headers: None,
-                            content: Some(err_content),
-                        }
+                        description: "Error response".to_string(),
+                        headers: None,
+                        content: Some(err_content),
+                    }
                 });
             }
         }
@@ -1097,6 +1276,7 @@ mod tests {
     #[case("-> Result<&str, String>", "Result<&str, String>")] // Result with reference
     fn test_parse_return_type(#[case] return_type_str: &str, #[case] expected_type: &str) {
         let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
 
         let return_type = if return_type_str.is_empty() {
             ReturnType::Default
@@ -1108,7 +1288,7 @@ mod tests {
             parsed.output
         };
 
-        let responses = parse_return_type(&return_type, &known_schemas);
+        let responses = parse_return_type(&return_type, &known_schemas, &struct_definitions);
 
         match expected_type {
             "" => {
@@ -1354,13 +1534,14 @@ mod tests {
     fn test_parse_return_type_with_known_schema() {
         let mut known_schemas = HashMap::new();
         known_schemas.insert("User".to_string(), "User".to_string());
+        let struct_definitions = HashMap::new();
         {
             let return_type_str = "-> User";
             let full_signature = format!("fn test() {}", return_type_str);
             let parsed: syn::Signature =
                 syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-            let responses = parse_return_type(&parsed.output, &known_schemas);
+            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
             assert_eq!(responses.len(), 1);
             assert!(responses.contains_key("200"));
@@ -1384,7 +1565,7 @@ mod tests {
                 syn::parse_str(&full_signature).expect("Failed to parse return type");
 
             println!("parsed: {:?}", parsed.output);
-            let responses = parse_return_type(&parsed.output, &known_schemas);
+            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
             println!("responses: {:?}", responses);
 
             assert_eq!(responses.len(), 1);
@@ -1409,13 +1590,14 @@ mod tests {
         let mut known_schemas = HashMap::new();
         known_schemas.insert("User".to_string(), "User".to_string());
         known_schemas.insert("Error".to_string(), "Error".to_string());
+        let struct_definitions = HashMap::new();
 
         let return_type_str = "-> Result<User, Error>";
         let full_signature = format!("fn test() {}", return_type_str);
         let parsed: syn::Signature =
             syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-        let responses = parse_return_type(&parsed.output, &known_schemas);
+        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
         assert_eq!(responses.len(), 2);
         assert!(responses.contains_key("200"));
@@ -1445,6 +1627,7 @@ mod tests {
     #[test]
     fn test_parse_return_type_primitive_types() {
         let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
 
         let test_cases = vec![
             ("-> i8", SchemaType::Integer),
@@ -1466,7 +1649,7 @@ mod tests {
             let parsed: syn::Signature = syn::parse_str(&full_signature)
                 .expect(&format!("Failed to parse return type: {}", return_type_str));
 
-            let responses = parse_return_type(&parsed.output, &known_schemas);
+            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
             assert_eq!(responses.len(), 1);
             let response = responses.get("200").unwrap();
@@ -1487,13 +1670,14 @@ mod tests {
     #[test]
     fn test_parse_return_type_array() {
         let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
 
         let return_type_str = "-> Vec<String>";
         let full_signature = format!("fn test() {}", return_type_str);
         let parsed: syn::Signature =
             syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-        let responses = parse_return_type(&parsed.output, &known_schemas);
+        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
         assert_eq!(responses.len(), 1);
         let response = responses.get("200").unwrap();
@@ -1511,13 +1695,14 @@ mod tests {
     #[test]
     fn test_parse_return_type_option() {
         let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
 
         let return_type_str = "-> Option<String>";
         let full_signature = format!("fn test() {}", return_type_str);
         let parsed: syn::Signature =
             syn::parse_str(&full_signature).expect("Failed to parse return type");
 
-        let responses = parse_return_type(&parsed.output, &known_schemas);
+        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
         assert_eq!(responses.len(), 1);
         let response = responses.get("200").unwrap();
