@@ -254,6 +254,93 @@ pub fn get_users() -> String {
     }
 
     #[test]
+    fn test_generate_openapi_with_enum() {
+        let mut metadata = CollectedMetadata::new();
+        metadata.structs.push(StructMetadata {
+            name: "Status".to_string(),
+            definition: "enum Status { Active, Inactive, Pending }".to_string(),
+        });
+
+        let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
+
+        assert!(doc.components.as_ref().unwrap().schemas.is_some());
+        let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
+        assert!(schemas.contains_key("Status"));
+    }
+
+    #[test]
+    fn test_generate_openapi_with_enum_with_data() {
+        // Test enum with data (tuple and struct variants) to ensure full coverage
+        let mut metadata = CollectedMetadata::new();
+        metadata.structs.push(StructMetadata {
+            name: "Message".to_string(),
+            definition: "enum Message { Text(String), User { id: i32, name: String } }".to_string(),
+        });
+
+        let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
+
+        assert!(doc.components.as_ref().unwrap().schemas.is_some());
+        let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
+        assert!(schemas.contains_key("Message"));
+    }
+
+    #[test]
+    fn test_generate_openapi_with_enum_and_route() {
+        // Test enum used in route to ensure enum parsing is called in route context
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let route_content = r#"
+pub fn get_status() -> Status {
+    Status::Active
+}
+"#;
+        let route_file = create_temp_file(&temp_dir, "status_route.rs", route_content);
+
+        let mut metadata = CollectedMetadata::new();
+        metadata.structs.push(StructMetadata {
+            name: "Status".to_string(),
+            definition: "enum Status { Active, Inactive }".to_string(),
+        });
+        metadata.routes.push(RouteMetadata {
+            method: "GET".to_string(),
+            path: "/status".to_string(),
+            function_name: "get_status".to_string(),
+            module_path: "test::status_route".to_string(),
+            file_path: route_file.to_string_lossy().to_string(),
+            signature: "fn get_status() -> Status".to_string(),
+            error_status: None,
+        });
+
+        let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
+
+        // Check enum schema
+        assert!(doc.components.as_ref().unwrap().schemas.is_some());
+        let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
+        assert!(schemas.contains_key("Status"));
+
+        // Check route
+        assert!(doc.paths.contains_key("/status"));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected `struct`")]
+    fn test_generate_openapi_with_fallback_item() {
+        // Test fallback case for non-struct, non-enum items (lines 46-48)
+        // Use a const item which will be parsed as syn::Item::Const first
+        // This triggers the fallback case (_ branch) which tries to parse as struct
+        // The fallback will fail to parse const as struct, causing a panic
+        // This test verifies that the fallback path (46-48) is executed
+        let mut metadata = CollectedMetadata::new();
+        metadata.structs.push(StructMetadata {
+            name: "Config".to_string(),
+            // This will be parsed as syn::Item::Const, triggering the fallback case
+            definition: "const CONFIG: i32 = 42;".to_string(),
+        });
+
+        // This should panic when fallback tries to parse const as struct
+        let _doc = generate_openapi_doc_with_metadata(None, None, &metadata);
+    }
+
+    #[test]
     fn test_generate_openapi_with_route_and_struct() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let route_content = r#"
