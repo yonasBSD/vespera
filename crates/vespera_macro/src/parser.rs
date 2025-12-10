@@ -209,22 +209,7 @@ pub fn parse_function_parameter(
                 }]);
             }
 
-            // Check if it's a primitive type (direct parameter)
-            if is_primitive_type(ty.as_ref()) {
-                return Some(vec![Parameter {
-                    name: param_name.clone(),
-                    r#in: ParameterLocation::Query,
-                    description: None,
-                    required: Some(true),
-                    schema: Some(parse_type_to_schema_ref_with_schemas(
-                        ty,
-                        known_schemas,
-                        struct_definitions,
-                    )),
-                    example: None,
-                }]);
-            }
-
+            // Bare primitive without extractor is ignored (cannot infer location)
             None
         }
     }
@@ -713,7 +698,7 @@ pub fn parse_enum_to_schema(
                             prefix_items: Some(tuple_item_schemas),
                             min_items: Some(tuple_len),
                             max_items: Some(tuple_len),
-                            items: None, // prefixItems와 items는 함께 사용하지 않음
+                            items: None, // Do not use prefixItems and items together
                             ..Schema::new(SchemaType::Array)
                         };
 
@@ -1590,6 +1575,49 @@ pub fn build_operation_from_function(
         }
     }
 
+    // Fallback: if last arg is String/&str and no body yet, treat as text/plain body
+    if request_body.is_none() {
+        if let Some(FnArg::Typed(PatType { ty, .. })) = sig.inputs.last() {
+            let is_string = match ty.as_ref() {
+                Type::Path(type_path) => type_path
+                    .path
+                    .segments
+                    .last()
+                    .map(|s| s.ident == "String" || s.ident == "str")
+                    .unwrap_or(false),
+                Type::Reference(type_ref) => {
+                    if let Type::Path(p) = type_ref.elem.as_ref() {
+                        p.path
+                            .segments
+                            .last()
+                            .map(|s| s.ident == "String" || s.ident == "str")
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+
+            if is_string {
+                let mut content = BTreeMap::new();
+                content.insert(
+                    "text/plain".to_string(),
+                    MediaType {
+                        schema: Some(SchemaRef::Inline(Box::new(Schema::string()))),
+                        example: None,
+                        examples: None,
+                    },
+                );
+                request_body = Some(RequestBody {
+                    description: None,
+                    content,
+                    required: Some(true),
+                });
+            }
+        }
+    }
+
     // Parse return type - may return multiple responses (for Result types)
     let mut responses = parse_return_type(&sig.output, known_schemas, struct_definitions);
 
@@ -1935,6 +1963,146 @@ mod tests {
             }
             _ => panic!("Unexpected test case"),
         }
+    }
+
+    #[rstest]
+    #[case(
+        "fn test(params: Path<(String, i32)>) {}",
+        vec!["user_id".to_string(), "count".to_string()],
+        vec![vec![ParameterLocation::Path, ParameterLocation::Path]]
+    )]
+    #[case(
+        "fn test(Query(params): Query<HashMap<String, String>>) {}",
+        vec![],
+        vec![vec![]] // Query<HashMap<..>> is ignored
+    )]
+    #[case(
+        "fn test(Header(token): Header<String>, count: i32) {}",
+        vec![],
+        vec![
+            vec![ParameterLocation::Header], // first arg (Header)
+            vec![],                          // second arg (primitive, ignored)
+        ]
+    )]
+    fn test_parse_function_parameter_cases(
+        #[case] func_src: &str,
+        #[case] path_params: Vec<String>,
+        #[case] expected_locations: Vec<Vec<ParameterLocation>>,
+    ) {
+        let func: syn::ItemFn = syn::parse_str(func_src).unwrap();
+        for (idx, arg) in func.sig.inputs.iter().enumerate() {
+            let result = parse_function_parameter(
+                arg,
+                &path_params,
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            let expected = expected_locations
+                .get(idx)
+                .unwrap_or_else(|| expected_locations.last().unwrap());
+
+            if expected.is_empty() {
+                assert!(
+                    result.is_none(),
+                    "Expected None at arg index {}, func: {}",
+                    idx, func_src
+                );
+                continue;
+            }
+
+            let params = result.as_ref().expect("Expected Some parameters");
+            let got_locs: Vec<ParameterLocation> = params.iter().map(|p| p.r#in.clone()).collect();
+            assert_eq!(
+                got_locs, *expected,
+                "Location mismatch at arg index {idx}, func: {func_src}"
+            );
+        }
+    }
+
+    #[rstest]
+    #[case("fn test(Json(payload): Json<User>) {}", true)]
+    #[case("fn test(not_json: String) {}", false)]
+    fn test_parse_request_body_json_cases(#[case] func_src: &str, #[case] has_body: bool) {
+        let func: syn::ItemFn = syn::parse_str(func_src).unwrap();
+        let arg = func.sig.inputs.first().unwrap();
+        let body = parse_request_body(arg, &HashMap::new(), &HashMap::new());
+        assert_eq!(body.is_some(), has_body);
+    }
+
+    #[rstest]
+    #[case("HashMap<String, i32>", Some(SchemaType::Object), true)]
+    #[case("Option<String>", Some(SchemaType::String), false)] // nullable check
+    fn test_parse_type_to_schema_ref_cases(
+        #[case] ty_src: &str,
+        #[case] expected_type: Option<SchemaType>,
+        #[case] expect_additional_props: bool,
+    ) {
+        let ty: Type = syn::parse_str(ty_src).unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(schema.schema_type, expected_type);
+            if expect_additional_props {
+                assert!(schema.additional_properties.is_some());
+            }
+            if ty_src.starts_with("Option") {
+                assert_eq!(schema.nullable, Some(true));
+            }
+        } else {
+            panic!("Expected inline schema for {}", ty_src);
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_generic_substitution() {
+        // Ensure generic struct Wrapper<T> { value: T } is substituted to concrete type
+        let mut known_schemas = HashMap::new();
+        known_schemas.insert("Wrapper".to_string(), "Wrapper".to_string());
+
+        let mut struct_definitions = HashMap::new();
+        struct_definitions.insert(
+            "Wrapper".to_string(),
+            "struct Wrapper<T> { value: T }".to_string(),
+        );
+
+        let ty: Type = syn::parse_str("Wrapper<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known_schemas, &struct_definitions);
+
+        if let SchemaRef::Inline(schema) = schema_ref {
+            let props = schema.properties.as_ref().unwrap();
+            let value = props.get("value").unwrap();
+            if let SchemaRef::Inline(inner) = value {
+                assert_eq!(inner.schema_type, Some(SchemaType::String));
+            } else {
+                panic!("Expected inline schema for value");
+            }
+        } else {
+            panic!("Expected inline schema for generic substitution");
+        }
+    }
+
+    #[test]
+    fn test_build_operation_string_body_fallback() {
+        let sig: syn::Signature = syn::parse_str("fn upload(data: String) -> String").unwrap();
+        let op = build_operation_from_function(
+            &sig,
+            "/upload",
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+        );
+
+        // Ensure body is set as text/plain
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+        let media = body.content.get("text/plain").unwrap();
+        if let SchemaRef::Inline(schema) = media.schema.as_ref().unwrap() {
+            assert_eq!(schema.schema_type, Some(SchemaType::String));
+        } else {
+            panic!("inline string schema expected");
+        }
+
+        // No parameters should be present
+        assert!(op.parameters.is_none());
     }
 
     #[test]
