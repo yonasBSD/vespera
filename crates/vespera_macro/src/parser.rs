@@ -42,11 +42,10 @@ pub fn parse_function_parameter(
                 Pat::Ident(ident) => ident.ident.to_string(),
                 Pat::TupleStruct(tuple_struct) => {
                     // Handle Path(id) pattern
-                    if tuple_struct.elems.len() == 1 {
-                        match &tuple_struct.elems[0] {
-                            Pat::Ident(ident) => ident.ident.to_string(),
-                            _ => return None,
-                        }
+                    if tuple_struct.elems.len() == 1
+                        && let Pat::Ident(ident) = &tuple_struct.elems[0]
+                    {
+                        ident.ident.to_string()
                     } else {
                         return None;
                     }
@@ -1223,28 +1222,23 @@ fn extract_result_types(ty: &Type) -> Option<(Type, Type)> {
 fn extract_status_code_tuple(err_ty: &Type) -> Option<(u16, Type)> {
     if let Type::Tuple(tuple) = err_ty
         && tuple.elems.len() == 2
-    {
-        // Check if first element is StatusCode
-        if let Type::Path(type_path) = &tuple.elems[0] {
+        && let Type::Path(type_path) = &tuple.elems[0]&& !&type_path.path.segments.is_empty() {
             let path = &type_path.path;
-            if !path.segments.is_empty() {
-                let segment = &path.segments[0];
-                // Check if it's StatusCode (could be qualified like axum::http::StatusCode)
-                let is_status_code = segment.ident == "StatusCode"
-                    || (path.segments.len() > 1
-                        && path.segments.iter().any(|s| s.ident == "StatusCode"));
+            let segment = &path.segments[0];
+            // Check if it's StatusCode (could be qualified like axum::http::StatusCode)
+            let is_status_code = segment.ident == "StatusCode"
+                || (path.segments.len() > 1
+                    && path.segments.iter().any(|s| s.ident == "StatusCode"));
 
-                if is_status_code {
-                    // Use 400 as default status code
-                    // The actual status code value is determined at runtime
-                    if let Some(error_type) = tuple.elems.get(1) {
-                        // Unwrap Json if present
-                        let error_type_unwrapped = unwrap_json(error_type);
-                        return Some((400, error_type_unwrapped.clone()));
-                    }
+            if is_status_code {
+                // Use 400 as default status code
+                // The actual status code value is determined at runtime
+                if let Some(error_type) = tuple.elems.get(1) {
+                    // Unwrap Json if present
+                    let error_type_unwrapped = unwrap_json(error_type);
+                    return Some((400, error_type_unwrapped.clone()));
                 }
             }
-        }
     }
     None
 }
@@ -1548,29 +1542,21 @@ pub fn build_operation_from_function(
             request_body = Some(body);
         } else {
             // Skip Path extractor - we already handled path parameters above
-            let is_path_extractor = if let FnArg::Typed(PatType { ty, .. }) = input {
-                if let Type::Path(type_path) = ty.as_ref() {
-                    let path_segments = &type_path.path;
-                    if !path_segments.segments.is_empty() {
-                        let segment = path_segments.segments.last().unwrap();
-                        segment.ident == "Path"
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+            let is_path_extractor = if let FnArg::Typed(PatType { ty, .. }) = input
+                && let Type::Path(type_path) = ty.as_ref()
+                && !&type_path.path.segments.is_empty()
+            {
+                let segment = &type_path.path.segments.last().unwrap();
+                segment.ident == "Path"
             } else {
                 false
             };
 
-            if !is_path_extractor {
-                // Process non-Path parameters
-                if let Some(params) =
+            if !is_path_extractor
+                && let Some(params) =
                     parse_function_parameter(input, &path_params, known_schemas, struct_definitions)
-                {
-                    parameters.extend(params);
-                }
+            {
+                parameters.extend(params);
             }
         }
     }
@@ -1972,6 +1958,11 @@ mod tests {
         vec![vec![ParameterLocation::Path, ParameterLocation::Path]]
     )]
     #[case(
+        "fn show(Path(id): Path<i32>) {}",
+        vec!["item_id".to_string()],               // path string name differs from pattern
+        vec![vec![ParameterLocation::Path]]       // expect path param captured
+    )]
+    #[case(
         "fn test(Query(params): Query<HashMap<String, String>>) {}",
         vec![],
         vec![vec![]] // Query<HashMap<..>> is ignored
@@ -1991,12 +1982,8 @@ mod tests {
     ) {
         let func: syn::ItemFn = syn::parse_str(func_src).unwrap();
         for (idx, arg) in func.sig.inputs.iter().enumerate() {
-            let result = parse_function_parameter(
-                arg,
-                &path_params,
-                &HashMap::new(),
-                &HashMap::new(),
-            );
+            let result =
+                parse_function_parameter(arg, &path_params, &HashMap::new(), &HashMap::new());
             let expected = expected_locations
                 .get(idx)
                 .unwrap_or_else(|| expected_locations.last().unwrap());
@@ -2005,7 +1992,8 @@ mod tests {
                 assert!(
                     result.is_none(),
                     "Expected None at arg index {}, func: {}",
-                    idx, func_src
+                    idx,
+                    func_src
                 );
                 continue;
             }
@@ -2083,13 +2071,8 @@ mod tests {
     #[test]
     fn test_build_operation_string_body_fallback() {
         let sig: syn::Signature = syn::parse_str("fn upload(data: String) -> String").unwrap();
-        let op = build_operation_from_function(
-            &sig,
-            "/upload",
-            &HashMap::new(),
-            &HashMap::new(),
-            None,
-        );
+        let op =
+            build_operation_from_function(&sig, "/upload", &HashMap::new(), &HashMap::new(), None);
 
         // Ensure body is set as text/plain
         let body = op.request_body.as_ref().expect("request body expected");
@@ -2105,289 +2088,101 @@ mod tests {
         assert!(op.parameters.is_none());
     }
 
-    #[test]
-    fn test_parse_return_type_with_known_schema() {
-        let mut known_schemas = HashMap::new();
-        known_schemas.insert("User".to_string(), "User".to_string());
-        let struct_definitions = HashMap::new();
-        {
-            let return_type_str = "-> User";
-            let full_signature = format!("fn test() {}", return_type_str);
-            let parsed: syn::Signature =
-                syn::parse_str(&full_signature).expect("Failed to parse return type");
-
-            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-            assert_eq!(responses.len(), 1);
-            assert!(responses.contains_key("200"));
-            let response = responses.get("200").unwrap();
-            assert!(response.content.is_some());
-
-            let content = response.content.as_ref().unwrap();
-            let media_type = content.get("application/json").unwrap();
-
-            // Should be a reference to the known schema
-            if let SchemaRef::Ref(ref_ref) = media_type.schema.as_ref().unwrap() {
-                assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
-            } else {
-                panic!("Expected schema reference for known type");
-            }
-        }
-        {
-            let return_type_str = "-> Json<User>";
-            let full_signature = format!("fn test() {}", return_type_str);
-            let parsed: syn::Signature =
-                syn::parse_str(&full_signature).expect("Failed to parse return type");
-
-            println!("parsed: {:?}", parsed.output);
-            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-            println!("responses: {:?}", responses);
-
-            assert_eq!(responses.len(), 1);
-            assert!(responses.contains_key("200"));
-            let response = responses.get("200").unwrap();
-            assert!(response.content.is_some());
-
-            let content = response.content.as_ref().unwrap();
-            let media_type = content.get("application/json").unwrap();
-
-            // Should be a reference to the known schema
-            if let SchemaRef::Ref(ref_ref) = media_type.schema.as_ref().unwrap() {
-                assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
-            } else {
-                panic!("Expected schema reference for Json<User>");
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_return_type_result_with_known_schema() {
+    #[rstest]
+    #[case("-> User", Some("User"), None, None, false, None)] // known schema ref
+    #[case("-> Json<User>", Some("User"), None, None, false, None)] // unwrap Json, known ref
+    #[case("-> Result<User, Error>", Some("User"), None, Some("Error"), false, None)] // Ok/Err refs
+    #[case(
+        "-> Result<(HeaderMap, String), String>",
+        None,
+        Some(SchemaType::String),
+        None,
+        true,
+        Some(SchemaType::String)
+    )] // HeaderMap sets headers, Ok body is String
+    #[case(
+        "-> Result<(StatusCode, HeaderMap, String), String>",
+        None,
+        Some(SchemaType::String),
+        None,
+        true,
+        Some(SchemaType::String)
+    )]
+    #[case(
+        "-> Result<(StatusCode, HeaderMap, u32, String), String>",
+        None,
+        Some(SchemaType::String),
+        None,
+        true,
+        Some(SchemaType::String)
+    )]
+    fn test_parse_return_type_additional_cases(
+        #[case] return_type_str: &str,
+        #[case] expect_ok_ref: Option<&str>,
+        #[case] expect_ok_type: Option<SchemaType>,
+        #[case] expect_err_ref: Option<&str>,
+        #[case] expect_ok_headers: bool,
+        #[case] expect_err_type: Option<SchemaType>,
+    ) {
         let mut known_schemas = HashMap::new();
         known_schemas.insert("User".to_string(), "User".to_string());
         known_schemas.insert("Error".to_string(), "Error".to_string());
         let struct_definitions = HashMap::new();
 
-        let return_type_str = "-> Result<User, Error>";
         let full_signature = format!("fn test() {}", return_type_str);
         let parsed: syn::Signature =
             syn::parse_str(&full_signature).expect("Failed to parse return type");
 
         let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
 
-        assert_eq!(responses.len(), 2);
-        assert!(responses.contains_key("200"));
-        assert!(responses.contains_key("400"));
-
-        // Check Ok response has User schema reference
-        let ok_response = responses.get("200").unwrap();
-        let ok_content = ok_response.content.as_ref().unwrap();
-        let ok_media_type = ok_content.get("application/json").unwrap();
-        if let SchemaRef::Ref(ref_ref) = ok_media_type.schema.as_ref().unwrap() {
-            assert_eq!(ref_ref.ref_path, "#/components/schemas/User");
-        } else {
-            panic!("Expected schema reference for User");
-        }
-
-        // Check Err response has Error schema reference
-        let err_response = responses.get("400").unwrap();
-        let err_content = err_response.content.as_ref().unwrap();
-        let err_media_type = err_content.get("application/json").unwrap();
-        if let SchemaRef::Ref(ref_ref) = err_media_type.schema.as_ref().unwrap() {
-            assert_eq!(ref_ref.ref_path, "#/components/schemas/Error");
-        } else {
-            panic!("Expected schema reference for Error");
-        }
-    }
-
-    #[test]
-    fn test_parse_return_type_with_header_map_tuple() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        let parsed: syn::Signature =
-            syn::parse_str("fn test() -> Result<(HeaderMap, String), String>")
-                .expect("Failed to parse return type");
-
-        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
+        // Ok response
         let ok_response = responses.get("200").expect("Ok response missing");
-        let ok_content = ok_response
-            .content
-            .as_ref()
-            .expect("Ok content missing")
-            .get("application/json")
-            .expect("application/json missing");
-
-        if let SchemaRef::Inline(schema) = ok_content.schema.as_ref().unwrap() {
-            assert_eq!(schema.schema_type, Some(SchemaType::String));
+        if expect_ok_headers {
+            assert!(ok_response.headers.is_some(), "Expected headers set for Ok");
         } else {
-            panic!("Expected inline String schema for Ok type");
+            assert!(ok_response.headers.is_none(), "Headers should be None for Ok");
         }
-
-        assert!(
-            ok_response.headers.is_some(),
-            "HeaderMap should set headers"
-        );
-    }
-
-    #[test]
-    fn test_parse_return_type_with_status_and_header_map_tuple() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        let parsed: syn::Signature =
-            syn::parse_str("fn test() -> Result<(StatusCode, HeaderMap, String), String>")
-                .expect("Failed to parse return type");
-
-        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-        let ok_response = responses.get("200").expect("Ok response missing");
-        let ok_content = ok_response
-            .content
-            .as_ref()
-            .expect("Ok content missing")
+        let ok_content = ok_response.content.as_ref().expect("Ok content missing");
+        let ok_media_type = ok_content
             .get("application/json")
-            .expect("application/json missing");
-
-        if let SchemaRef::Inline(schema) = ok_content.schema.as_ref().unwrap() {
-            assert_eq!(schema.schema_type, Some(SchemaType::String));
-        } else {
-            panic!("Expected inline String schema for Ok type");
-        }
-
-        assert!(
-            ok_response.headers.is_some(),
-            "HeaderMap should set headers"
-        );
-    }
-
-    #[test]
-    fn test_parse_return_type_with_mixed_tuple_uses_last_as_body() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        // Additional tuple elements before the payload should be ignored; last element is body
-        let parsed: syn::Signature =
-            syn::parse_str("fn test() -> Result<(StatusCode, HeaderMap, u32, String), String>")
-                .expect("Failed to parse return type");
-
-        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-        let ok_response = responses.get("200").expect("Ok response missing");
-        let ok_content = ok_response
-            .content
-            .as_ref()
-            .expect("Ok content missing")
-            .get("application/json")
-            .expect("application/json missing");
-
-        if let SchemaRef::Inline(schema) = ok_content.schema.as_ref().unwrap() {
-            assert_eq!(schema.schema_type, Some(SchemaType::String));
-        } else {
-            panic!("Expected inline String schema for Ok type");
-        }
-
-        assert!(
-            ok_response.headers.is_some(),
-            "HeaderMap should set headers"
-        );
-    }
-
-    #[test]
-    fn test_parse_return_type_primitive_types() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        let test_cases = vec![
-            ("-> i8", SchemaType::Integer),
-            ("-> i16", SchemaType::Integer),
-            ("-> i32", SchemaType::Integer),
-            ("-> i64", SchemaType::Integer),
-            ("-> u8", SchemaType::Integer),
-            ("-> u16", SchemaType::Integer),
-            ("-> u32", SchemaType::Integer),
-            ("-> u64", SchemaType::Integer),
-            ("-> f32", SchemaType::Number),
-            ("-> f64", SchemaType::Number),
-            ("-> bool", SchemaType::Boolean),
-            ("-> String", SchemaType::String),
-        ];
-
-        for (return_type_str, expected_schema_type) in test_cases {
-            let full_signature = format!("fn test() {}", return_type_str);
-            let parsed: syn::Signature = syn::parse_str(&full_signature)
-                .expect(&format!("Failed to parse return type: {}", return_type_str));
-
-            let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-            assert_eq!(responses.len(), 1);
-            let response = responses.get("200").unwrap();
-            let content = response.content.as_ref().unwrap();
-            let media_type = content.get("application/json").unwrap();
-
-            if let SchemaRef::Inline(schema) = media_type.schema.as_ref().unwrap() {
-                assert_eq!(schema.schema_type, Some(expected_schema_type));
+            .expect("Ok application/json missing");
+        if let Some(expected_ref) = expect_ok_ref {
+            if let SchemaRef::Ref(r) = ok_media_type.schema.as_ref().unwrap() {
+                assert_eq!(r.ref_path, format!("#/components/schemas/{}", expected_ref));
             } else {
-                panic!(
-                    "Expected inline schema for primitive type: {}",
-                    return_type_str
-                );
+                panic!("Expected schema ref for Ok");
+            }
+        } else if let Some(expected_type) = expect_ok_type {
+            if let SchemaRef::Inline(schema) = ok_media_type.schema.as_ref().unwrap() {
+                assert_eq!(schema.schema_type, Some(expected_type));
+            } else {
+                panic!("Expected inline schema for Ok");
             }
         }
-    }
 
-    #[test]
-    fn test_parse_return_type_array() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        let return_type_str = "-> Vec<String>";
-        let full_signature = format!("fn test() {}", return_type_str);
-        let parsed: syn::Signature =
-            syn::parse_str(&full_signature).expect("Failed to parse return type");
-
-        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-        assert_eq!(responses.len(), 1);
-        let response = responses.get("200").unwrap();
-        let content = response.content.as_ref().unwrap();
-        let media_type = content.get("application/json").unwrap();
-
-        if let SchemaRef::Inline(schema) = media_type.schema.as_ref().unwrap() {
-            assert_eq!(schema.schema_type, Some(SchemaType::Array));
-            assert!(schema.items.is_some());
-        } else {
-            panic!("Expected inline array schema");
-        }
-    }
-
-    #[test]
-    fn test_parse_return_type_option() {
-        let known_schemas = HashMap::new();
-        let struct_definitions = HashMap::new();
-
-        let return_type_str = "-> Option<String>";
-        let full_signature = format!("fn test() {}", return_type_str);
-        let parsed: syn::Signature =
-            syn::parse_str(&full_signature).expect("Failed to parse return type");
-
-        let responses = parse_return_type(&parsed.output, &known_schemas, &struct_definitions);
-
-        assert_eq!(responses.len(), 1);
-        let response = responses.get("200").unwrap();
-        let content = response.content.as_ref().unwrap();
-        let media_type = content.get("application/json").unwrap();
-
-        if let SchemaRef::Inline(schema) = media_type.schema.as_ref().unwrap() {
-            assert_eq!(schema.nullable, Some(true));
-            // Check that inner type is String
-            if let Some(items) = &schema.items {
-                if let SchemaRef::Inline(inner_schema) = items.as_ref() {
-                    assert_eq!(inner_schema.schema_type, Some(SchemaType::String));
-                }
+        // Err response (if present)
+        if let Some(expected_err_ref) = expect_err_ref {
+            let err_response = responses.get("400").expect("Err response missing");
+            let err_content = err_response.content.as_ref().expect("Err content missing");
+            let err_media_type = err_content
+                .get("application/json")
+                .expect("Err application/json missing");
+            if let SchemaRef::Ref(r) = err_media_type.schema.as_ref().unwrap() {
+                assert_eq!(r.ref_path, format!("#/components/schemas/{}", expected_err_ref));
+            } else {
+                panic!("Expected schema ref for Err");
             }
-        } else {
-            panic!("Expected inline nullable schema");
+        } else if let Some(expected_err_type) = expect_err_type {
+            let err_response = responses.get("400").expect("Err response missing");
+            let err_content = err_response.content.as_ref().expect("Err content missing");
+            let err_media_type = err_content
+                .get("application/json")
+                .expect("Err application/json missing");
+            if let SchemaRef::Inline(schema) = err_media_type.schema.as_ref().unwrap() {
+                assert_eq!(schema.schema_type, Some(expected_err_type));
+            } else {
+                panic!("Expected inline schema for Err");
+            }
         }
     }
 
