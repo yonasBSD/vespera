@@ -13,22 +13,6 @@ pub enum SchemaRef {
     Inline(Box<Schema>),
 }
 
-impl SchemaRef {
-    /// Check if this is a reference
-    pub fn is_ref(&self) -> bool {
-        matches!(self, SchemaRef::Ref(_))
-    }
-
-    /// Get the reference path if this is a reference
-    pub fn ref_path(&self) -> Option<&str> {
-        if let SchemaRef::Ref(ref_ref) = self {
-            Some(&ref_ref.ref_path)
-        } else {
-            None
-        }
-    }
-}
-
 /// Reference definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {

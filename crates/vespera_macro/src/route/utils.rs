@@ -39,10 +39,11 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
                 syn::Meta::List(meta_list) => {
                     // Try to parse as RouteArgs
                     if let Ok(route_args) = meta_list.parse_args::<RouteArgs>() {
-                        let method = route_args.method.as_ref();
-                        let method = method
+                        let method = route_args
+                            .method
+                            .as_ref()
                             .map(syn::Ident::to_string)
-                            .unwrap_or("get".to_string());
+                            .unwrap_or_else(|| "get".to_string());
                         let path = route_args.path.as_ref().map(syn::LitStr::value);
 
                         // Parse error_status array if present
