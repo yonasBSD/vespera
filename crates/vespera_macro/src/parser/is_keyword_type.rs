@@ -36,13 +36,7 @@ pub fn is_keyword_type(ty: &Type, keyword: &KeywordType) -> bool {
 }
 
 pub fn is_keyword_type_by_type_path(ty: &TypePath, keyword: &KeywordType) -> bool {
-    if let Some(segment) = ty.path.segments.last()
-        && segment.ident == keyword.as_str()
-    {
-        true
-    } else {
-        false
-    }
+    return ty.path.segments.last().unwrap().ident == keyword.as_str();
 }
 
 #[cfg(test)]

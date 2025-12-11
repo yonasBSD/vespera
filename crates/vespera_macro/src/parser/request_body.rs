@@ -29,9 +29,6 @@ pub fn parse_request_body(
         FnArg::Typed(PatType { ty, .. }) => {
             if let Type::Path(type_path) = ty.as_ref() {
                 let path = &type_path.path;
-                if path.segments.is_empty() {
-                    return None;
-                }
 
                 // Check the last segment (handles both Json<T> and vespera::axum::Json<T>)
                 let segment = path.segments.last().unwrap();
@@ -93,13 +90,27 @@ mod tests {
     use insta::{assert_debug_snapshot, with_settings};
     use rstest::rstest;
     use std::collections::HashMap;
-    use vespera_core::schema::{SchemaRef, SchemaType};
+
+    #[rstest]
+    #[case("String", true)]
+    #[case("str", true)]
+    #[case("&String", true)]
+    #[case("&str", true)]
+    #[case("i32", false)]
+    #[case("Vec<String>", false)]
+    #[case("!", false)]
+    fn test_is_string_like_cases(#[case] ty_src: &str, #[case] expected: bool) {
+        let ty: Type = syn::parse_str(ty_src).expect("type parse failed");
+        assert_eq!(is_string_like(&ty), expected);
+    }
 
     #[rstest]
     #[case::json("fn test(Json(payload): Json<User>) {}", true, "json")]
     #[case::string("fn test(just_string: String) {}", true, "string")]
     #[case::str("fn test(just_str: &str) {}", true, "str")]
     #[case::i32("fn test(just_i32: i32) {}", false, "i32")]
+    #[case::vec_string("fn test(just_vec_string: Vec<String>) {}", false, "vec_string")]
+    #[case::self_ref("fn test(&self) {}", false, "self_ref")]
     fn test_parse_request_body_cases(
         #[case] func_src: &str,
         #[case] has_body: bool,
@@ -112,24 +123,5 @@ mod tests {
         with_settings!({ snapshot_suffix => format!("req_body_{}", suffix) }, {
             assert_debug_snapshot!(body);
         });
-    }
-
-    #[test]
-    fn test_parse_request_body_text_plain_schema() {
-        let func: syn::ItemFn = syn::parse_str("fn test(body: &str) {}").unwrap();
-        let arg = func.sig.inputs.first().unwrap();
-        let body = parse_request_body(arg, &HashMap::new(), &HashMap::new())
-            .expect("expected request body");
-
-        let media = body
-            .content
-            .get("text/plain")
-            .expect("expected text/plain content");
-
-        if let SchemaRef::Inline(schema) = media.schema.as_ref().expect("schema expected") {
-            assert_eq!(schema.schema_type, Some(SchemaType::String));
-        } else {
-            panic!("expected inline schema");
-        }
     }
 }
