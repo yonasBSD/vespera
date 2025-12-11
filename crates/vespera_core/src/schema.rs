@@ -214,7 +214,46 @@ pub struct Schema {
 impl Schema {
     /// Create a new schema
     pub fn new(schema_type: SchemaType) -> Self {
-        Self { ref_path: None, schema_type: Some(schema_type), format: None, title: None, description: None, default: None, example: None, examples: None, minimum: None, maximum: None, exclusive_minimum: None, exclusive_maximum: None, multiple_of: None, min_length: None, max_length: None, pattern: None, items: None, prefix_items: None, min_items: None, max_items: None, unique_items: None, properties: None, required: None, additional_properties: None, min_properties: None, max_properties: None, r#enum: None, all_of: None, any_of: None, one_of: None, not: None, nullable: None, read_only: None, write_only: None, external_docs: None, defs: None, dynamic_anchor: None, dynamic_ref: None }
+        Self {
+            ref_path: None,
+            schema_type: Some(schema_type),
+            format: None,
+            title: None,
+            description: None,
+            default: None,
+            example: None,
+            examples: None,
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            multiple_of: None,
+            min_length: None,
+            max_length: None,
+            pattern: None,
+            items: None,
+            prefix_items: None,
+            min_items: None,
+            max_items: None,
+            unique_items: None,
+            properties: None,
+            required: None,
+            additional_properties: None,
+            min_properties: None,
+            max_properties: None,
+            r#enum: None,
+            all_of: None,
+            any_of: None,
+            one_of: None,
+            not: None,
+            nullable: None,
+            read_only: None,
+            write_only: None,
+            external_docs: None,
+            defs: None,
+            dynamic_anchor: None,
+            dynamic_ref: None,
+        }
     }
 
     /// Create a string schema
@@ -239,12 +278,19 @@ impl Schema {
 
     /// Create an array schema
     pub fn array(items: SchemaRef) -> Self {
-        Self { items: Some(Box::new(items)), ..Self::new(SchemaType::Array) }
+        Self {
+            items: Some(Box::new(items)),
+            ..Self::new(SchemaType::Array)
+        }
     }
 
     /// Create an object schema
     pub fn object() -> Self {
-        Self { properties: Some(BTreeMap::new()), required: Some(Vec::new()), ..Self::new(SchemaType::Object) }
+        Self {
+            properties: Some(BTreeMap::new()),
+            required: Some(Vec::new()),
+            ..Self::new(SchemaType::Object)
+        }
     }
 }
 

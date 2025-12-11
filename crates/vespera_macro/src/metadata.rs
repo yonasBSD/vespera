@@ -42,6 +42,9 @@ pub struct CollectedMetadata {
 
 impl CollectedMetadata {
     pub fn new() -> Self {
-        Self { routes: Vec::new(), structs: Vec::new() }
+        Self {
+            routes: Vec::new(),
+            structs: Vec::new(),
+        }
     }
 }

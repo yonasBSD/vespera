@@ -191,7 +191,10 @@ async fn test_mod_file_with_complex_struct_body() {
         }
     });
 
-    let response = server.post("/complex-struct-body").json(&complex_body).await;
+    let response = server
+        .post("/complex-struct-body")
+        .json(&complex_body)
+        .await;
 
     response.assert_status_ok();
     let response_text = response.text();
@@ -277,7 +280,10 @@ async fn test_mod_file_with_complex_struct_body_with_rename() {
         }
     });
 
-    let response = server.post("/complex-struct-body-with-rename").json(&complex_body).await;
+    let response = server
+        .post("/complex-struct-body-with-rename")
+        .json(&complex_body)
+        .await;
 
     response.assert_status_ok();
     let response_text = response.text();
