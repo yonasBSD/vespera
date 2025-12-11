@@ -122,10 +122,10 @@ mod tests {
         let file: syn::File = syn::parse_str(&full_code).expect("Failed to parse with attribute");
 
         // Extract the first attribute from the function
-        if let Some(syn::Item::Fn(fn_item)) = file.items.first() {
-            if let Some(attr) = fn_item.attrs.first() {
-                return attr.meta.clone();
-            }
+        if let Some(syn::Item::Fn(fn_item)) = file.items.first()
+            && let Some(attr) = fn_item.attrs.first()
+        {
+            return attr.meta.clone();
         }
 
         panic!("Failed to extract meta from attribute: {}", attr_str);

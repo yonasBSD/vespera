@@ -494,10 +494,8 @@ pub fn create_user() -> String {
             assert!(doc.components.as_ref().unwrap().schemas.is_some());
             let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
             assert!(schemas.contains_key("User"));
-        } else {
-            if let Some(schemas) = doc.components.as_ref().unwrap().schemas.as_ref() {
-                assert!(!schemas.contains_key("User"));
-            }
+        } else if let Some(schemas) = doc.components.as_ref().unwrap().schemas.as_ref() {
+            assert!(!schemas.contains_key("User"));
         }
 
         // Check route

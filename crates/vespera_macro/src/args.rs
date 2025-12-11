@@ -180,11 +180,8 @@ mod tests {
                         if let syn::Expr::Lit(syn::ExprLit {
                             lit: syn::Lit::Int(lit_int),
                             ..
-                        }) = elem
-                        {
-                            if let Ok(code) = lit_int.base10_parse::<u16>() {
+                        }) = elem &&  let Ok(code) = lit_int.base10_parse::<u16>() {
                                 status_codes.push(code);
-                            }
                         }
                     }
                     assert_eq!(

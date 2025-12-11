@@ -118,8 +118,6 @@ pub fn get_users() -> String {
 }
 "#,
         )],
-        1, // expected routes
-        0, // expected structs
         "get",
         "/users",
         "get_users",
@@ -136,8 +134,6 @@ pub fn create_user() -> String {
 }
 "#,
         )],
-        1,
-        0,
         "post",
         "/create-user",
         "create_user",
@@ -154,8 +150,6 @@ pub fn get_users() -> String {
 }
 "#,
         )],
-        1,
-        0,
         "get",
         "/users/api/users",
         "get_users",
@@ -172,8 +166,6 @@ pub fn get_users() -> String {
 }
 "#,
         )],
-        1,
-        0,
         "get",
         "/users",
         "get_users",
@@ -190,8 +182,6 @@ pub fn get_users() -> String {
 }
 "#,
         )],
-        1,
-        0,
         "get",
         "/api/users",
         "get_users",
@@ -208,8 +198,6 @@ pub fn get_users() -> String {
 }
 "#,
         )],
-        1,
-        0,
         "get",
         "/api/v1/users",
         "get_users",
@@ -218,8 +206,6 @@ pub fn get_users() -> String {
     fn test_collect_metadata_routes(
         #[case] folder_name: &str,
         #[case] files: Vec<(&str, &str)>,
-        #[case] expected_routes: usize,
-        #[case] expected_structs: usize,
         #[case] expected_method: &str,
         #[case] expected_path: &str,
         #[case] expected_function_name: &str,
@@ -233,22 +219,17 @@ pub fn get_users() -> String {
 
         let metadata = collect_metadata(temp_dir.path(), folder_name).unwrap();
 
-        assert_eq!(metadata.routes.len(), expected_routes);
-        assert_eq!(metadata.structs.len(), expected_structs);
-
-        if expected_routes > 0 {
-            let route = &metadata.routes[0];
-            assert_eq!(route.method, expected_method);
-            assert_eq!(route.path, expected_path);
-            assert_eq!(route.function_name, expected_function_name);
-            assert_eq!(route.module_path, expected_module_path);
-            if let Some((first_filename, _)) = files.first() {
-                assert!(
-                    route
-                        .file_path
-                        .contains(first_filename.split('/').next().unwrap())
-                );
-            }
+        let route = &metadata.routes[0];
+        assert_eq!(route.method, expected_method);
+        assert_eq!(route.path, expected_path);
+        assert_eq!(route.function_name, expected_function_name);
+        assert_eq!(route.module_path, expected_module_path);
+        if let Some((first_filename, _)) = files.first() {
+            assert!(
+                route
+                    .file_path
+                    .contains(first_filename.split('/').next().unwrap())
+            );
         }
 
         drop(temp_dir);

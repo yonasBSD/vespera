@@ -377,10 +377,10 @@ mod tests {
                     assert_eq!(schema.schema_type, Some(SchemaType::Array));
                     assert!(schema.items.is_some());
                     // Check that items is String
-                    if let Some(items) = &schema.items {
-                        if let SchemaRef::Inline(items_schema) = items.as_ref() {
-                            assert_eq!(items_schema.schema_type, Some(SchemaType::String));
-                        }
+                    if let Some(items) = &schema.items
+                        && let SchemaRef::Inline(items_schema) = items.as_ref()
+                    {
+                        assert_eq!(items_schema.schema_type, Some(SchemaType::String));
                     }
                 } else {
                     panic!("Expected inline Array schema");
