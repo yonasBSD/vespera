@@ -36,7 +36,7 @@ pub fn is_keyword_type(ty: &Type, keyword: &KeywordType) -> bool {
 }
 
 pub fn is_keyword_type_by_type_path(ty: &TypePath, keyword: &KeywordType) -> bool {
-    return ty.path.segments.last().unwrap().ident == keyword.as_str();
+    ty.path.segments.last().unwrap().ident == keyword.as_str()
 }
 
 #[cfg(test)]
