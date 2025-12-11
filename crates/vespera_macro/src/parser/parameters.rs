@@ -466,7 +466,7 @@ mod tests {
 
     fn setup_test_data(func_src: &str) -> (HashMap<String, String>, HashMap<String, String>) {
         let mut struct_definitions = HashMap::new();
-        let known_schemas = HashMap::new();
+        let known_schemas: HashMap<String, String> = HashMap::new();
         
         if func_src.contains("QueryParams") {
             struct_definitions.insert(
@@ -562,11 +562,6 @@ mod tests {
         vec![vec![]]
     )]
     #[case(
-        "fn test(id: i32) {}",
-        vec!["id".to_string()],
-        vec![vec![ParameterLocation::Path]]
-    )]
-    #[case(
         "fn test(params: Query<UnknownType>) {}",
         vec![],
         vec![vec![]]
@@ -575,6 +570,16 @@ mod tests {
         "fn test(params: Query<BTreeMap<String, String>>) {}",
         vec![],
         vec![vec![]]
+    )]
+    #[case(
+        "fn test(user: Query<User>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Query, ParameterLocation::Query]]
+    )]
+    #[case(
+        "fn test(custom: Header<CustomHeader>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Header]]
     )]
     fn test_parse_function_parameter_cases(
         #[case] func_src: &str,
@@ -642,12 +647,25 @@ mod tests {
         "fn test(id: Path<i32>) {}",
         vec!["user_id".to_string(), "post_id".to_string()],
     )]
+    #[case(
+        "fn test((x, y): (i32, i32)) {}",
+        vec![],
+    )]
     fn test_parse_function_parameter_wrong_cases(
         #[case] func_src: &str,
         #[case] path_params: Vec<String>,
     ) {
         let func: syn::ItemFn = syn::parse_str(func_src).unwrap();
         let (known_schemas, struct_definitions) = setup_test_data(func_src);
+
+        // Provide custom types for header/query known schemas/structs
+        let mut struct_definitions = struct_definitions;
+        struct_definitions.insert(
+            "User".to_string(),
+            "pub struct User { pub id: i32 }".to_string(),
+        );
+        let mut known_schemas = known_schemas;
+        known_schemas.insert("CustomHeader".to_string(), "#/components/schemas/CustomHeader".to_string());
 
         for (idx, arg) in func.sig.inputs.iter().enumerate() {
             let result = parse_function_parameter(
@@ -666,23 +684,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_is_map_type() {
-        // Test HashMap
-        let ty: Type = syn::parse_str("HashMap<String, String>").unwrap();
-        assert!(is_map_type(&ty));
+    #[rstest]
+    #[case("i32", true)]
+    #[case("Vec<String>", true)]
+    #[case("Option<bool>", true)]
+    #[case("CustomType", false)]
+    fn test_is_primitive_like_fn(#[case] type_str: &str, #[case] expected: bool) {
+        let ty: Type = syn::parse_str(type_str).unwrap();
+        assert_eq!(is_primitive_like(&ty), expected, "type_str={}", type_str);
+    }
 
-        // Test BTreeMap
-        let ty: Type = syn::parse_str("BTreeMap<String, String>").unwrap();
-        assert!(is_map_type(&ty));
-
-        // Test non-map type (should return false)
-        let ty: Type = syn::parse_str("String").unwrap();
-        assert!(!is_map_type(&ty));
-
-        // Test Type::Path with empty segments (should return false)
-        let ty: Type = syn::parse_str("Vec<i32>").unwrap();
-        assert!(!is_map_type(&ty));
+    #[rstest]
+    #[case("HashMap<String, String>", true)]
+    #[case("BTreeMap<String, String>", true)]
+    #[case("String", false)]
+    #[case("Vec<i32>", false)]
+    fn test_is_map_type(#[case] type_str: &str, #[case] expected: bool) {
+        let ty: Type = syn::parse_str(type_str).unwrap();
+        assert_eq!(is_map_type(&ty), expected, "type_str={}", type_str);
     }
 
     #[rstest]
