@@ -248,7 +248,13 @@ pub fn vespera(input: TokenStream) -> TokenStream {
             }
         };
         for openapi_file_name in &openapi_file_names {
-            if let Err(e) = std::fs::write(openapi_file_name, &json_str) {
+            // create directory if not exists
+            let file_path = Path::new(openapi_file_name);
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent).expect("Failed to create parent directory");
+            }
+
+            if let Err(e) = std::fs::write(file_path, &json_str) {
                 return syn::Error::new(
                     Span::call_site(),
                     format!(
@@ -435,7 +441,7 @@ mod tests {
         let folder_name = "routes";
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );
@@ -592,7 +598,7 @@ pub fn get_users() -> String {
         }
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );
@@ -677,7 +683,7 @@ pub fn update_user() -> String {
         );
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );
@@ -731,7 +737,7 @@ pub fn create_users() -> String {
         );
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );
@@ -777,7 +783,7 @@ pub fn index() -> String {
         );
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );
@@ -813,7 +819,7 @@ pub fn get_users() -> String {
         );
 
         let result = generate_router_code(
-            &collect_metadata(&temp_dir.path(), folder_name).unwrap(),
+            &collect_metadata(temp_dir.path(), folder_name).unwrap(),
             None,
             None,
         );

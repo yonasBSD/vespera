@@ -13,22 +13,6 @@ pub enum SchemaRef {
     Inline(Box<Schema>),
 }
 
-impl SchemaRef {
-    /// Check if this is a reference
-    pub fn is_ref(&self) -> bool {
-        matches!(self, SchemaRef::Ref(_))
-    }
-
-    /// Get the reference path if this is a reference
-    pub fn ref_path(&self) -> Option<&str> {
-        if let SchemaRef::Ref(ref_ref) = self {
-            Some(&ref_ref.ref_path)
-        } else {
-            None
-        }
-    }
-}
-
 /// Reference definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
@@ -386,4 +370,45 @@ pub struct SecurityScheme {
 pub trait SchemaBuilder: Sized {
     // This trait is used as a marker for derive macro
     // The actual schema conversion will be implemented separately
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(Schema::string(), SchemaType::String)]
+    #[case(Schema::integer(), SchemaType::Integer)]
+    #[case(Schema::number(), SchemaType::Number)]
+    #[case(Schema::boolean(), SchemaType::Boolean)]
+    fn primitive_helpers_set_schema_type(#[case] schema: Schema, #[case] expected: SchemaType) {
+        assert_eq!(schema.schema_type, Some(expected));
+    }
+
+    #[test]
+    fn array_helper_sets_type_and_items() {
+        let item_schema = Schema::boolean();
+        let schema = Schema::array(SchemaRef::Inline(Box::new(item_schema.clone())));
+
+        assert_eq!(schema.schema_type, Some(SchemaType::Array));
+        let items = schema.items.expect("items should be set");
+        match *items {
+            SchemaRef::Inline(inner) => {
+                assert_eq!(inner.schema_type, Some(SchemaType::Boolean));
+            }
+            SchemaRef::Ref(_) => panic!("array helper should set inline items"),
+        }
+    }
+
+    #[test]
+    fn object_helper_initializes_collections() {
+        let schema = Schema::object();
+
+        assert_eq!(schema.schema_type, Some(SchemaType::Object));
+        let props = schema.properties.expect("properties should be initialized");
+        assert!(props.is_empty());
+        let required = schema.required.expect("required should be initialized");
+        assert!(required.is_empty());
+    }
 }

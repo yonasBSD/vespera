@@ -36,15 +36,15 @@ impl syn::parse::Parse for RouteArgs {
                         return Err(lookahead.error());
                     }
                 }
+
+                // Check if there's a comma
+                if input.peek(syn::Token![,]) {
+                    input.parse::<syn::Token![,]>()?;
+                } else {
+                    break;
+                }
             } else {
                 return Err(lookahead.error());
-            }
-
-            // Check if there's a comma
-            if input.peek(syn::Token![,]) {
-                input.parse::<syn::Token![,]>()?;
-            } else {
-                break;
             }
         }
 
@@ -181,10 +181,9 @@ mod tests {
                             lit: syn::Lit::Int(lit_int),
                             ..
                         }) = elem
+                            && let Ok(code) = lit_int.base10_parse::<u16>()
                         {
-                            if let Ok(code) = lit_int.base10_parse::<u16>() {
-                                status_codes.push(code);
-                            }
+                            status_codes.push(code);
                         }
                     }
                     assert_eq!(
