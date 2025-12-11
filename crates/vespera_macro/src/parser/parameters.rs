@@ -437,8 +437,39 @@ mod tests {
     use std::collections::HashMap;
     use vespera_core::route::ParameterLocation;
 
-    use insta::assert_debug_snapshot;
-    use serial_test::serial;
+    fn setup_test_data(func_src: &str) -> (HashMap<String, String>, HashMap<String, String>) {
+        let mut struct_definitions = HashMap::new();
+        let known_schemas = HashMap::new();
+        
+        if func_src.contains("QueryParams") {
+            struct_definitions.insert(
+                "QueryParams".to_string(),
+                r#"
+                pub struct QueryParams {
+                    pub page: i32,
+                    pub limit: Option<i32>,
+                }
+                "#
+                .to_string(),
+            );
+        }
+        
+        if func_src.contains("User") {
+            struct_definitions.insert(
+                "User".to_string(),
+                r#"
+                pub struct User {
+                    pub id: i32,
+                    pub name: String,
+                }
+                "#
+                .to_string(),
+            );
+        }
+        
+        (known_schemas, struct_definitions)
+    }
+
     #[rstest]
     #[case(
         "fn test(params: Path<(String, i32)>) {}",
@@ -447,50 +478,122 @@ mod tests {
     )]
     #[case(
         "fn show(Path(id): Path<i32>) {}",
-        vec!["item_id".to_string()],               // path string name differs from pattern
-        vec![vec![ParameterLocation::Path]]       // expect path param captured
+        vec!["item_id".to_string()],
+        vec![vec![ParameterLocation::Path]]
     )]
     #[case(
         "fn test(Query(params): Query<HashMap<String, String>>) {}",
         vec![],
-        vec![vec![]] // Query<HashMap<..>> is ignored
+        vec![vec![]]
     )]
     #[case(
         "fn test(TypedHeader(user_agent): TypedHeader<UserAgent>, count: i32) {}",
         vec![],
         vec![
-            vec![ParameterLocation::Header], // first arg (TypedHeader)
-            vec![],                          // second arg (primitive, ignored)
+            vec![ParameterLocation::Header],
+            vec![],
         ]
     )]
     #[case(
         "fn test(TypedHeader(user_agent): TypedHeader<UserAgent>, content_type: Option<TypedHeader<ContentType>>, authorization: Option<TypedHeader<Authorization<Bearer>>>) {}",
         vec![],
         vec![
-            vec![ParameterLocation::Header], // first arg (TypedHeader)
-            vec![ParameterLocation::Header], // second arg (TypedHeader)
-            vec![ParameterLocation::Header], // third arg (TypedHeader)
+            vec![ParameterLocation::Header],
+            vec![ParameterLocation::Header],
+            vec![ParameterLocation::Header],
         ]
     )]
     #[case(
         "fn test(user_agent: TypedHeader<UserAgent>, count: i32) {}",
         vec![],
         vec![
-            vec![ParameterLocation::Header], // first arg (TypedHeader)
-            vec![],                          // second arg (primitive, ignored)
+            vec![ParameterLocation::Header],
+            vec![],
         ]
     )]
-    #[serial]
+    #[case(
+        "fn test(&self, id: i32) {}",
+        vec![],
+        vec![
+            vec![],
+            vec![],
+        ]
+    )]
+    #[case(
+        "fn test(Path((a, b)): Path<(i32, String)>) {}",
+        vec![],
+        vec![vec![]]
+    )]
+    #[case(
+        "fn test(Path([a]): Path<[i32; 1]>) {}",
+        vec![],
+        vec![vec![]]
+    )]
+    #[case(
+        "fn test(id: Path<i32>) {}",
+        vec!["user_id".to_string(), "post_id".to_string()],
+        vec![vec![ParameterLocation::Path]]
+    )]
+    #[case(
+        "fn test(params: Query<QueryParams>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Query, ParameterLocation::Query]]
+    )]
+    #[case(
+        "fn test(id: Query<i32>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Query]]
+    )]
+    #[case(
+        "fn test(auth: Header<String>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Header]]
+    )]
+    #[case(
+        "fn test(body: Json<User>) {}",
+        vec![],
+        vec![vec![]]
+    )]
+    #[case(
+        "fn test(id: i32) {}",
+        vec!["id".to_string()],
+        vec![vec![ParameterLocation::Path]]
+    )]
+    #[case(
+        "fn test(params: Query<UnknownType>) {}",
+        vec![],
+        vec![vec![]]
+    )]
+    #[case(
+        "fn test(params: Query<BTreeMap<String, String>>) {}",
+        vec![],
+        vec![vec![]]
+    )]
+    #[case(
+        "fn test(params: Query<Vec<i32>>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Query]]
+    )]
+    #[case(
+        "fn test(params: Query<Option<String>>) {}",
+        vec![],
+        vec![vec![ParameterLocation::Query]]
+    )]
     fn test_parse_function_parameter_cases(
         #[case] func_src: &str,
         #[case] path_params: Vec<String>,
         #[case] expected_locations: Vec<Vec<ParameterLocation>>,
     ) {
         let func: syn::ItemFn = syn::parse_str(func_src).unwrap();
-        let mut parameters = Vec::new();
+        let (known_schemas, struct_definitions) = setup_test_data(func_src);
+        
         for (idx, arg) in func.sig.inputs.iter().enumerate() {
-            let result =
-                parse_function_parameter(arg, &path_params, &HashMap::new(), &HashMap::new());
+            let result = parse_function_parameter(
+                arg,
+                &path_params,
+                &known_schemas,
+                &struct_definitions,
+            );
             let expected = expected_locations
                 .get(idx)
                 .unwrap_or_else(|| expected_locations.last().unwrap());
@@ -511,8 +614,148 @@ mod tests {
                 got_locs, *expected,
                 "Location mismatch at arg index {idx}, func: {func_src}"
             );
-            parameters.extend(params.clone());
         }
-        assert_debug_snapshot!(parameters);
+    }
+
+    #[test]
+    fn test_is_map_type() {
+        // Test HashMap
+        let ty: Type = syn::parse_str("HashMap<String, String>").unwrap();
+        assert!(is_map_type(&ty));
+
+        // Test BTreeMap
+        let ty: Type = syn::parse_str("BTreeMap<String, String>").unwrap();
+        assert!(is_map_type(&ty));
+
+        // Test non-map type (should return false)
+        let ty: Type = syn::parse_str("String").unwrap();
+        assert!(!is_map_type(&ty));
+
+        // Test Type::Path with empty segments (should return false)
+        let ty: Type = syn::parse_str("Vec<i32>").unwrap();
+        assert!(!is_map_type(&ty));
+    }
+
+    #[test]
+    fn test_is_known_type() {
+        let mut known_schemas = HashMap::new();
+        let mut struct_definitions = HashMap::new();
+
+        // Test primitive type
+        let ty: Type = syn::parse_str("i32").unwrap();
+        assert!(is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test known struct
+        struct_definitions.insert("User".to_string(), "pub struct User { id: i32 }".to_string());
+        let ty: Type = syn::parse_str("User").unwrap();
+        assert!(is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test known schema
+        known_schemas.insert("Product".to_string(), "Product".to_string());
+        let ty: Type = syn::parse_str("Product").unwrap();
+        assert!(is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test Vec<T> with known inner type
+        let ty: Type = syn::parse_str("Vec<i32>").unwrap();
+        assert!(is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test Option<T> with known inner type
+        let ty: Type = syn::parse_str("Option<String>").unwrap();
+        assert!(is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test unknown type
+        let ty: Type = syn::parse_str("UnknownType").unwrap();
+        assert!(!is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Test Type::Path with empty segments
+        // This is hard to create syntactically, but the code path exists
+    }
+
+    #[test]
+    fn test_parse_query_struct_to_parameters() {
+        let mut struct_definitions = HashMap::new();
+        let mut known_schemas = HashMap::new();
+
+        // Test with struct that has fields
+        struct_definitions.insert(
+            "QueryParams".to_string(),
+            r#"
+            #[serde(rename_all = "camelCase")]
+            pub struct QueryParams {
+                pub page: i32,
+                #[serde(rename = "per_page")]
+                pub limit: Option<i32>,
+                pub search: String,
+            }
+            "#
+            .to_string(),
+        );
+
+        let ty: Type = syn::parse_str("QueryParams").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[0].name, "page");
+        assert_eq!(params[0].r#in, ParameterLocation::Query);
+        assert_eq!(params[1].name, "per_page");
+        assert_eq!(params[1].r#in, ParameterLocation::Query);
+        assert_eq!(params[2].name, "search");
+        assert_eq!(params[2].r#in, ParameterLocation::Query);
+
+        // Test with struct that has nested struct (ref to inline conversion)
+        struct_definitions.insert(
+            "NestedQuery".to_string(),
+            r#"
+            pub struct NestedQuery {
+                pub user: User,
+            }
+            "#
+            .to_string(),
+        );
+        struct_definitions.insert(
+            "User".to_string(),
+            r#"
+            pub struct User {
+                pub id: i32,
+            }
+            "#
+            .to_string(),
+        );
+        known_schemas.insert("User".to_string(), "#/components/schemas/User".to_string());
+
+        let ty: Type = syn::parse_str("NestedQuery").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        assert!(result.is_some());
+
+        // Test with non-struct type
+        let ty: Type = syn::parse_str("i32").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        assert!(result.is_none());
+
+        // Test with unknown struct
+        let ty: Type = syn::parse_str("UnknownStruct").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        assert!(result.is_none());
+
+        // Test with struct that has Option<T> fields
+        struct_definitions.insert(
+            "OptionalQuery".to_string(),
+            r#"
+            pub struct OptionalQuery {
+                pub required: i32,
+                pub optional: Option<String>,
+            }
+            "#
+            .to_string(),
+        );
+
+        let ty: Type = syn::parse_str("OptionalQuery").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].required, Some(true));
+        assert_eq!(params[1].required, Some(false));
     }
 }

@@ -1,11 +1,12 @@
 ---
 source: crates/vespera_macro/src/parser/parameters.rs
+assertion_line: 619
 expression: parameters
 ---
 [
     Parameter {
-        name: "user-agent",
-        in: Header,
+        name: "item_id",
+        in: Path,
         description: None,
         required: Some(
             true,
@@ -15,7 +16,7 @@ expression: parameters
                 Schema {
                     ref_path: None,
                     schema_type: Some(
-                        String,
+                        Integer,
                     ),
                     format: None,
                     title: None,

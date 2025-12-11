@@ -4,8 +4,8 @@ expression: parameters
 ---
 [
     Parameter {
-        name: "user-agent",
-        in: Header,
+        name: "params",
+        in: Query,
         description: None,
         required: Some(
             true,
@@ -46,7 +46,9 @@ expression: parameters
                     any_of: None,
                     one_of: None,
                     not: None,
-                    nullable: None,
+                    nullable: Some(
+                        true,
+                    ),
                     read_only: None,
                     write_only: None,
                     external_docs: None,
