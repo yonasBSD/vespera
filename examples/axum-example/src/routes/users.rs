@@ -53,3 +53,54 @@ pub async fn create_user(Json(user): Json<CreateUserRequest>) -> Json<User> {
         email: user.email,
     })
 }
+
+#[derive(Serialize, Deserialize, Schema)]
+pub struct SkipResponse {
+    pub name: String,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    pub email: String,
+
+    #[serde(skip, skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
+    pub email2: Option<String>,
+
+    #[serde(rename = "email3", skip)]
+    #[allow(dead_code)]
+    pub email3: Option<String>,
+
+    #[serde(rename = "email4", skip_serializing_if = "Option::is_none")]
+    pub email4: Option<String>,
+
+    #[serde(rename = "email5", default)]
+    pub email5: String,
+
+    #[serde(rename = "email6", default = "default_value")]
+    pub email6: String,
+
+    #[serde(rename = "email7", skip)]
+    #[allow(dead_code)]
+    pub email7: String,
+
+    #[serde(rename = "num", default)]
+    pub num: i32,
+}
+
+fn default_value() -> String {
+    "default42".to_string()
+}
+
+#[vespera::route(get, path = "/skip-response")]
+pub async fn skip_response() -> Json<SkipResponse> {
+    Json(SkipResponse {
+        name: "John Doe".to_string(),
+        email: "john.doe@example.com".to_string(),
+        email2: Some("john.doe2@example.com".to_string()),
+        email3: Some("john.doe3@example.com".to_string()),
+        email4: Some("john.doe4@example.com".to_string()),
+        email5: "john.doe5@example.com".to_string(),
+        email6: "john.doe6@example.com".to_string(),
+        email7: "john.doe7@example.com".to_string(),
+        num: 0,
+    })
+}

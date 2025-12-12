@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use syn::{Fields, Type};
 use vespera_core::schema::{Reference, Schema, SchemaRef, SchemaType};
 
-pub(super) fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
+pub fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("serde") {
             // Parse the attribute tokens manually
@@ -28,26 +28,63 @@ pub(super) fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
-pub(super) fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
+pub fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
-        if attr.path().is_ident("serde") {
-            // Try to parse as Meta::List first
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.to_string();
+        if attr.path().is_ident("serde")
+            && let syn::Meta::List(meta_list) = &attr.meta
+        {
+            // Use parse_nested_meta to parse nested attributes
+            let mut found_rename = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("rename")
+                    && let Ok(value) = meta.value()
+                    && let Ok(syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    })) = value.parse::<syn::Expr>()
+                {
+                    found_rename = Some(s.value());
+                }
+                Ok(())
+            });
+            if let Some(rename_value) = found_rename {
+                return Some(rename_value);
+            }
 
-                // Look for rename = "..." pattern
-                if let Some(start) = tokens.find("rename") {
-                    // Avoid false positives from rename_all
-                    if tokens[start..].starts_with("rename_all") {
-                        continue;
-                    }
-                    let remaining = &tokens[start + "rename".len()..];
-                    if let Some(equals_pos) = remaining.find('=') {
-                        let value_part = &remaining[equals_pos + 1..].trim();
+            // Fallback: manual token parsing with regex-like approach
+            let tokens = meta_list.tokens.to_string();
+            // Look for pattern: rename = "value" (with proper word boundaries)
+            if let Some(start) = tokens.find("rename") {
+                // Avoid false positives from rename_all
+                if tokens[start..].starts_with("rename_all") {
+                    continue;
+                }
+                // Check that "rename" is a standalone word (not part of another word)
+                let before = if start > 0 { &tokens[..start] } else { "" };
+                let after_start = start + "rename".len();
+                let after = if after_start < tokens.len() {
+                    &tokens[after_start..]
+                } else {
+                    ""
+                };
+
+                let before_char = before.chars().last().unwrap_or(' ');
+                let after_char = after.chars().next().unwrap_or(' ');
+
+                // Check if rename is a standalone word (preceded by space/comma/paren, followed by space/equals)
+                if (before_char == ' ' || before_char == ',' || before_char == '(')
+                    && (after_char == ' ' || after_char == '=')
+                {
+                    // Find the equals sign and extract the quoted value
+                    if let Some(equals_pos) = after.find('=') {
+                        let value_part = &after[equals_pos + 1..].trim();
                         // Extract string value (remove quotes)
-                        if value_part.starts_with('"') && value_part.ends_with('"') {
-                            let value = &value_part[1..value_part.len() - 1];
-                            return Some(value.to_string());
+                        if let Some(quote_start) = value_part.find('"') {
+                            let after_quote = &value_part[quote_start + 1..];
+                            if let Some(quote_end) = after_quote.find('"') {
+                                let value = &after_quote[..quote_end];
+                                return Some(value.to_string());
+                            }
                         }
                     }
                 }
@@ -57,7 +94,131 @@ pub(super) fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
-pub(super) fn rename_field(field_name: &str, rename_all: Option<&str>) -> String {
+/// Extract skip attribute from field attributes
+/// Returns true if #[serde(skip)] is present
+pub(super) fn extract_skip(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("serde")
+            && let syn::Meta::List(meta_list) = &attr.meta
+        {
+            let tokens = meta_list.tokens.to_string();
+            // Check for "skip" (not part of skip_serializing_if or skip_deserializing)
+            if tokens.contains("skip") {
+                // Make sure it's not skip_serializing_if or skip_deserializing
+                if !tokens.contains("skip_serializing_if") && !tokens.contains("skip_deserializing")
+                {
+                    // Check if it's a standalone "skip"
+                    let skip_pos = tokens.find("skip");
+                    if let Some(pos) = skip_pos {
+                        let before = if pos > 0 { &tokens[..pos] } else { "" };
+                        let after = &tokens[pos + "skip".len()..];
+                        // Check if skip is not part of another word
+                        let before_char = before.chars().last().unwrap_or(' ');
+                        let after_char = after.chars().next().unwrap_or(' ');
+                        if (before_char == ' ' || before_char == ',' || before_char == '(')
+                            && (after_char == ' ' || after_char == ',' || after_char == ')')
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Extract skip_serializing_if attribute from field attributes
+/// Returns true if #[serde(skip_serializing_if = "...")] is present
+pub fn extract_skip_serializing_if(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("serde")
+            && let syn::Meta::List(meta_list) = &attr.meta
+        {
+            let mut found = false;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("skip_serializing_if") {
+                    found = true;
+                }
+                Ok(())
+            });
+            if found {
+                return true;
+            }
+
+            // Fallback: check tokens string
+            let tokens = meta_list.tokens.to_string();
+            if tokens.contains("skip_serializing_if") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Extract default attribute from field attributes
+/// Returns:
+/// - Some(None) if #[serde(default)] is present (no function)
+/// - Some(Some(function_name)) if #[serde(default = "function_name")] is present
+/// - None if no default attribute is present
+pub fn extract_default(attrs: &[syn::Attribute]) -> Option<Option<String>> {
+    for attr in attrs {
+        if attr.path().is_ident("serde")
+            && let syn::Meta::List(meta_list) = &attr.meta
+        {
+            let mut found_default: Option<Option<String>> = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("default") {
+                    // Check if it has a value (default = "function_name")
+                    if let Ok(value) = meta.value() {
+                        if let Ok(syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(s),
+                            ..
+                        })) = value.parse::<syn::Expr>()
+                        {
+                            found_default = Some(Some(s.value()));
+                        }
+                    } else {
+                        // Just "default" without value
+                        found_default = Some(None);
+                    }
+                }
+                Ok(())
+            });
+            if let Some(default_value) = found_default {
+                return Some(default_value);
+            }
+
+            // Fallback: manual token parsing
+            let tokens = meta_list.tokens.to_string();
+            if let Some(start) = tokens.find("default") {
+                let remaining = &tokens[start + "default".len()..];
+                if remaining.trim_start().starts_with('=') {
+                    // default = "function_name"
+                    let value_part = remaining.trim_start()[1..].trim();
+                    if value_part.starts_with('"') && value_part.ends_with('"') {
+                        let function_name = &value_part[1..value_part.len() - 1];
+                        return Some(Some(function_name.to_string()));
+                    }
+                } else {
+                    // Just "default" without = (standalone)
+                    let before = if start > 0 { &tokens[..start] } else { "" };
+                    let after = &remaining;
+                    let before_char = before.chars().last().unwrap_or(' ');
+                    let after_char = after.chars().next().unwrap_or(' ');
+                    if (before_char == ' ' || before_char == ',' || before_char == '(')
+                        && (after_char == ' ' || after_char == ',' || after_char == ')')
+                    {
+                        return Some(None);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn rename_field(field_name: &str, rename_all: Option<&str>) -> String {
     // "lowercase", "UPPERCASE", "PascalCase", "camelCase", "snake_case", "SCREAMING_SNAKE_CASE", "kebab-case", "SCREAMING-KEBAB-CASE"
     match rename_all {
         Some("camelCase") => {
@@ -400,6 +561,11 @@ pub fn parse_struct_to_schema(
     match &struct_item.fields {
         Fields::Named(fields_named) => {
             for field in &fields_named.named {
+                // Check if field should be skipped
+                if extract_skip(&field.attrs) {
+                    continue;
+                }
+
                 let rust_field_name = field
                     .ident
                     .as_ref()
@@ -416,26 +582,43 @@ pub fn parse_struct_to_schema(
 
                 let field_type = &field.ty;
 
-                let schema_ref =
+                let mut schema_ref =
                     parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
 
-                properties.insert(field_name.clone(), schema_ref);
+                // Check for default attribute
+                let has_default = extract_default(&field.attrs).is_some();
 
-                // Check if field is Option<T>
-                let is_optional = matches!(
-                    field_type,
-                    Type::Path(type_path)
-                        if type_path
-                            .path
-                            .segments
-                            .first()
-                            .map(|s| s.ident == "Option")
-                            .unwrap_or(false)
-                );
+                // Check for skip_serializing_if attribute
+                let has_skip_serializing_if = extract_skip_serializing_if(&field.attrs);
 
-                if !is_optional {
-                    required.push(field_name);
+                // If default or skip_serializing_if is present, mark field as optional (not required)
+                // and set default value if it's a simple default (not a function)
+                if has_default || has_skip_serializing_if {
+                    // For default = "function_name", we'll handle it in openapi_generator
+                    // For now, just mark as optional
+                    if let SchemaRef::Inline(ref mut _schema) = schema_ref {
+                        // Default will be set later in openapi_generator if it's a function
+                        // For simple default, we could set it here, but serde handles it
+                    }
+                } else {
+                    // Check if field is Option<T>
+                    let is_optional = matches!(
+                        field_type,
+                        Type::Path(type_path)
+                            if type_path
+                                .path
+                                .segments
+                                .first()
+                                .map(|s| s.ident == "Option")
+                                .unwrap_or(false)
+                    );
+
+                    if !is_optional {
+                        required.push(field_name.clone());
+                    }
                 }
+
+                properties.insert(field_name, schema_ref);
             }
         }
         Fields::Unnamed(_) => {

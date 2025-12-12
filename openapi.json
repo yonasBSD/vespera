@@ -934,6 +934,23 @@
         }
       }
     },
+    "/users/skip-response": {
+      "get": {
+        "operationId": "skip_response",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkipResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users/{id}": {
       "get": {
         "operationId": "get_user",
@@ -1525,6 +1542,37 @@
           "name",
           "phoneNumber23",
           "createdAt"
+        ]
+      },
+      "SkipResponse": {
+        "type": "object",
+        "properties": {
+          "email2": {
+            "type": "string",
+            "nullable": true
+          },
+          "email4": {
+            "type": "string",
+            "nullable": true
+          },
+          "email5": {
+            "type": "string",
+            "default": ""
+          },
+          "email6": {
+            "type": "string",
+            "default": "default42"
+          },
+          "name": {
+            "type": "string"
+          },
+          "num": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "StructBody": {
