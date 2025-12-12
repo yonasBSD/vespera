@@ -8,7 +8,10 @@ use vespera_core::{
 };
 
 use crate::metadata::CollectedMetadata;
-use crate::parser::{build_operation_from_function, parse_enum_to_schema, parse_struct_to_schema};
+use crate::parser::{
+    build_operation_from_function, extract_default, extract_field_rename, extract_rename_all,
+    parse_enum_to_schema, parse_struct_to_schema, rename_field,
+};
 
 /// Generate OpenAPI document from collected metadata
 pub fn generate_openapi_doc_with_metadata(
@@ -33,12 +36,12 @@ pub fn generate_openapi_doc_with_metadata(
     // Then, parse all struct and enum schemas (now they can reference each other)
     for struct_meta in &metadata.structs {
         let parsed = syn::parse_str::<syn::Item>(&struct_meta.definition).unwrap();
-        let schema = match parsed {
+        let mut schema = match &parsed {
             syn::Item::Struct(struct_item) => {
-                parse_struct_to_schema(&struct_item, &known_schema_names, &struct_definitions)
+                parse_struct_to_schema(struct_item, &known_schema_names, &struct_definitions)
             }
             syn::Item::Enum(enum_item) => {
-                parse_enum_to_schema(&enum_item, &known_schema_names, &struct_definitions)
+                parse_enum_to_schema(enum_item, &known_schema_names, &struct_definitions)
             }
             _ => {
                 // Fallback to struct parsing for backward compatibility
@@ -49,6 +52,46 @@ pub fn generate_openapi_doc_with_metadata(
                 )
             }
         };
+
+        // Process default values for struct fields
+        if let syn::Item::Struct(struct_item) = &parsed {
+            // Find the file where this struct is defined
+            // Try to find a route file that contains this struct
+            let struct_file = metadata
+                .routes
+                .iter()
+                .find_map(|route| {
+                    // Check if the file contains the struct definition
+                    if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
+                        // Check if the struct name appears in the file (more specific check)
+                        // Look for "struct StructName" pattern
+                        let struct_pattern = format!("struct {}", struct_meta.name);
+                        if file_content.contains(&struct_pattern) {
+                            return Some(route.file_path.clone());
+                        }
+                    }
+                    None
+                })
+                .or_else(|| {
+                    // Fallback: try all route files to find the struct
+                    for route in &metadata.routes {
+                        if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
+                            let struct_pattern = format!("struct {}", struct_meta.name);
+                            if file_content.contains(&struct_pattern) {
+                                return Some(route.file_path.clone());
+                            }
+                        }
+                    }
+                    // Last resort: use first route file if available
+                    metadata.routes.first().map(|r| r.file_path.clone())
+                });
+
+            if let Some(file_path) = struct_file && let Ok(file_content) = std::fs::read_to_string(&file_path) && let Ok(file_ast) = syn::parse_file(&file_content) {
+                        // Process default functions for struct fields
+                        process_default_functions(struct_item, &file_ast, &mut schema);
+            }
+        }
+
         let schema_name = struct_meta.name.clone();
         schemas.insert(schema_name.clone(), schema);
     }
@@ -151,6 +194,212 @@ pub fn generate_openapi_doc_with_metadata(
         security: None,
         tags: None,
         external_docs: None,
+    }
+}
+
+/// Process default functions for struct fields
+/// This function extracts default values from functions specified in #[serde(default = "function_name")]
+fn process_default_functions(
+    struct_item: &syn::ItemStruct,
+    file_ast: &syn::File,
+    schema: &mut vespera_core::schema::Schema,
+) {
+    use syn::Fields;
+    use vespera_core::schema::SchemaRef;
+
+    // Extract rename_all from struct level
+    let struct_rename_all = extract_rename_all(&struct_item.attrs);
+
+    // Get properties from schema
+    let properties = match &mut schema.properties {
+        Some(props) => props,
+        None => return, // No properties to process
+    };
+
+    // Process each field in the struct
+    if let Fields::Named(fields_named) = &struct_item.fields {
+        for field in &fields_named.named {
+            // Extract default function name
+            let default_info = match extract_default(&field.attrs) {
+                Some(Some(func_name)) => func_name, // default = "function_name"
+                Some(None) => {
+                    // Simple default (no function) - we can set type-specific defaults
+                    let rust_field_name = field
+                        .ident
+                        .as_ref()
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let field_name = if let Some(renamed) = extract_field_rename(&field.attrs) {
+                        renamed
+                    } else {
+                        rename_field(&rust_field_name, struct_rename_all.as_deref())
+                    };
+
+                    // Set type-specific default for simple default
+                    if let Some(prop_schema_ref) = properties.get_mut(&field_name)
+                        && let SchemaRef::Inline(prop_schema) = prop_schema_ref
+                        && prop_schema.default.is_none()
+                        && let Some(default_value) = get_type_default(&field.ty)
+                    {
+                        prop_schema.default = Some(default_value);
+                    }
+                    continue;
+                }
+                None => continue, // No default attribute
+            };
+
+            // Find the function in the file AST
+            let func = find_function_in_file(file_ast, &default_info);
+            if let Some(func_item) = func {
+                // Extract default value from function body
+                if let Some(default_value) = extract_default_value_from_function(func_item) {
+                    // Get the field name (with rename applied)
+                    let rust_field_name = field
+                        .ident
+                        .as_ref()
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let field_name = if let Some(renamed) = extract_field_rename(&field.attrs) {
+                        renamed
+                    } else {
+                        rename_field(&rust_field_name, struct_rename_all.as_deref())
+                    };
+
+                    // Set default value in schema
+                    if let Some(prop_schema_ref) = properties.get_mut(&field_name)
+                        && let SchemaRef::Inline(prop_schema) = prop_schema_ref
+                    {
+                        prop_schema.default = Some(default_value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Find a function by name in the file AST
+fn find_function_in_file<'a>(
+    file_ast: &'a syn::File,
+    function_name: &str,
+) -> Option<&'a syn::ItemFn> {
+    for item in &file_ast.items {
+        if let syn::Item::Fn(fn_item) = item
+            && fn_item.sig.ident == function_name
+        {
+            return Some(fn_item);
+        }
+    }
+    None
+}
+
+/// Extract default value from function body
+/// This tries to extract literal values from common patterns like:
+/// - "value".to_string() -> "value"
+/// - 42 -> 42
+/// - true -> true
+/// - vec![] -> []
+fn extract_default_value_from_function(func: &syn::ItemFn) -> Option<serde_json::Value> {
+    // Try to find return statement or expression
+    for stmt in &func.block.stmts {
+        if let syn::Stmt::Expr(expr, _) = stmt {
+            // Direct expression (like "value".to_string())
+            if let Some(value) = extract_value_from_expr(expr) {
+                return Some(value);
+            }
+            // Or return statement
+            if let syn::Expr::Return(ret) = expr
+                && let Some(expr) = &ret.expr
+                && let Some(value) = extract_value_from_expr(expr)
+            {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract value from expression
+fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
+    use syn::{Expr, ExprLit, ExprMacro, Lit};
+
+    match expr {
+        // Literal values
+        Expr::Lit(ExprLit { lit, .. }) => match lit {
+            Lit::Str(s) => Some(serde_json::Value::String(s.value())),
+            Lit::Int(i) => {
+                if let Ok(val) = i.base10_parse::<i64>() {
+                    Some(serde_json::Value::Number(val.into()))
+                } else {
+                    None
+                }
+            }
+            Lit::Float(f) => {
+                if let Ok(val) = f.base10_parse::<f64>() {
+                    Some(serde_json::Value::Number(
+                        serde_json::Number::from_f64(val).unwrap_or(serde_json::Number::from(0)),
+                    ))
+                } else {
+                    None
+                }
+            }
+            Lit::Bool(b) => Some(serde_json::Value::Bool(b.value)),
+            _ => None,
+        },
+        // Method calls like "value".to_string()
+        Expr::MethodCall(method_call) => {
+            if method_call.method == "to_string" {
+                // Get the receiver (the string literal)
+                // Try direct match first
+                if let Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = method_call.receiver.as_ref()
+                {
+                    return Some(serde_json::Value::String(s.value()));
+                }
+                // Try to extract from nested expressions (e.g., if the receiver is wrapped)
+                if let Some(value) = extract_value_from_expr(method_call.receiver.as_ref()) {
+                    return Some(value);
+                }
+            }
+            None
+        }
+        // Macro calls like vec![]
+        Expr::Macro(ExprMacro { mac, .. }) => {
+            if mac.path.is_ident("vec") {
+                // Try to parse vec![] as empty array
+                return Some(serde_json::Value::Array(vec![]));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Get type-specific default value for simple #[serde(default)]
+fn get_type_default(ty: &syn::Type) -> Option<serde_json::Value> {
+    use syn::Type;
+    match ty {
+        Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                match segment.ident.to_string().as_str() {
+                    "String" => Some(serde_json::Value::String(String::new())),
+                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                        Some(serde_json::Value::Number(serde_json::Number::from(0)))
+                    }
+                    "f32" | "f64" => Some(serde_json::Value::Number(
+                        serde_json::Number::from_f64(0.0).unwrap_or(serde_json::Number::from(0)),
+                    )),
+                    "bool" => Some(serde_json::Value::Bool(false)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 

@@ -302,14 +302,18 @@ mod tests {
             None => assert!(op.request_body.is_none()),
             Some(exp) => {
                 let body = op.request_body.as_ref().expect("request body expected");
-                let media = body.content.get(exp.content_type).or_else(|| {
-                    // allow fallback to the only available content type if expected is absent
-                    if body.content.len() == 1 {
-                        body.content.values().next()
-                    } else {
-                        None
-                    }
-                }).expect("expected content type");
+                let media = body
+                    .content
+                    .get(exp.content_type)
+                    .or_else(|| {
+                        // allow fallback to the only available content type if expected is absent
+                        if body.content.len() == 1 {
+                            body.content.values().next()
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("expected content type");
                 if let Some(schema_ty) = &exp.schema {
                     match media.schema.as_ref().expect("schema expected") {
                         SchemaRef::Inline(schema) => {
