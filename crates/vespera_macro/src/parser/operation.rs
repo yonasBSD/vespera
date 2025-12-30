@@ -19,6 +19,7 @@ pub fn build_operation_from_function(
     known_schemas: &std::collections::HashMap<String, String>,
     struct_definitions: &std::collections::HashMap<String, String>,
     error_status: Option<&[u16]>,
+    tags: Option<&[String]>,
 ) -> Operation {
     let path_params = extract_path_parameters(path);
     let mut parameters = Vec::new();
@@ -246,7 +247,7 @@ pub fn build_operation_from_function(
 
     Operation {
         operation_id: Some(sig.ident.to_string()),
-        tags: None,
+        tags: tags.map(|t| t.to_vec()),
         summary: None,
         description: None,
         parameters: if parameters.is_empty() {
@@ -276,7 +277,7 @@ mod tests {
 
     fn build(sig_src: &str, path: &str, error_status: Option<&[u16]>) -> Operation {
         let sig: syn::Signature = syn::parse_str(sig_src).expect("signature parse failed");
-        build_operation_from_function(&sig, path, &HashMap::new(), &HashMap::new(), error_status)
+        build_operation_from_function(&sig, path, &HashMap::new(), &HashMap::new(), error_status, None)
     }
 
     #[derive(Clone, Debug)]

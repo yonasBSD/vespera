@@ -25,7 +25,29 @@ use vespera_core::route::HttpMethod;
 
 /// route attribute macro
 #[proc_macro_attribute]
-pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Validate attribute arguments
+    if let Err(e) = syn::parse::<args::RouteArgs>(attr) {
+        return e.to_compile_error().into();
+    }
+
+    // Validate that item is a function
+    let item_fn = match syn::parse::<syn::ItemFn>(item.clone()) {
+        Ok(f) => f,
+        Err(e) => {
+            return syn::Error::new(e.span(), "route attribute can only be applied to functions")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    // Validate function is pub
+    if !matches!(item_fn.vis, syn::Visibility::Public(_)) {
+        return syn::Error::new_spanned(&item_fn.sig.fn_token, "route function must be public")
+            .to_compile_error()
+            .into();
+    }
+
     item
 }
 

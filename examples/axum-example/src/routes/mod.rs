@@ -23,7 +23,7 @@ pub async fn root_endpoint() -> &'static str {
     "root endpoint"
 }
 
-#[vespera::route(get, path = "/hello")]
+#[vespera::route(get, path = "/hello", tags = ["hello"])]
 pub async fn mod_file_endpoint() -> &'static str {
     "mod file endpoint"
 }

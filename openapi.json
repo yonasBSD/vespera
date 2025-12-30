@@ -490,6 +490,9 @@
     "/hello": {
       "get": {
         "operationId": "mod_file_endpoint",
+        "tags": [
+          "hello"
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
@@ -1704,5 +1707,10 @@
         ]
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "hello"
+    }
+  ]
 }

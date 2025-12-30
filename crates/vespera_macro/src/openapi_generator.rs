@@ -1,8 +1,8 @@
 //! OpenAPI document generator
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use vespera_core::{
-    openapi::{Info, OpenApi, OpenApiVersion, Server},
+    openapi::{Info, OpenApi, OpenApiVersion, Server, Tag},
     route::{HttpMethod, PathItem},
     schema::Components,
 };
@@ -25,6 +25,7 @@ pub fn generate_openapi_doc_with_metadata(
         std::collections::HashMap::new();
     let mut struct_definitions: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    let mut all_tags: BTreeSet<String> = BTreeSet::new();
 
     // First, register all schema names and store struct definitions
     for struct_meta in &metadata.structs {
@@ -127,6 +128,13 @@ pub fn generate_openapi_doc_with_metadata(
             {
                 let method = HttpMethod::from(route_meta.method.as_str());
 
+                // Collect tags for global tags list
+                if let Some(tags) = &route_meta.tags {
+                    for tag in tags {
+                        all_tags.insert(tag.clone());
+                    }
+                }
+
                 // Build operation from function signature
                 let operation = build_operation_from_function(
                     &fn_item.sig,
@@ -134,6 +142,7 @@ pub fn generate_openapi_doc_with_metadata(
                     &known_schema_names,
                     &struct_definitions,
                     route_meta.error_status.as_deref(),
+                    route_meta.tags.as_deref(),
                 );
 
                 // Get or create PathItem
@@ -192,7 +201,20 @@ pub fn generate_openapi_doc_with_metadata(
             security_schemes: None,
         }),
         security: None,
-        tags: None,
+        tags: if all_tags.is_empty() {
+            None
+        } else {
+            Some(
+                all_tags
+                    .into_iter()
+                    .map(|name| Tag {
+                        name,
+                        description: None,
+                        external_docs: None,
+                    })
+                    .collect(),
+            )
+        },
         external_docs: None,
     }
 }
@@ -476,6 +498,7 @@ pub fn get_users() -> String {
             file_path: route_file.to_string_lossy().to_string(),
             signature: "fn get_users() -> String".to_string(),
             error_status: None,
+            tags: None,
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
@@ -557,6 +580,7 @@ pub fn get_status() -> Status {
             file_path: route_file.to_string_lossy().to_string(),
             signature: "fn get_status() -> Status".to_string(),
             error_status: None,
+            tags: None,
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
@@ -614,6 +638,7 @@ pub fn get_user() -> User {
             file_path: route_file.to_string_lossy().to_string(),
             signature: "fn get_user() -> User".to_string(),
             error_status: None,
+            tags: None,
         });
 
         let doc = generate_openapi_doc_with_metadata(
@@ -660,6 +685,7 @@ pub fn create_user() -> String {
             file_path: route1_file.to_string_lossy().to_string(),
             signature: "fn get_users() -> String".to_string(),
             error_status: None,
+            tags: None,
         });
         metadata.routes.push(RouteMetadata {
             method: "POST".to_string(),
@@ -669,6 +695,7 @@ pub fn create_user() -> String {
             file_path: route2_file.to_string_lossy().to_string(),
             signature: "fn create_user() -> String".to_string(),
             error_status: None,
+            tags: None,
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, &metadata);
@@ -691,6 +718,7 @@ pub fn create_user() -> String {
             file_path: "/nonexistent/route.rs".to_string(),
             signature: "fn get_users() -> String".to_string(),
             error_status: None,
+            tags: None,
         }),
         false, // struct should not be added
         false, // route should not be added
@@ -705,6 +733,7 @@ pub fn create_user() -> String {
             file_path: "".to_string(), // Will be set to temp file with invalid syntax
             signature: "fn get_users() -> String".to_string(),
             error_status: None,
+            tags: None,
         }),
         false, // struct should not be added
         false, // route should not be added

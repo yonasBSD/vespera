@@ -69,6 +69,7 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> Result<Collect
                     file_path: file_path.clone(),
                     signature: quote::quote!(#fn_item).to_string(),
                     error_status: route_info.error_status.clone(),
+                    tags: route_info.tags.clone(),
                 });
             }
         }

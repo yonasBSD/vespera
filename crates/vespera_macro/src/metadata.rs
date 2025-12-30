@@ -20,6 +20,9 @@ pub struct RouteMetadata {
     /// Additional error status codes from error_status attribute
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_status: Option<Vec<u16>>,
+    /// Tags for OpenAPI grouping
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Struct metadata

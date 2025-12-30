@@ -5,6 +5,7 @@ pub struct RouteInfo {
     pub method: String,
     pub path: Option<String>,
     pub error_status: Option<Vec<u16>>,
+    pub tags: Option<Vec<String>>,
 }
 
 pub fn check_route_by_meta(meta: &syn::Meta) -> bool {
@@ -66,10 +67,30 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
                             }
                         });
 
+                        // Parse tags array if present
+                        let tags = route_args.tags.as_ref().and_then(|array| {
+                            let mut tag_list = Vec::new();
+                            for elem in &array.elems {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(lit_str),
+                                    ..
+                                }) = elem
+                                {
+                                    tag_list.push(lit_str.value());
+                                }
+                            }
+                            if tag_list.is_empty() {
+                                None
+                            } else {
+                                Some(tag_list)
+                            }
+                        });
+
                         return Some(RouteInfo {
                             method,
                             path,
                             error_status,
+                            tags,
                         });
                     }
                 }
@@ -93,6 +114,7 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
                                 method: method_str,
                                 path: None,
                                 error_status: None,
+                                tags: None,
                             });
                         }
                     }
@@ -103,6 +125,7 @@ pub fn extract_route_info(attrs: &[syn::Attribute]) -> Option<RouteInfo> {
                         method: "get".to_string(),
                         path: None,
                         error_status: None,
+                        tags: None,
                     });
                 }
             }

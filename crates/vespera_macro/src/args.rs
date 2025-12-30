@@ -2,6 +2,7 @@ pub struct RouteArgs {
     pub method: Option<syn::Ident>,
     pub path: Option<syn::LitStr>,
     pub error_status: Option<syn::ExprArray>,
+    pub tags: Option<syn::ExprArray>,
 }
 
 impl syn::parse::Parse for RouteArgs {
@@ -9,6 +10,7 @@ impl syn::parse::Parse for RouteArgs {
         let mut method: Option<syn::Ident> = None;
         let mut path: Option<syn::LitStr> = None;
         let mut error_status: Option<syn::ExprArray> = None;
+        let mut tags: Option<syn::ExprArray> = None;
 
         // Parse comma-separated list of arguments
         while !input.is_empty() {
@@ -32,6 +34,11 @@ impl syn::parse::Parse for RouteArgs {
                         let array: syn::ExprArray = input.parse()?;
                         error_status = Some(array);
                     }
+                    "tags" => {
+                        input.parse::<syn::Token![=]>()?;
+                        let array: syn::ExprArray = input.parse()?;
+                        tags = Some(array);
+                    }
                     _ => {
                         return Err(lookahead.error());
                     }
@@ -52,6 +59,7 @@ impl syn::parse::Parse for RouteArgs {
             method,
             path,
             error_status,
+            tags,
         })
     }
 }
@@ -196,6 +204,73 @@ mod tests {
                         route_args.error_status.is_none(),
                         "Expected no error_status but got {:?} for input: {}",
                         route_args.error_status,
+                        input
+                    );
+                }
+            }
+            (false, Err(_)) => {
+                // Expected error, test passes
+            }
+            (true, Err(e)) => {
+                panic!(
+                    "Expected successful parse but got error: {} for input: {}",
+                    e, input
+                );
+            }
+            (false, Ok(_)) => {
+                panic!("Expected parse error but got success for input: {}", input);
+            }
+        }
+    }
+
+    #[rstest]
+    // Tags only
+    #[case("tags = [\"users\"]", true, vec!["users"])]
+    #[case("tags = [\"users\", \"admin\"]", true, vec!["users", "admin"])]
+    #[case("tags = [\"api\", \"v1\", \"users\"]", true, vec!["api", "v1", "users"])]
+    // Tags with method
+    #[case("get, tags = [\"users\"]", true, vec!["users"])]
+    #[case("post, tags = [\"users\", \"create\"]", true, vec!["users", "create"])]
+    // Tags with path
+    #[case("path = \"/api\", tags = [\"api\"]", true, vec!["api"])]
+    // Tags with method and path
+    #[case("get, path = \"/users\", tags = [\"users\"]", true, vec!["users"])]
+    // Empty tags array
+    #[case("tags = []", true, vec![])]
+    fn test_route_args_parse_tags(
+        #[case] input: &str,
+        #[case] should_parse: bool,
+        #[case] expected_tags: Vec<&str>,
+    ) {
+        let result = syn::parse_str::<RouteArgs>(input);
+
+        match (should_parse, result) {
+            (true, Ok(route_args)) => {
+                if expected_tags.is_empty() {
+                    // Empty array should result in Some with empty vec
+                    if let Some(tags_array) = &route_args.tags {
+                        assert!(tags_array.elems.is_empty());
+                    }
+                } else {
+                    assert!(
+                        route_args.tags.is_some(),
+                        "Expected tags but got None for input: {}",
+                        input
+                    );
+                    let tags_array = route_args.tags.as_ref().unwrap();
+                    let mut parsed_tags = Vec::new();
+                    for elem in &tags_array.elems {
+                        if let syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(lit_str),
+                            ..
+                        }) = elem
+                        {
+                            parsed_tags.push(lit_str.value());
+                        }
+                    }
+                    assert_eq!(
+                        parsed_tags, expected_tags,
+                        "Tags mismatch for input: {}",
                         input
                     );
                 }
