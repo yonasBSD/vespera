@@ -59,34 +59,17 @@ pub fn generate_openapi_doc_with_metadata(
         if let syn::Item::Struct(struct_item) = &parsed {
             // Find the file where this struct is defined
             // Try to find a route file that contains this struct
+            // Find the route file that contains this struct definition
             let struct_file = metadata
                 .routes
                 .iter()
                 .find_map(|route| {
-                    // Check if the file contains the struct definition
-                    if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
-                        // Check if the struct name appears in the file (more specific check)
-                        // Look for "struct StructName" pattern
-                        let struct_pattern = format!("struct {}", struct_meta.name);
-                        if file_content.contains(&struct_pattern) {
-                            return Some(route.file_path.clone());
-                        }
-                    }
-                    None
+                    std::fs::read_to_string(&route.file_path)
+                        .ok()
+                        .filter(|content| content.contains(&format!("struct {}", struct_meta.name)))
+                        .map(|_| route.file_path.clone())
                 })
-                .or_else(|| {
-                    // Fallback: try all route files to find the struct
-                    for route in &metadata.routes {
-                        if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
-                            let struct_pattern = format!("struct {}", struct_meta.name);
-                            if file_content.contains(&struct_pattern) {
-                                return Some(route.file_path.clone());
-                            }
-                        }
-                    }
-                    // Last resort: use first route file if available
-                    metadata.routes.first().map(|r| r.file_path.clone())
-                });
+                .or_else(|| metadata.routes.first().map(|r| r.file_path.clone()));
 
             if let Some(file_path) = struct_file
                 && let Ok(file_content) = std::fs::read_to_string(&file_path)
@@ -362,22 +345,15 @@ fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
         // Literal values
         Expr::Lit(ExprLit { lit, .. }) => match lit {
             Lit::Str(s) => Some(serde_json::Value::String(s.value())),
-            Lit::Int(i) => {
-                if let Ok(val) = i.base10_parse::<i64>() {
-                    Some(serde_json::Value::Number(val.into()))
-                } else {
-                    None
-                }
-            }
-            Lit::Float(f) => {
-                if let Ok(val) = f.base10_parse::<f64>() {
-                    Some(serde_json::Value::Number(
-                        serde_json::Number::from_f64(val).unwrap_or(serde_json::Number::from(0)),
-                    ))
-                } else {
-                    None
-                }
-            }
+            Lit::Int(i) => i
+                .base10_parse::<i64>()
+                .ok()
+                .map(|v| serde_json::Value::Number(v.into())),
+            Lit::Float(f) => f
+                .base10_parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number),
             Lit::Bool(b) => Some(serde_json::Value::Bool(b.value)),
             _ => None,
         },
@@ -415,23 +391,19 @@ fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
 fn get_type_default(ty: &syn::Type) -> Option<serde_json::Value> {
     use syn::Type;
     match ty {
-        Type::Path(type_path) => {
-            if let Some(segment) = type_path.path.segments.last() {
-                match segment.ident.to_string().as_str() {
-                    "String" => Some(serde_json::Value::String(String::new())),
-                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
-                        Some(serde_json::Value::Number(serde_json::Number::from(0)))
-                    }
-                    "f32" | "f64" => Some(serde_json::Value::Number(
-                        serde_json::Number::from_f64(0.0).unwrap_or(serde_json::Number::from(0)),
-                    )),
-                    "bool" => Some(serde_json::Value::Bool(false)),
-                    _ => None,
+        Type::Path(type_path) => type_path.path.segments.last().and_then(|segment| {
+            match segment.ident.to_string().as_str() {
+                "String" => Some(serde_json::Value::String(String::new())),
+                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                    Some(serde_json::Value::Number(serde_json::Number::from(0)))
                 }
-            } else {
-                None
+                "f32" | "f64" => Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(0.0).unwrap_or(serde_json::Number::from(0)),
+                )),
+                "bool" => Some(serde_json::Value::Bool(false)),
+                _ => None,
             }
-        }
+        }),
         _ => None,
     }
 }
