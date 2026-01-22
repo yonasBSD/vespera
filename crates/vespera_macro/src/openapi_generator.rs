@@ -131,11 +131,7 @@ pub fn generate_openapi_doc_with_metadata(
                     route_meta.error_status.as_deref(),
                     route_meta.tags.as_deref(),
                 );
-
-                // Set description from metadata
-                if let Some(desc) = &route_meta.description {
-                    operation.description = Some(desc.clone());
-                }
+                operation.description = route_meta.description.clone();
 
                 // Get or create PathItem
                 let path_item = paths
