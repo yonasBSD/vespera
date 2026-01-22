@@ -526,4 +526,126 @@ mod tests {
         assert_body(&op, &expected_body);
         assert_responses(&op, &expected_resps);
     }
+
+    // ======== Tests for uncovered lines ========
+
+    #[test]
+    fn test_single_path_param_with_single_type() {
+        // Test line 55: Path<T> with single type (not tuple) and exactly ONE path param
+        // This exercises the branch: path_params.len() == 1 with non-tuple type
+        let op = build("fn get(Path(id): Path<i32>) -> String", "/users/{id}", None);
+
+        // Should have exactly 1 path parameter with Integer type
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "id");
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::Integer));
+    }
+
+    #[test]
+    fn test_single_path_param_with_string_type() {
+        // Another test for line 55: Path<String> with single path param
+        let op = build(
+            "fn get(Path(id): Path<String>) -> String",
+            "/users/{user_id}",
+            None,
+        );
+
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "user_id");
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::String));
+    }
+
+    #[test]
+    fn test_non_path_extractor_with_query() {
+        // Test lines 85, 89: non-Path extractor handling
+        // When input is Query<T>, it should NOT be treated as Path
+        let op = build(
+            "fn search(Query(params): Query<QueryParams>) -> String",
+            "/search",
+            None,
+        );
+
+        // Query params should be extended to parameters (line 89)
+        // But QueryParams is not in known_schemas/struct_definitions so it won't appear
+        // The key is that it doesn't treat Query as a Path extractor (line 85 returns false)
+        assert!(op.request_body.is_none()); // Query is not a body
+    }
+
+    #[test]
+    fn test_non_path_extractor_with_state() {
+        // Test lines 85, 89: State<T> should be ignored (not Path)
+        let op = build(
+            "fn handler(State(state): State<AppState>) -> String",
+            "/handler",
+            None,
+        );
+
+        // State is not a path extractor, and State params are typically ignored
+        // line 85 returns false, so line 89 extends parameters (but State is usually filtered out)
+        assert!(op.parameters.is_none() || op.parameters.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_string_body_fallback() {
+        // Test lines 100-107: String as last arg becomes text/plain body
+        let op = build("fn upload(content: String) -> String", "/upload", None);
+
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+        let media = body.content.get("text/plain").unwrap();
+        match media.schema.as_ref().unwrap() {
+            SchemaRef::Inline(schema) => {
+                assert_eq!(schema.schema_type, Some(SchemaType::String));
+            }
+            _ => panic!("expected inline schema"),
+        }
+    }
+
+    #[test]
+    fn test_str_ref_body_fallback() {
+        // Test lines 100-106: &str as last arg becomes text/plain body
+        let op = build("fn upload(content: &str) -> String", "/upload", None);
+
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+    }
+
+    #[test]
+    fn test_type_reference_with_string() {
+        // Test lines 100-102, 104: Type::Reference branch - &String
+        let op = build("fn upload(content: &String) -> String", "/upload", None);
+
+        // &String reference should be detected as string type
+        // Line 101-102 checks if Type::Reference elem is a Path with String/str
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+    }
+
+    #[test]
+    fn test_non_string_last_arg_not_body() {
+        // Test line 107: last arg that's NOT String/&str should NOT become body
+        let op = build("fn process(count: i32) -> String", "/process", None);
+
+        // i32 is not String/&str, so line 107 returns false, no body created
+        // However, bare i32 without extractor is also ignored
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_multiple_path_params_with_single_type() {
+        // Test line 57-60: multiple path params but single type - uses type for all
+        let op = build(
+            "fn get(Path(id): Path<String>) -> String",
+            "/shops/{shop_id}/items/{item_id}",
+            None,
+        );
+
+        // Both params should use String type
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 2);
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::String));
+        assert_eq!(param_schema_type(&params[1]), Some(SchemaType::String));
+    }
 }

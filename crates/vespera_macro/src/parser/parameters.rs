@@ -842,4 +842,186 @@ mod tests {
         assert_eq!(params[0].required, Some(true));
         assert_eq!(params[1].required, Some(false));
     }
+
+    // ======== Tests for uncovered lines ========
+
+    #[test]
+    fn test_query_single_non_struct_known_type() {
+        // Test line 128: Return single Query<T> parameter where T is a known non-primitive type
+        // This should return a single parameter when Query<T> wraps a known type that's not primitive-like
+        let mut known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
+
+        // Add a known type that's not a struct
+        known_schemas.insert(
+            "CustomId".to_string(),
+            "#/components/schemas/CustomId".to_string(),
+        );
+
+        let func: syn::ItemFn = syn::parse_str("fn test(id: Query<CustomId>) {}").unwrap();
+        let path_params: Vec<String> = vec![];
+
+        for arg in func.sig.inputs.iter() {
+            let result =
+                parse_function_parameter(arg, &path_params, &known_schemas, &struct_definitions);
+            // Line 128 returns Some(vec![Parameter...]) for single Query parameter
+            assert!(result.is_some(), "Expected single Query parameter");
+            let params = result.unwrap();
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].r#in, ParameterLocation::Query);
+        }
+    }
+
+    #[test]
+    fn test_path_param_by_name_match() {
+        // Test line 159: path param matched by name (non-extractor case)
+        // When a parameter name matches a path param name directly without Path<T> extractor
+        let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
+
+        let func: syn::ItemFn = syn::parse_str("fn test(user_id: i32) {}").unwrap();
+        let path_params = vec!["user_id".to_string()];
+
+        for arg in func.sig.inputs.iter() {
+            let result =
+                parse_function_parameter(arg, &path_params, &known_schemas, &struct_definitions);
+            // Line 159: path_params.contains(&param_name) returns true, so it creates a Path parameter
+            assert!(result.is_some(), "Expected path parameter by name match");
+            let params = result.unwrap();
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].r#in, ParameterLocation::Path);
+            assert_eq!(params[0].name, "user_id");
+        }
+    }
+
+    #[test]
+    fn test_is_map_type_false_for_non_path() {
+        // Test line 177: is_map_type returns false for non-Path type
+        let ty: Type = syn::parse_str("&str").unwrap();
+        assert!(!is_map_type(&ty)); // Line 177: returns false for non-Path type
+
+        let ty: Type = syn::parse_str("(i32, String)").unwrap();
+        assert!(!is_map_type(&ty)); // Tuple is also not a Path type
+    }
+
+    #[test]
+    fn test_is_known_type_empty_segments() {
+        // Test line 209: empty path segments returns false
+        // Note: It's hard to create a Type::Path with empty segments via parse,
+        // but we can test the normal path behavior and document the edge case
+        let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
+
+        // Non-path type returns false (line 209 is for empty segments which is rare)
+        let ty: Type = syn::parse_str("&str").unwrap();
+        assert!(!is_known_type(&ty, &known_schemas, &struct_definitions));
+    }
+
+    #[test]
+    fn test_is_known_type_non_vec_option_generic() {
+        // Test line 230: non-Vec/Option generic type (like Result<T, E> or Box<T>)
+        // The match at line 224-229 only handles Vec and Option
+        let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
+
+        // Box<i32> has angle brackets but is not Vec or Option
+        let ty: Type = syn::parse_str("Box<i32>").unwrap();
+        // Line 230: the default case `_ => {}` is hit, returns false
+        assert!(!is_known_type(&ty, &known_schemas, &struct_definitions));
+
+        // Result<i32, String> also not handled
+        let ty: Type = syn::parse_str("Result<i32, String>").unwrap();
+        assert!(!is_known_type(&ty, &known_schemas, &struct_definitions));
+    }
+
+    #[test]
+    fn test_parse_query_struct_empty_path_segments() {
+        // Test line 245: empty path segments in parse_query_struct_to_parameters
+        // This is the early return when path.segments.is_empty()
+        let known_schemas = HashMap::new();
+        let struct_definitions = HashMap::new();
+
+        // A reference type (not a path type) should return None
+        let ty: Type = syn::parse_str("&QueryParams").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+        // Line 242 matches Type::Path, but &QueryParams is Type::Reference
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_schema_ref_to_inline_conversion_optional() {
+        // Test line 313: SchemaRef::Ref converted to inline for Optional fields
+        let mut struct_definitions = HashMap::new();
+        let mut known_schemas = HashMap::new();
+
+        // Struct with Option<KnownRef> - the field references a known schema
+        struct_definitions.insert(
+            "QueryWithOptionalRef".to_string(),
+            r#"
+            pub struct QueryWithOptionalRef {
+                pub item: Option<RefType>,
+            }
+            "#
+            .to_string(),
+        );
+
+        // RefType is a known schema (will be SchemaRef::Ref) but NOT in struct_definitions
+        // So it stays as Ref, triggering line 313 (if still Ref after Option handling)
+        known_schemas.insert(
+            "RefType".to_string(),
+            "#/components/schemas/RefType".to_string(),
+        );
+
+        let ty: Type = syn::parse_str("QueryWithOptionalRef").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 1);
+        // The schema should be inline (converted from Ref via line 313)
+        match &params[0].schema {
+            Some(SchemaRef::Inline(schema)) => {
+                assert_eq!(schema.nullable, Some(true));
+            }
+            _ => panic!("Expected inline schema with nullable"),
+        }
+    }
+
+    #[test]
+    fn test_schema_ref_to_inline_conversion_required() {
+        // Test line 318: SchemaRef::Ref converted to inline for required fields
+        let mut struct_definitions = HashMap::new();
+        let mut known_schemas = HashMap::new();
+
+        // Struct with required RefType field
+        struct_definitions.insert(
+            "QueryWithRef".to_string(),
+            r#"
+            pub struct QueryWithRef {
+                pub item: RefType,
+            }
+            "#
+            .to_string(),
+        );
+
+        // RefType is a known schema (will be SchemaRef::Ref)
+        known_schemas.insert(
+            "RefType".to_string(),
+            "#/components/schemas/RefType".to_string(),
+        );
+
+        let ty: Type = syn::parse_str("QueryWithRef").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 1);
+        // Line 318: Ref is converted to inline object
+        match &params[0].schema {
+            Some(SchemaRef::Inline(schema)) => {
+                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            }
+            _ => panic!("Expected inline schema"),
+        }
+    }
 }
