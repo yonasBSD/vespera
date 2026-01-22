@@ -11,6 +11,27 @@ use super::schema::{
     parse_type_to_schema_ref_with_schemas, rename_field,
 };
 
+/// Convert SchemaRef to inline schema for query parameters
+/// Query parameters should always use inline schemas, not refs
+/// Adds nullable flag if the field is optional
+fn convert_to_inline_schema(field_schema: SchemaRef, is_optional: bool) -> SchemaRef {
+    match field_schema {
+        SchemaRef::Inline(mut schema) => {
+            if is_optional {
+                schema.nullable = Some(true);
+            }
+            SchemaRef::Inline(schema)
+        }
+        SchemaRef::Ref(_) => {
+            let mut schema = Schema::new(SchemaType::Object);
+            if is_optional {
+                schema.nullable = Some(true);
+            }
+            SchemaRef::Inline(Box::new(schema))
+        }
+    }
+}
+
 /// Analyze function parameter and convert to OpenAPI Parameter(s)
 /// Returns None if parameter should be ignored (e.g., Query<HashMap<...>>)
 /// Returns Some(Vec<Parameter>) with one or more parameters
@@ -393,46 +414,23 @@ fn parse_query_struct_to_parameters(
 
                     // Convert ref to inline if needed (Query parameters should not use refs)
                     // If it's a ref to a known struct, get the struct definition and inline it
-                    if let SchemaRef::Ref(ref_ref) = &field_schema {
-                        // Try to extract type name from ref path (e.g., "#/components/schemas/User" -> "User")
-                        if let Some(type_name) =
+                    if let SchemaRef::Ref(ref_ref) = &field_schema
+                        && let Some(type_name) =
                             ref_ref.ref_path.strip_prefix("#/components/schemas/")
-                            && let Some(struct_def) = struct_definitions.get(type_name)
-                            && let Ok(nested_struct_item) =
-                                syn::parse_str::<syn::ItemStruct>(struct_def)
-                        {
-                            // Parse the nested struct to schema (inline)
-                            let nested_schema = parse_struct_to_schema(
-                                &nested_struct_item,
-                                known_schemas,
-                                struct_definitions,
-                            );
-                            field_schema = SchemaRef::Inline(Box::new(nested_schema));
-                        }
+                        && let Some(struct_def) = struct_definitions.get(type_name)
+                        && let Ok(nested_struct_item) =
+                            syn::parse_str::<syn::ItemStruct>(struct_def)
+                    {
+                        // Parse the nested struct to schema (inline)
+                        let nested_schema = parse_struct_to_schema(
+                            &nested_struct_item,
+                            known_schemas,
+                            struct_definitions,
+                        );
+                        field_schema = SchemaRef::Inline(Box::new(nested_schema));
                     }
 
-                    // If it's Option<T>, make it nullable
-                    let final_schema = if is_optional {
-                        if let SchemaRef::Inline(mut schema) = field_schema {
-                            schema.nullable = Some(true);
-                            SchemaRef::Inline(schema)
-                        } else {
-                            // If still a ref, convert to inline object with nullable
-                            SchemaRef::Inline(Box::new(Schema {
-                                schema_type: Some(SchemaType::Object),
-                                nullable: Some(true),
-                                ..Schema::object()
-                            }))
-                        }
-                    } else {
-                        // If it's still a ref, convert to inline object
-                        match field_schema {
-                            SchemaRef::Ref(_) => {
-                                SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
-                            }
-                            SchemaRef::Inline(schema) => SchemaRef::Inline(schema),
-                        }
-                    };
+                    let final_schema = convert_to_inline_schema(field_schema, is_optional);
 
                     let required = !is_optional;
 
@@ -1011,23 +1009,6 @@ mod tests {
         }
     }
 
-    // NOTE: Line 313 is defensive/unreachable code.
-    //
-    // Analysis: Line 313 requires:
-    // 1. is_optional == true (field type starts with "Option")
-    // 2. field_schema is still SchemaRef::Ref after the conversion at lines 294-304
-    //
-    // However, parse_type_to_schema_ref_with_schemas("Option<T>") ALWAYS returns
-    // SchemaRef::Inline because:
-    // - schema.rs lines 650-668 handle Option specially
-    // - If inner type is Inline → returns Inline (line 660)
-    // - If inner type is Ref → wraps in Inline (line 664)
-    //
-    // Therefore, for any field whose type starts with "Option", field_schema at line 290
-    // will always be SchemaRef::Inline, making the else branch at line 312-313 unreachable.
-    //
-    // This is defensive code guarding against future changes to Option handling in schema.rs.
-
     #[test]
     fn test_schema_ref_to_inline_conversion_required() {
         // Test line 318: SchemaRef::Ref converted to inline for required fields
@@ -1115,6 +1096,61 @@ mod tests {
                 // Successfully converted
             }
             _ => panic!("Expected inline schema (converted from Ref via struct_def)"),
+        }
+    }
+
+    // Tests for convert_to_inline_schema helper function
+    #[test]
+    fn test_convert_to_inline_schema_inline_required() {
+        let schema = SchemaRef::Inline(Box::new(Schema::string()));
+        let result = convert_to_inline_schema(schema, false);
+        match result {
+            SchemaRef::Inline(s) => {
+                assert_eq!(s.schema_type, Some(SchemaType::String));
+                assert!(s.nullable.is_none());
+            }
+            _ => panic!("Expected Inline"),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_inline_schema_inline_optional() {
+        let schema = SchemaRef::Inline(Box::new(Schema::string()));
+        let result = convert_to_inline_schema(schema, true);
+        match result {
+            SchemaRef::Inline(s) => {
+                assert_eq!(s.schema_type, Some(SchemaType::String));
+                assert_eq!(s.nullable, Some(true));
+            }
+            _ => panic!("Expected Inline"),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_inline_schema_ref_required() {
+        use vespera_core::schema::Reference;
+        let schema = SchemaRef::Ref(Reference::schema("SomeType"));
+        let result = convert_to_inline_schema(schema, false);
+        match result {
+            SchemaRef::Inline(s) => {
+                assert_eq!(s.schema_type, Some(SchemaType::Object));
+                assert!(s.nullable.is_none());
+            }
+            _ => panic!("Expected Inline"),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_inline_schema_ref_optional() {
+        use vespera_core::schema::Reference;
+        let schema = SchemaRef::Ref(Reference::schema("SomeType"));
+        let result = convert_to_inline_schema(schema, true);
+        match result {
+            SchemaRef::Inline(s) => {
+                assert_eq!(s.schema_type, Some(SchemaType::Object));
+                assert_eq!(s.nullable, Some(true));
+            }
+            _ => panic!("Expected Inline"),
         }
     }
 }
