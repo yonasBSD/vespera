@@ -24,15 +24,29 @@ use crate::openapi_generator::generate_openapi_doc_with_metadata;
 use vespera_core::openapi::Server;
 use vespera_core::route::HttpMethod;
 
+/// Validate route function - must be pub and async
+fn validate_route_fn(item_fn: &syn::ItemFn) -> Result<(), syn::Error> {
+    if !matches!(item_fn.vis, syn::Visibility::Public(_)) {
+        return Err(syn::Error::new_spanned(
+            item_fn.sig.fn_token,
+            "route function must be public",
+        ));
+    }
+    if item_fn.sig.asyncness.is_none() {
+        return Err(syn::Error::new_spanned(
+            item_fn.sig.fn_token,
+            "route function must be async",
+        ));
+    }
+    Ok(())
+}
+
 /// route attribute macro
 #[proc_macro_attribute]
 pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
-    // Validate attribute arguments
     if let Err(e) = syn::parse::<args::RouteArgs>(attr) {
         return e.to_compile_error().into();
     }
-
-    // Validate that item is a function
     let item_fn = match syn::parse::<syn::ItemFn>(item.clone()) {
         Ok(f) => f,
         Err(e) => {
@@ -41,21 +55,9 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .into();
         }
     };
-
-    // Validate function is pub
-    if !matches!(item_fn.vis, syn::Visibility::Public(_)) {
-        return syn::Error::new_spanned(item_fn.sig.fn_token, "route function must be public")
-            .to_compile_error()
-            .into();
+    if let Err(e) = validate_route_fn(&item_fn) {
+        return e.to_compile_error().into();
     }
-
-    // Validate function is async
-    if item_fn.sig.asyncness.is_none() {
-        return syn::Error::new_spanned(item_fn.sig.fn_token, "route function must be async")
-            .to_compile_error()
-            .into();
-    }
-
     item
 }
 
@@ -63,27 +65,27 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
-/// Derive macro for Schema
-#[proc_macro_derive(Schema)]
-pub fn derive_schema(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+/// Process derive input and return metadata + expanded code
+fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macro2::TokenStream) {
     let name = &input.ident;
     let generics = &input.generics;
-
-    let mut schema_storage = SCHEMA_STORAGE.lock().unwrap();
-    schema_storage.push(StructMetadata {
+    let metadata = StructMetadata {
         name: name.to_string(),
         definition: quote::quote!(#input).to_string(),
-    });
-
-    // Mark both struct and enum as having SchemaBuilder
-    // For generic types, include the generic parameters in the impl
-    // The actual schema generation will be done at runtime
+    };
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let expanded = quote! {
         impl #impl_generics vespera::schema::SchemaBuilder for #name #ty_generics #where_clause {}
     };
+    (metadata, expanded)
+}
 
+/// Derive macro for Schema
+#[proc_macro_derive(Schema)]
+pub fn derive_schema(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    let (metadata, expanded) = process_derive_schema(&input);
+    SCHEMA_STORAGE.lock().unwrap().push(metadata);
     TokenStream::from(expanded)
 }
 
@@ -376,49 +378,107 @@ fn parse_server_struct(input: ParseStream) -> syn::Result<ServerConfig> {
     Ok(ServerConfig { url, description })
 }
 
+/// Docs info tuple type alias for cleaner signatures
+type DocsInfo = (Option<(String, String)>, Option<(String, String)>);
+
+/// Processed vespera input with extracted values
+struct ProcessedVesperaInput {
+    folder_name: String,
+    openapi_file_names: Vec<String>,
+    title: Option<String>,
+    version: Option<String>,
+    docs_url: Option<String>,
+    redoc_url: Option<String>,
+    servers: Option<Vec<Server>>,
+}
+
+/// Process AutoRouterInput into extracted values
+fn process_vespera_input(input: AutoRouterInput) -> ProcessedVesperaInput {
+    ProcessedVesperaInput {
+        folder_name: input
+            .dir
+            .map(|f| f.value())
+            .unwrap_or_else(|| "routes".to_string()),
+        openapi_file_names: input
+            .openapi
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| f.value())
+            .collect(),
+        title: input.title.map(|t| t.value()),
+        version: input.version.map(|v| v.value()),
+        docs_url: input.docs_url.map(|u| u.value()),
+        redoc_url: input.redoc_url.map(|u| u.value()),
+        servers: input.servers.map(|svrs| {
+            svrs.into_iter()
+                .map(|s| Server {
+                    url: s.url,
+                    description: s.description,
+                    variables: None,
+                })
+                .collect()
+        }),
+    }
+}
+
+/// Generate OpenAPI JSON and write to files, returning docs info
+fn generate_and_write_openapi(
+    input: &ProcessedVesperaInput,
+    metadata: &CollectedMetadata,
+) -> Result<DocsInfo, String> {
+    if input.openapi_file_names.is_empty() && input.docs_url.is_none() && input.redoc_url.is_none()
+    {
+        return Ok((None, None));
+    }
+
+    let json_str = serde_json::to_string_pretty(&generate_openapi_doc_with_metadata(
+        input.title.clone(),
+        input.version.clone(),
+        input.servers.clone(),
+        metadata,
+    ))
+    .map_err(|e| format!("Failed to serialize OpenAPI document: {}", e))?;
+
+    for openapi_file_name in &input.openapi_file_names {
+        let file_path = Path::new(openapi_file_name);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+        std::fs::write(file_path, &json_str).map_err(|e| {
+            format!(
+                "Failed to write OpenAPI document to {}: {}",
+                openapi_file_name, e
+            )
+        })?;
+    }
+
+    let docs_info = input
+        .docs_url
+        .as_ref()
+        .map(|url| (url.clone(), json_str.clone()));
+    let redoc_info = input.redoc_url.as_ref().map(|url| (url.clone(), json_str));
+
+    Ok((docs_info, redoc_info))
+}
+
 #[proc_macro]
 pub fn vespera(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AutoRouterInput);
+    let processed = process_vespera_input(input);
 
-    let folder_name = input
-        .dir
-        .map(|f| f.value())
-        .unwrap_or_else(|| "routes".to_string());
-
-    let openapi_file_names = input
-        .openapi
-        .unwrap_or_default()
-        .into_iter()
-        .map(|f| f.value())
-        .collect::<Vec<_>>();
-
-    let title = input.title.map(|t| t.value());
-    let version = input.version.map(|v| v.value());
-    let docs_url = input.docs_url.map(|u| u.value());
-    let redoc_url = input.redoc_url.map(|u| u.value());
-    let servers = input.servers.map(|svrs| {
-        svrs.into_iter()
-            .map(|s| Server {
-                url: s.url,
-                description: s.description,
-                variables: None,
-            })
-            .collect::<Vec<_>>()
-    });
-
-    let folder_path = find_folder_path(&folder_name);
-
+    let folder_path = find_folder_path(&processed.folder_name);
     if !folder_path.exists() {
         return syn::Error::new(
             Span::call_site(),
-            format!("Folder not found: {}", folder_name),
+            format!("Folder not found: {}", processed.folder_name),
         )
         .to_compile_error()
         .into();
     }
 
-    let mut metadata = match collect_metadata(&folder_path, &folder_name) {
-        Ok(metadata) => metadata,
+    let mut metadata = match collect_metadata(&folder_path, &processed.folder_name) {
+        Ok(m) => m,
         Err(e) => {
             return syn::Error::new(
                 Span::call_site(),
@@ -428,56 +488,18 @@ pub fn vespera(input: TokenStream) -> TokenStream {
             .into();
         }
     };
-    let schemas = SCHEMA_STORAGE.lock().unwrap().clone();
+    metadata
+        .structs
+        .extend(SCHEMA_STORAGE.lock().unwrap().clone());
 
-    metadata.structs.extend(schemas);
-
-    let mut docs_info = None;
-    let mut redoc_info = None;
-
-    if !openapi_file_names.is_empty() || docs_url.is_some() || redoc_url.is_some() {
-        // Generate OpenAPI document using collected metadata
-
-        // Serialize to JSON
-        let json_str = match serde_json::to_string_pretty(&generate_openapi_doc_with_metadata(
-            title, version, servers, &metadata,
-        )) {
-            Ok(json) => json,
-            Err(e) => {
-                return syn::Error::new(
-                    Span::call_site(),
-                    format!("Failed to serialize OpenAPI document: {}", e),
-                )
+    let (docs_info, redoc_info) = match generate_and_write_openapi(&processed, &metadata) {
+        Ok(info) => info,
+        Err(e) => {
+            return syn::Error::new(Span::call_site(), e)
                 .to_compile_error()
                 .into();
-            }
-        };
-        for openapi_file_name in &openapi_file_names {
-            // create directory if not exists
-            let file_path = Path::new(openapi_file_name);
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent).expect("Failed to create parent directory");
-            }
-
-            if let Err(e) = std::fs::write(file_path, &json_str) {
-                return syn::Error::new(
-                    Span::call_site(),
-                    format!(
-                        "Failed to write OpenAPI document to {}: {}",
-                        openapi_file_name, e
-                    ),
-                )
-                .to_compile_error()
-                .into();
-            }
         }
-        if let Some(docs_url) = docs_url {
-            docs_info = Some((docs_url, json_str.clone()));
-        }
-        if let Some(redoc_url) = redoc_url {
-            redoc_info = Some((redoc_url, json_str));
-        }
-    }
+    };
 
     generate_router_code(&metadata, docs_info, redoc_info).into()
 }
@@ -1040,5 +1062,582 @@ pub fn get_users() -> String {
         assert!(!code.contains("::users::users"));
 
         drop(temp_dir);
+    }
+
+    // ========== Tests for parsing functions ==========
+
+    #[test]
+    fn test_parse_openapi_values_single() {
+        // Test that single string openapi value parses correctly via AutoRouterInput
+        let tokens = quote::quote!(openapi = "openapi.json");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let openapi = input.openapi.unwrap();
+        assert_eq!(openapi.len(), 1);
+        assert_eq!(openapi[0].value(), "openapi.json");
+    }
+
+    #[test]
+    fn test_parse_openapi_values_array() {
+        // Test that array openapi value parses correctly via AutoRouterInput
+        let tokens = quote::quote!(openapi = ["openapi.json", "api.json"]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let openapi = input.openapi.unwrap();
+        assert_eq!(openapi.len(), 2);
+        assert_eq!(openapi[0].value(), "openapi.json");
+        assert_eq!(openapi[1].value(), "api.json");
+    }
+
+    #[test]
+    fn test_validate_server_url_valid_http() {
+        let lit = LitStr::new("http://localhost:3000", Span::call_site());
+        let result = validate_server_url(&lit);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_validate_server_url_valid_https() {
+        let lit = LitStr::new("https://api.example.com", Span::call_site());
+        let result = validate_server_url(&lit);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://api.example.com");
+    }
+
+    #[test]
+    fn test_validate_server_url_invalid() {
+        let lit = LitStr::new("ftp://example.com", Span::call_site());
+        let result = validate_server_url(&lit);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_server_url_no_scheme() {
+        let lit = LitStr::new("example.com", Span::call_site());
+        let result = validate_server_url(&lit);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_dir_only() {
+        let tokens = quote::quote!(dir = "api");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.dir.unwrap().value(), "api");
+        assert!(input.openapi.is_none());
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_string_as_dir() {
+        let tokens = quote::quote!("routes");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.dir.unwrap().value(), "routes");
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_openapi_single() {
+        let tokens = quote::quote!(openapi = "openapi.json");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let openapi = input.openapi.unwrap();
+        assert_eq!(openapi.len(), 1);
+        assert_eq!(openapi[0].value(), "openapi.json");
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_openapi_array() {
+        let tokens = quote::quote!(openapi = ["a.json", "b.json"]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let openapi = input.openapi.unwrap();
+        assert_eq!(openapi.len(), 2);
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_title_version() {
+        let tokens = quote::quote!(title = "My API", version = "2.0.0");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.title.unwrap().value(), "My API");
+        assert_eq!(input.version.unwrap().value(), "2.0.0");
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_docs_redoc() {
+        let tokens = quote::quote!(docs_url = "/docs", redoc_url = "/redoc");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.docs_url.unwrap().value(), "/docs");
+        assert_eq!(input.redoc_url.unwrap().value(), "/redoc");
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_servers_single() {
+        let tokens = quote::quote!(servers = "http://localhost:3000");
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "http://localhost:3000");
+        assert!(servers[0].description.is_none());
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_servers_array_strings() {
+        let tokens = quote::quote!(servers = ["http://localhost:3000", "https://api.example.com"]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 2);
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_servers_tuple() {
+        let tokens = quote::quote!(servers = [("http://localhost:3000", "Development")]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "http://localhost:3000");
+        assert_eq!(servers[0].description, Some("Development".to_string()));
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_servers_struct() {
+        let tokens =
+            quote::quote!(servers = [{ url = "http://localhost:3000", description = "Dev" }]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "http://localhost:3000");
+        assert_eq!(servers[0].description, Some("Dev".to_string()));
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_servers_single_struct() {
+        let tokens = quote::quote!(servers = { url = "https://api.example.com" });
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "https://api.example.com");
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_unknown_field() {
+        let tokens = quote::quote!(unknown_field = "value");
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_all_fields() {
+        let tokens = quote::quote!(
+            dir = "api",
+            openapi = "openapi.json",
+            title = "Test API",
+            version = "1.0.0",
+            docs_url = "/docs",
+            redoc_url = "/redoc",
+            servers = "http://localhost:3000"
+        );
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        assert!(input.dir.is_some());
+        assert!(input.openapi.is_some());
+        assert!(input.title.is_some());
+        assert!(input.version.is_some());
+        assert!(input.docs_url.is_some());
+        assert!(input.redoc_url.is_some());
+        assert!(input.servers.is_some());
+    }
+
+    #[test]
+    fn test_generate_router_code_with_docs() {
+        let metadata = CollectedMetadata::new();
+        let docs_info = Some(("/docs".to_string(), r#"{"openapi":"3.1.0"}"#.to_string()));
+
+        let result = generate_router_code(&metadata, docs_info, None);
+        let code = result.to_string();
+
+        assert!(code.contains("/docs"));
+        assert!(code.contains("swagger-ui"));
+    }
+
+    #[test]
+    fn test_generate_router_code_with_redoc() {
+        let metadata = CollectedMetadata::new();
+        let redoc_info = Some(("/redoc".to_string(), r#"{"openapi":"3.1.0"}"#.to_string()));
+
+        let result = generate_router_code(&metadata, None, redoc_info);
+        let code = result.to_string();
+
+        assert!(code.contains("/redoc"));
+        assert!(code.contains("redoc"));
+    }
+
+    #[test]
+    fn test_generate_router_code_with_both_docs() {
+        let metadata = CollectedMetadata::new();
+        let docs_info = Some(("/docs".to_string(), r#"{"openapi":"3.1.0"}"#.to_string()));
+        let redoc_info = Some(("/redoc".to_string(), r#"{"openapi":"3.1.0"}"#.to_string()));
+
+        let result = generate_router_code(&metadata, docs_info, redoc_info);
+        let code = result.to_string();
+
+        assert!(code.contains("/docs"));
+        assert!(code.contains("/redoc"));
+    }
+
+    #[test]
+    fn test_parse_server_struct_url_only() {
+        // Test server struct parsing via AutoRouterInput
+        let tokens = quote::quote!(servers = { url = "http://localhost:3000" });
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "http://localhost:3000");
+        assert!(servers[0].description.is_none());
+    }
+
+    #[test]
+    fn test_parse_server_struct_with_description() {
+        let tokens =
+            quote::quote!(servers = { url = "http://localhost:3000", description = "Local" });
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers[0].description, Some("Local".to_string()));
+    }
+
+    #[test]
+    fn test_parse_server_struct_unknown_field() {
+        let tokens = quote::quote!(servers = { url = "http://localhost:3000", unknown = "test" });
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_server_struct_missing_url() {
+        let tokens = quote::quote!(servers = { description = "test" });
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_servers_tuple_url_only() {
+        let tokens = quote::quote!(servers = [("http://localhost:3000")]);
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let servers = input.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert!(servers[0].description.is_none());
+    }
+
+    #[test]
+    fn test_parse_servers_invalid_url() {
+        let tokens = quote::quote!(servers = "invalid-url");
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auto_router_input_parse_invalid_token() {
+        // Test line 149: neither ident nor string literal triggers lookahead error
+        let tokens = quote::quote!(123);
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_auto_router_input_empty() {
+        // Test empty input - should use defaults/env vars
+        let tokens = quote::quote!();
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_auto_router_input_multiple_commas() {
+        // Test input with trailing comma
+        let tokens = quote::quote!(dir = "api",);
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_auto_router_input_no_comma() {
+        // Test input without comma between fields (should stop at second field)
+        let tokens = quote::quote!(dir = "api" title = "Test");
+        let result: syn::Result<AutoRouterInput> = syn::parse2(tokens);
+        // This should fail or only parse first field
+        assert!(result.is_err());
+    }
+
+    // ========== Tests for validate_route_fn ==========
+
+    #[test]
+    fn test_validate_route_fn_not_public() {
+        let item: syn::ItemFn = syn::parse_quote! {
+            async fn private_handler() -> String {
+                "test".to_string()
+            }
+        };
+        let result = validate_route_fn(&item);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be public"));
+    }
+
+    #[test]
+    fn test_validate_route_fn_not_async() {
+        let item: syn::ItemFn = syn::parse_quote! {
+            pub fn sync_handler() -> String {
+                "test".to_string()
+            }
+        };
+        let result = validate_route_fn(&item);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be async"));
+    }
+
+    #[test]
+    fn test_validate_route_fn_valid() {
+        let item: syn::ItemFn = syn::parse_quote! {
+            pub async fn valid_handler() -> String {
+                "test".to_string()
+            }
+        };
+        let result = validate_route_fn(&item);
+        assert!(result.is_ok());
+    }
+
+    // ========== Tests for process_derive_schema ==========
+
+    #[test]
+    fn test_process_derive_schema_struct() {
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct User {
+                name: String,
+                age: u32,
+            }
+        };
+        let (metadata, expanded) = process_derive_schema(&input);
+        assert_eq!(metadata.name, "User");
+        assert!(metadata.definition.contains("struct User"));
+        let code = expanded.to_string();
+        assert!(code.contains("SchemaBuilder"));
+        assert!(code.contains("User"));
+    }
+
+    #[test]
+    fn test_process_derive_schema_enum() {
+        let input: syn::DeriveInput = syn::parse_quote! {
+            enum Status {
+                Active,
+                Inactive,
+            }
+        };
+        let (metadata, expanded) = process_derive_schema(&input);
+        assert_eq!(metadata.name, "Status");
+        assert!(metadata.definition.contains("enum Status"));
+        let code = expanded.to_string();
+        assert!(code.contains("SchemaBuilder"));
+    }
+
+    #[test]
+    fn test_process_derive_schema_generic() {
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct Container<T> {
+                value: T,
+            }
+        };
+        let (metadata, expanded) = process_derive_schema(&input);
+        assert_eq!(metadata.name, "Container");
+        let code = expanded.to_string();
+        assert!(code.contains("SchemaBuilder"));
+        // Should have generic impl
+        assert!(code.contains("impl"));
+    }
+
+    // ========== Tests for process_vespera_input ==========
+
+    #[test]
+    fn test_process_vespera_input_defaults() {
+        let tokens = quote::quote!();
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let processed = process_vespera_input(input);
+        assert_eq!(processed.folder_name, "routes");
+        assert!(processed.openapi_file_names.is_empty());
+        assert!(processed.title.is_none());
+        assert!(processed.docs_url.is_none());
+    }
+
+    #[test]
+    fn test_process_vespera_input_all_fields() {
+        let tokens = quote::quote!(
+            dir = "api",
+            openapi = ["openapi.json", "api.json"],
+            title = "My API",
+            version = "1.0.0",
+            docs_url = "/docs",
+            redoc_url = "/redoc",
+            servers = "http://localhost:3000"
+        );
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let processed = process_vespera_input(input);
+        assert_eq!(processed.folder_name, "api");
+        assert_eq!(
+            processed.openapi_file_names,
+            vec!["openapi.json", "api.json"]
+        );
+        assert_eq!(processed.title, Some("My API".to_string()));
+        assert_eq!(processed.version, Some("1.0.0".to_string()));
+        assert_eq!(processed.docs_url, Some("/docs".to_string()));
+        assert_eq!(processed.redoc_url, Some("/redoc".to_string()));
+        let servers = processed.servers.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_process_vespera_input_servers_with_description() {
+        let tokens = quote::quote!(
+            servers = [{ url = "https://api.example.com", description = "Production" }]
+        );
+        let input: AutoRouterInput = syn::parse2(tokens).unwrap();
+        let processed = process_vespera_input(input);
+        let servers = processed.servers.unwrap();
+        assert_eq!(servers[0].url, "https://api.example.com");
+        assert_eq!(servers[0].description, Some("Production".to_string()));
+    }
+
+    // ========== Tests for generate_and_write_openapi ==========
+
+    #[test]
+    fn test_generate_and_write_openapi_no_output() {
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+        let (docs_info, redoc_info) = result.unwrap();
+        assert!(docs_info.is_none());
+        assert!(redoc_info.is_none());
+    }
+
+    #[test]
+    fn test_generate_and_write_openapi_docs_only() {
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![],
+            title: Some("Test API".to_string()),
+            version: Some("1.0.0".to_string()),
+            docs_url: Some("/docs".to_string()),
+            redoc_url: None,
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+        let (docs_info, redoc_info) = result.unwrap();
+        assert!(docs_info.is_some());
+        let (url, json) = docs_info.unwrap();
+        assert_eq!(url, "/docs");
+        assert!(json.contains("\"openapi\""));
+        assert!(json.contains("Test API"));
+        assert!(redoc_info.is_none());
+    }
+
+    #[test]
+    fn test_generate_and_write_openapi_redoc_only() {
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: Some("/redoc".to_string()),
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+        let (docs_info, redoc_info) = result.unwrap();
+        assert!(docs_info.is_none());
+        assert!(redoc_info.is_some());
+        let (url, _) = redoc_info.unwrap();
+        assert_eq!(url, "/redoc");
+    }
+
+    #[test]
+    fn test_generate_and_write_openapi_both_docs() {
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: Some("/docs".to_string()),
+            redoc_url: Some("/redoc".to_string()),
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+        let (docs_info, redoc_info) = result.unwrap();
+        assert!(docs_info.is_some());
+        assert!(redoc_info.is_some());
+    }
+
+    #[test]
+    fn test_generate_and_write_openapi_file_output() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let output_path = temp_dir.path().join("test-openapi.json");
+
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![output_path.to_string_lossy().to_string()],
+            title: Some("File Test".to_string()),
+            version: Some("2.0.0".to_string()),
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+
+        // Verify file was written
+        assert!(output_path.exists());
+        let content = fs::read_to_string(&output_path).unwrap();
+        assert!(content.contains("\"openapi\""));
+        assert!(content.contains("File Test"));
+        assert!(content.contains("2.0.0"));
+    }
+
+    #[test]
+    fn test_generate_and_write_openapi_creates_directories() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let output_path = temp_dir.path().join("nested/dir/openapi.json");
+
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![output_path.to_string_lossy().to_string()],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+        };
+        let metadata = CollectedMetadata::new();
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+
+        // Verify nested directories and file were created
+        assert!(output_path.exists());
+    }
+
+    // ========== Tests for find_folder_path ==========
+    // Note: find_folder_path uses CARGO_MANIFEST_DIR which is set during cargo test
+
+    #[test]
+    fn test_find_folder_path_nonexistent_returns_path() {
+        // When the constructed path doesn't exist, it falls back to using folder_name directly
+        let result = find_folder_path("nonexistent_folder_xyz");
+        // It should return a PathBuf (either from src/nonexistent... or just the folder name)
+        assert!(result.to_string_lossy().contains("nonexistent_folder_xyz"));
     }
 }

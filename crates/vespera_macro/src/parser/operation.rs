@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use syn::{FnArg, PatType, Type};
-use vespera_core::{
-    route::{MediaType, Operation, Parameter, ParameterLocation, RequestBody, Response},
-    schema::{Schema, SchemaRef},
-};
+use vespera_core::route::{MediaType, Operation, Parameter, ParameterLocation, Response};
 
 use super::{
     parameters::parse_function_parameter, path::extract_path_parameters,
@@ -157,49 +154,6 @@ pub fn build_operation_from_function(
             {
                 parameters.extend(params);
             }
-        }
-    }
-
-    // Fallback: if last arg is String/&str and no body yet, treat as text/plain body
-    if request_body.is_none()
-        && let Some(FnArg::Typed(PatType { ty, .. })) = sig.inputs.last()
-    {
-        let is_string = match ty.as_ref() {
-            Type::Path(type_path) => type_path
-                .path
-                .segments
-                .last()
-                .map(|s| s.ident == "String" || s.ident == "str")
-                .unwrap_or(false),
-            Type::Reference(type_ref) => {
-                if let Type::Path(p) = type_ref.elem.as_ref() {
-                    p.path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "String" || s.ident == "str")
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        };
-
-        if is_string {
-            let mut content = BTreeMap::new();
-            content.insert(
-                "text/plain".to_string(),
-                MediaType {
-                    schema: Some(SchemaRef::Inline(Box::new(Schema::string()))),
-                    example: None,
-                    examples: None,
-                },
-            );
-            request_body = Some(RequestBody {
-                description: None,
-                content,
-                required: Some(true),
-            });
         }
     }
 
@@ -525,5 +479,185 @@ mod tests {
         assert_params(&op, &expected_params);
         assert_body(&op, &expected_body);
         assert_responses(&op, &expected_resps);
+    }
+
+    // ======== Tests for uncovered lines ========
+
+    #[test]
+    fn test_single_path_param_with_single_type() {
+        // Test line 55: Path<T> with single type (not tuple) and exactly ONE path param
+        // This exercises the branch: path_params.len() == 1 with non-tuple type
+        let op = build("fn get(Path(id): Path<i32>) -> String", "/users/{id}", None);
+
+        // Should have exactly 1 path parameter with Integer type
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "id");
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::Integer));
+    }
+
+    #[test]
+    fn test_single_path_param_with_string_type() {
+        // Another test for line 55: Path<String> with single path param
+        let op = build(
+            "fn get(Path(id): Path<String>) -> String",
+            "/users/{user_id}",
+            None,
+        );
+
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "user_id");
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::String));
+    }
+
+    #[test]
+    fn test_non_path_extractor_with_query() {
+        // Test lines 85, 89: non-Path extractor handling
+        // When input is Query<T>, it should NOT be treated as Path
+        let op = build(
+            "fn search(Query(params): Query<QueryParams>) -> String",
+            "/search",
+            None,
+        );
+
+        // Query params should be extended to parameters (line 89)
+        // But QueryParams is not in known_schemas/struct_definitions so it won't appear
+        // The key is that it doesn't treat Query as a Path extractor (line 85 returns false)
+        assert!(op.request_body.is_none()); // Query is not a body
+    }
+
+    #[test]
+    fn test_non_path_extractor_with_state() {
+        // Test lines 85, 89: State<T> should be ignored (not Path)
+        let op = build(
+            "fn handler(State(state): State<AppState>) -> String",
+            "/handler",
+            None,
+        );
+
+        // State is not a path extractor, and State params are typically ignored
+        // line 85 returns false, so line 89 extends parameters (but State is usually filtered out)
+        assert!(op.parameters.is_none() || op.parameters.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_string_body() {
+        // String arg is handled by parse_request_body via is_string_like()
+        let op = build("fn upload(content: String) -> String", "/upload", None);
+
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+        let media = body.content.get("text/plain").unwrap();
+        match media.schema.as_ref().unwrap() {
+            SchemaRef::Inline(schema) => {
+                assert_eq!(schema.schema_type, Some(SchemaType::String));
+            }
+            _ => panic!("expected inline schema"),
+        }
+    }
+
+    #[test]
+    fn test_str_ref_body() {
+        // &str arg is handled by parse_request_body via is_string_like()
+        let op = build("fn upload(content: &str) -> String", "/upload", None);
+
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+    }
+
+    #[test]
+    fn test_string_ref_body() {
+        // &String arg is handled by parse_request_body via is_string_like()
+        let op = build("fn upload(content: &String) -> String", "/upload", None);
+
+        let body = op.request_body.as_ref().expect("request body expected");
+        assert!(body.content.contains_key("text/plain"));
+    }
+
+    #[test]
+    fn test_non_string_arg_not_body() {
+        // Non-string args don't become request body
+        let op = build("fn process(count: i32) -> String", "/process", None);
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_multiple_path_params_with_single_type() {
+        // Test line 57-60: multiple path params but single type - uses type for all
+        let op = build(
+            "fn get(Path(id): Path<String>) -> String",
+            "/shops/{shop_id}/items/{item_id}",
+            None,
+        );
+
+        // Both params should use String type
+        let params = op.parameters.as_ref().expect("parameters expected");
+        assert_eq!(params.len(), 2);
+        assert_eq!(param_schema_type(&params[0]), Some(SchemaType::String));
+        assert_eq!(param_schema_type(&params[1]), Some(SchemaType::String));
+    }
+
+    #[test]
+    fn test_reference_to_non_path_type_not_body() {
+        // &(tuple) is not string-like, no body created
+        let op = build("fn process(data: &(i32, i32)) -> String", "/process", None);
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_reference_to_slice_not_body() {
+        // &[T] is not string-like, no body created
+        let op = build("fn process(data: &[u8]) -> String", "/process", None);
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_tuple_type_not_body() {
+        // Tuple type is not string-like, no body created
+        let op = build(
+            "fn process(data: (i32, String)) -> String",
+            "/process",
+            None,
+        );
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_array_type_not_body() {
+        // Array type is not string-like, no body created
+        let op = build("fn process(data: [u8; 4]) -> String", "/process", None);
+        assert!(op.request_body.is_none());
+    }
+
+    #[test]
+    fn test_non_path_extractor_generates_params_and_extends() {
+        // Test lines 85, 89: non-Path extractor that DOES generate params
+        // Query<T> where T is a known struct generates query parameters
+        let sig: syn::Signature = syn::parse_str("fn search(Query(params): Query<SearchParams>, TypedHeader(auth): TypedHeader<Authorization>) -> String").unwrap();
+
+        let mut struct_definitions = HashMap::new();
+        struct_definitions.insert(
+            "SearchParams".to_string(),
+            "pub struct SearchParams { pub q: String }".to_string(),
+        );
+
+        let op = build_operation_from_function(
+            &sig,
+            "/search",
+            &HashMap::new(),
+            &struct_definitions,
+            None,
+            None,
+        );
+
+        // Query is not Path (line 85 returns false)
+        // parse_function_parameter returns Some for Query<SearchParams>
+        // Line 89: parameters.extend(params)
+        // TypedHeader also generates a header parameter
+        assert!(op.parameters.is_some());
+        let params = op.parameters.unwrap();
+        // Should have query param(s) and header param
+        assert!(!params.is_empty());
     }
 }

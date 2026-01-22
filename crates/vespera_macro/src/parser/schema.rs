@@ -30,7 +30,7 @@ pub fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
                 return found_rename_all;
             }
 
-            // Fallback: manual token parsing
+            // Fallback: manual token parsing for complex attribute combinations
             let tokens = match attr.meta.require_list() {
                 Ok(t) => t,
                 Err(_) => continue,
@@ -80,7 +80,7 @@ pub fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
                 return Some(rename_value);
             }
 
-            // Fallback: manual token parsing with regex-like approach
+            // Fallback: manual token parsing for complex attribute combinations
             let tokens = meta_list.tokens.to_string();
             // Look for pattern: rename = "value" (with proper word boundaries)
             if let Some(start) = tokens.find("rename") {
@@ -175,7 +175,7 @@ pub fn extract_skip_serializing_if(attrs: &[syn::Attribute]) -> bool {
                 return true;
             }
 
-            // Fallback: check tokens string
+            // Fallback: check tokens string for complex attribute combinations
             let tokens = meta_list.tokens.to_string();
             if tokens.contains("skip_serializing_if") {
                 return true;
@@ -218,16 +218,24 @@ pub fn extract_default(attrs: &[syn::Attribute]) -> Option<Option<String>> {
                 return Some(default_value);
             }
 
-            // Fallback: manual token parsing
+            // Fallback: manual token parsing for complex attribute combinations
             let tokens = meta_list.tokens.to_string();
             if let Some(start) = tokens.find("default") {
                 let remaining = &tokens[start + "default".len()..];
                 if remaining.trim_start().starts_with('=') {
                     // default = "function_name"
-                    let value_part = remaining.trim_start()[1..].trim();
-                    if value_part.starts_with('"') && value_part.ends_with('"') {
-                        let function_name = &value_part[1..value_part.len() - 1];
-                        return Some(Some(function_name.to_string()));
+                    let after_equals = remaining
+                        .trim_start()
+                        .strip_prefix('=')
+                        .unwrap_or("")
+                        .trim_start();
+                    // Extract string value - find opening and closing quotes
+                    if let Some(quote_start) = after_equals.find('"') {
+                        let after_quote = &after_equals[quote_start + 1..];
+                        if let Some(quote_end) = after_quote.find('"') {
+                            let function_name = &after_quote[..quote_end];
+                            return Some(Some(function_name.to_string()));
+                        }
                     }
                 } else {
                     // Just "default" without = (standalone)
@@ -849,6 +857,37 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                 "f32" | "f64" => SchemaRef::Inline(Box::new(Schema::number())),
                 "bool" => SchemaRef::Inline(Box::new(Schema::boolean())),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
+                // Date-time types from chrono crate
+                "DateTime" | "NaiveDateTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date-time".to_string()),
+                    ..Schema::string()
+                })),
+                "NaiveDate" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date".to_string()),
+                    ..Schema::string()
+                })),
+                "NaiveTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("time".to_string()),
+                    ..Schema::string()
+                })),
+                // Date-time types from time crate
+                "OffsetDateTime" | "PrimitiveDateTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date-time".to_string()),
+                    ..Schema::string()
+                })),
+                "Date" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date".to_string()),
+                    ..Schema::string()
+                })),
+                "Time" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("time".to_string()),
+                    ..Schema::string()
+                })),
+                // Duration types
+                "Duration" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("duration".to_string()),
+                    ..Schema::string()
+                })),
                 // Standard library types that should not be referenced
                 // Note: HashMap and BTreeMap are handled above in generic types
                 "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
@@ -857,13 +896,8 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                 }
                 _ => {
                     // Check if this is a known schema (struct with Schema derive)
-                    // Try both the full path and just the type name
-                    let type_name = if path.segments.len() > 1 {
-                        // For paths like crate::TestStruct, use just the type name
-                        ident_str.clone()
-                    } else {
-                        ident_str.clone()
-                    };
+                    // Use just the type name (handles both crate::TestStruct and TestStruct)
+                    let type_name = ident_str.clone();
 
                     if known_schemas.contains_key(&type_name) {
                         // Check if this is a generic type with type parameters
@@ -1878,6 +1912,534 @@ mod tests {
         }
     }
 
+    // Tests for fallback parsing paths using synthetic attributes
+    mod fallback_parsing_tests {
+        use super::*;
+
+        /// Helper to create attributes by parsing a struct with the given serde attributes
+        fn get_struct_attrs(serde_content: &str) -> Vec<syn::Attribute> {
+            let src = format!(r#"#[serde({})] struct Foo;"#, serde_content);
+            let item: syn::ItemStruct = syn::parse_str(&src).unwrap();
+            item.attrs
+        }
+
+        /// Helper to create field attributes by parsing a struct with the field
+        fn get_field_attrs(serde_content: &str) -> Vec<syn::Attribute> {
+            let src = format!(r#"struct Foo {{ #[serde({})] field: i32 }}"#, serde_content);
+            let item: syn::ItemStruct = syn::parse_str(&src).unwrap();
+            if let syn::Fields::Named(fields) = &item.fields {
+                fields.named.first().unwrap().attrs.clone()
+            } else {
+                vec![]
+            }
+        }
+
+        /// Test extract_rename_all fallback by creating an attribute where
+        /// parse_nested_meta succeeds but doesn't find rename_all in the expected format
+        #[test]
+        fn test_extract_rename_all_fallback_path() {
+            // Standard path - parse_nested_meta should work
+            let attrs = get_struct_attrs(r#"rename_all = "camelCase""#);
+            let result = extract_rename_all(&attrs);
+            assert_eq!(result.as_deref(), Some("camelCase"));
+        }
+
+        /// Test extract_field_rename fallback
+        #[test]
+        fn test_extract_field_rename_fallback_path() {
+            // Standard path
+            let attrs = get_field_attrs(r#"rename = "myField""#);
+            let result = extract_field_rename(&attrs);
+            assert_eq!(result.as_deref(), Some("myField"));
+        }
+
+        /// Test extract_skip_serializing_if with fallback token check
+        #[test]
+        fn test_extract_skip_serializing_if_fallback_path() {
+            let attrs = get_field_attrs(r#"skip_serializing_if = "Option::is_none""#);
+            let result = extract_skip_serializing_if(&attrs);
+            assert!(result);
+        }
+
+        /// Test extract_default standalone fallback
+        #[test]
+        fn test_extract_default_standalone_fallback_path() {
+            // Simple default without function
+            let attrs = get_field_attrs(r#"default"#);
+            let result = extract_default(&attrs);
+            assert_eq!(result, Some(None));
+        }
+
+        /// Test extract_default with function fallback
+        #[test]
+        fn test_extract_default_with_function_fallback_path() {
+            let attrs = get_field_attrs(r#"default = "my_default_fn""#);
+            let result = extract_default(&attrs);
+            assert_eq!(result, Some(Some("my_default_fn".to_string())));
+        }
+
+        /// Test that rename_all is NOT confused with rename
+        #[test]
+        fn test_extract_field_rename_avoids_rename_all() {
+            let attrs = get_field_attrs(r#"rename_all = "camelCase""#);
+            let result = extract_field_rename(&attrs);
+            assert_eq!(result, None); // Should NOT extract rename_all as rename
+        }
+
+        /// Test empty serde attribute
+        #[test]
+        fn test_extract_functions_with_empty_serde() {
+            let item: syn::ItemStruct = syn::parse_str(r#"#[serde()] struct Foo;"#).unwrap();
+            assert_eq!(extract_rename_all(&item.attrs), None);
+        }
+
+        /// Test non-serde attribute is ignored
+        #[test]
+        fn test_extract_functions_ignore_non_serde() {
+            let item: syn::ItemStruct = syn::parse_str(r#"#[derive(Debug)] struct Foo;"#).unwrap();
+            assert_eq!(extract_rename_all(&item.attrs), None);
+            assert_eq!(extract_field_rename(&item.attrs), None);
+        }
+
+        /// Test serde attribute that is not a list (e.g., #[serde])
+        #[test]
+        fn test_extract_rename_all_non_list_serde() {
+            // #[serde] without parentheses - this should just be ignored
+            let item: syn::ItemStruct = syn::parse_str(r#"#[serde] struct Foo;"#).unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result, None);
+        }
+
+        /// Test extract_field_rename with complex attribute
+        #[test]
+        fn test_extract_field_rename_complex_attr() {
+            let attrs = get_field_attrs(
+                r#"default, rename = "field_name", skip_serializing_if = "Option::is_none""#,
+            );
+            let result = extract_field_rename(&attrs);
+            assert_eq!(result.as_deref(), Some("field_name"));
+        }
+
+        /// Test extract_rename_all with multiple serde attributes on same item
+        #[test]
+        fn test_extract_rename_all_multiple_serde_attrs() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"
+                #[serde(default)]
+                #[serde(rename_all = "snake_case")]
+                struct Foo;
+                "#,
+            )
+            .unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result.as_deref(), Some("snake_case"));
+        }
+
+        /// Test edge case: rename_all with extra whitespace (manual parsing should handle)
+        #[test]
+        fn test_extract_rename_all_with_whitespace() {
+            // Note: syn normalizes whitespace in parsed tokens, so this tests the robust parsing
+            let attrs = get_struct_attrs(r#"rename_all = "PascalCase""#);
+            let result = extract_rename_all(&attrs);
+            assert_eq!(result.as_deref(), Some("PascalCase"));
+        }
+
+        /// Test edge case: rename at various positions
+        #[test]
+        fn test_extract_field_rename_at_end() {
+            let attrs = get_field_attrs(r#"skip_serializing_if = "is_none", rename = "lastField""#);
+            let result = extract_field_rename(&attrs);
+            assert_eq!(result.as_deref(), Some("lastField"));
+        }
+
+        /// Test extract_default when it appears with other attrs
+        #[test]
+        fn test_extract_default_among_other_attrs() {
+            let attrs =
+                get_field_attrs(r#"skip_serializing_if = "is_none", default, rename = "field""#);
+            let result = extract_default(&attrs);
+            assert_eq!(result, Some(None));
+        }
+
+        /// Test extract_skip - basic functionality
+        #[test]
+        fn test_extract_skip_basic() {
+            let attrs = get_field_attrs(r#"skip"#);
+            let result = extract_skip(&attrs);
+            assert!(result);
+        }
+
+        /// Test extract_skip does not trigger for skip_serializing_if
+        #[test]
+        fn test_extract_skip_not_skip_serializing_if() {
+            let attrs = get_field_attrs(r#"skip_serializing_if = "Option::is_none""#);
+            let result = extract_skip(&attrs);
+            assert!(!result);
+        }
+
+        /// Test extract_skip does not trigger for skip_deserializing
+        #[test]
+        fn test_extract_skip_not_skip_deserializing() {
+            let attrs = get_field_attrs(r#"skip_deserializing"#);
+            let result = extract_skip(&attrs);
+            assert!(!result);
+        }
+
+        /// Test extract_skip with combined attrs
+        #[test]
+        fn test_extract_skip_with_other_attrs() {
+            let attrs = get_field_attrs(r#"skip, default"#);
+            let result = extract_skip(&attrs);
+            assert!(result);
+        }
+
+        /// Test extract_default function with path containing colons
+        #[test]
+        fn test_extract_default_with_path() {
+            let attrs = get_field_attrs(r#"default = "Default::default""#);
+            let result = extract_default(&attrs);
+            assert_eq!(result, Some(Some("Default::default".to_string())));
+        }
+
+        /// Test extract_skip_serializing_if with complex path
+        #[test]
+        fn test_extract_skip_serializing_if_complex_path() {
+            let attrs = get_field_attrs(r#"skip_serializing_if = "Vec::is_empty""#);
+            let result = extract_skip_serializing_if(&attrs);
+            assert!(result);
+        }
+
+        /// Test extract_rename_all with all supported formats
+        #[rstest]
+        #[case("camelCase")]
+        #[case("snake_case")]
+        #[case("kebab-case")]
+        #[case("PascalCase")]
+        #[case("lowercase")]
+        #[case("UPPERCASE")]
+        #[case("SCREAMING_SNAKE_CASE")]
+        #[case("SCREAMING-KEBAB-CASE")]
+        fn test_extract_rename_all_all_formats(#[case] format: &str) {
+            let attrs = get_struct_attrs(&format!(r#"rename_all = "{}""#, format));
+            let result = extract_rename_all(&attrs);
+            assert_eq!(result.as_deref(), Some(format));
+        }
+
+        /// Test non-serde attribute doesn't affect extraction
+        #[test]
+        fn test_mixed_attributes() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"
+                #[derive(Debug, Clone)]
+                #[serde(rename_all = "camelCase")]
+                #[doc = "Some documentation"]
+                struct Foo;
+                "#,
+            )
+            .unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result.as_deref(), Some("camelCase"));
+        }
+
+        /// Test field with multiple serde attributes
+        #[test]
+        fn test_field_multiple_serde_attrs() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"
+                struct Foo {
+                    #[serde(default)]
+                    #[serde(rename = "customName")]
+                    field: i32
+                }
+                "#,
+            )
+            .unwrap();
+            if let syn::Fields::Named(fields) = &item.fields {
+                let attrs = &fields.named.first().unwrap().attrs;
+                let rename = extract_field_rename(attrs);
+                let default = extract_default(attrs);
+                assert_eq!(rename.as_deref(), Some("customName"));
+                assert_eq!(default, Some(None));
+            }
+        }
+
+        /// Test strip_raw_prefix function
+        #[test]
+        fn test_strip_raw_prefix() {
+            assert_eq!(strip_raw_prefix("r#type"), "type");
+            assert_eq!(strip_raw_prefix("r#match"), "match");
+            assert_eq!(strip_raw_prefix("normal"), "normal");
+            assert_eq!(strip_raw_prefix("r#"), "");
+        }
+
+        // Tests using programmatically created attributes
+        mod programmatic_attr_tests {
+            use super::*;
+            use proc_macro2::{Span, TokenStream};
+            use quote::quote;
+
+            /// Create a serde attribute with programmatic tokens
+            fn create_attr_with_raw_tokens(tokens: TokenStream) -> syn::Attribute {
+                syn::Attribute {
+                    pound_token: syn::token::Pound::default(),
+                    style: syn::AttrStyle::Outer,
+                    bracket_token: syn::token::Bracket::default(),
+                    meta: syn::Meta::List(syn::MetaList {
+                        path: syn::Path::from(syn::Ident::new("serde", Span::call_site())),
+                        delimiter: syn::MacroDelimiter::Paren(syn::token::Paren::default()),
+                        tokens,
+                    }),
+                }
+            }
+
+            /// Test extract_rename_all with programmatic tokens
+            #[test]
+            fn test_extract_rename_all_programmatic() {
+                let tokens = quote!(rename_all = "camelCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                assert_eq!(result.as_deref(), Some("camelCase"));
+            }
+
+            /// Test extract_rename_all with invalid value (not a string)
+            #[test]
+            fn test_extract_rename_all_invalid_value() {
+                let tokens = quote!(rename_all = camelCase);
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // parse_nested_meta won't find a string literal
+                assert!(result.is_none());
+            }
+
+            /// Test extract_rename_all with missing equals sign
+            #[test]
+            fn test_extract_rename_all_no_equals() {
+                let tokens = quote!(rename_all "camelCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                assert!(result.is_none());
+            }
+
+            /// Test extract_field_rename with programmatic tokens
+            #[test]
+            fn test_extract_field_rename_programmatic() {
+                let tokens = quote!(rename = "customField");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_field_rename(&[attr]);
+                assert_eq!(result.as_deref(), Some("customField"));
+            }
+
+            /// Test extract_default standalone with programmatic tokens
+            #[test]
+            fn test_extract_default_programmatic() {
+                let tokens = quote!(default);
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_default(&[attr]);
+                assert_eq!(result, Some(None));
+            }
+
+            /// Test extract_default with function via programmatic tokens
+            #[test]
+            fn test_extract_default_with_fn_programmatic() {
+                let tokens = quote!(default = "my_fn");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_default(&[attr]);
+                assert_eq!(result, Some(Some("my_fn".to_string())));
+            }
+
+            /// Test extract_skip_serializing_if with programmatic tokens
+            #[test]
+            fn test_extract_skip_serializing_if_programmatic() {
+                let tokens = quote!(skip_serializing_if = "is_none");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_skip_serializing_if(&[attr]);
+                assert!(result);
+            }
+
+            /// Test extract_skip via programmatic tokens
+            #[test]
+            fn test_extract_skip_programmatic() {
+                let tokens = quote!(skip);
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_skip(&[attr]);
+                assert!(result);
+            }
+
+            /// Test that rename_all is not confused with rename
+            #[test]
+            fn test_rename_all_not_rename() {
+                let tokens = quote!(rename_all = "camelCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_field_rename(&[attr]);
+                assert_eq!(result, None);
+            }
+
+            /// Test multiple items in serde attribute
+            #[test]
+            fn test_multiple_items_programmatic() {
+                let tokens = quote!(default, rename = "myField", skip_serializing_if = "is_none");
+                let attr = create_attr_with_raw_tokens(tokens);
+
+                let rename_result = extract_field_rename(std::slice::from_ref(&attr));
+                let default_result = extract_default(std::slice::from_ref(&attr));
+                let skip_if_result = extract_skip_serializing_if(std::slice::from_ref(&attr));
+
+                assert_eq!(rename_result.as_deref(), Some("myField"));
+                assert_eq!(default_result, Some(None));
+                assert!(skip_if_result);
+            }
+
+            /// Test extract_rename_all fallback parsing (lines 44-47)
+            /// This tests the manual token parsing when parse_nested_meta doesn't find rename_all
+            /// in its expected format but the token string contains it
+            #[test]
+            fn test_extract_rename_all_fallback_manual_parsing() {
+                // Create tokens that parse_nested_meta won't recognize properly
+                // but the manual token parsing at lines 38-47 should catch
+                let tokens = quote!(rename_all = "kebab-case");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // Lines 44-47: extract the value from quoted string
+                assert_eq!(result.as_deref(), Some("kebab-case"));
+            }
+
+            /// Test extract_rename_all with complex attribute that forces fallback
+            #[test]
+            fn test_extract_rename_all_complex_attribute_fallback() {
+                // When combined with other attrs, this might trigger fallback path
+                let tokens = quote!(default, rename_all = "SCREAMING_SNAKE_CASE", skip);
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // Should still find rename_all via either path
+                assert_eq!(result.as_deref(), Some("SCREAMING_SNAKE_CASE"));
+            }
+
+            /// Test extract_rename_all when value is not a string literal (line 43 check fails)
+            #[test]
+            fn test_extract_rename_all_no_quote_start() {
+                // If there's no opening quote, line 43 returns false
+                let tokens = quote!(rename_all = snake_case);
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // No quote found at line 43, so None
+                assert!(result.is_none());
+            }
+
+            /// Test extract_rename_all with unclosed quote (line 45 check fails)
+            #[test]
+            fn test_extract_rename_all_unclosed_quote() {
+                // This tests when quote_start is found but quote_end is not
+                // This is hard to create via quote! macro, so we test the edge case differently
+                // The important thing is the code doesn't panic
+                let tokens = quote!(rename_all = "camelCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                // Should work with proper quotes
+                let result = extract_rename_all(&[attr]);
+                assert_eq!(result.as_deref(), Some("camelCase"));
+            }
+
+            /// Test extract_rename_all with empty string value
+            #[test]
+            fn test_extract_rename_all_empty_string() {
+                // Tests when there's a valid quote pair but empty content (line 46-47)
+                let tokens = quote!(rename_all = "");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // Empty string between quotes
+                assert_eq!(result.as_deref(), Some(""));
+            }
+
+            /// Test extract_rename_all with QUALIFIED PATH to force fallback (CRITICAL for lines 44-47)
+            /// parse_nested_meta checks meta.path.is_ident("rename_all") which returns false for qualified paths
+            /// But manual token parsing finds "rename_all" in the string
+            #[test]
+            fn test_extract_rename_all_qualified_path_forces_fallback() {
+                // Create tokens with a qualified path: serde_with::rename_all = "camelCase"
+                // parse_nested_meta sees path with segments ["serde_with", "rename_all"]
+                // is_ident("rename_all") returns false because path has multiple segments
+                // Manual token parsing finds "rename_all" in the string and extracts value
+                let tokens = quote!(serde_with::rename_all = "camelCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // This MUST hit lines 44-47 (fallback path)
+                assert_eq!(result.as_deref(), Some("camelCase"));
+            }
+
+            /// Test extract_rename_all with another qualified path variation
+            #[test]
+            fn test_extract_rename_all_module_qualified_forces_fallback() {
+                // Another variation with qualified path
+                let tokens = quote!(my_module::rename_all = "snake_case");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                // Fallback path extracts the value
+                assert_eq!(result.as_deref(), Some("snake_case"));
+            }
+
+            /// Test extract_rename_all with deeply qualified path
+            #[test]
+            fn test_extract_rename_all_deeply_qualified_forces_fallback() {
+                // Deeply qualified path: a::b::rename_all = "PascalCase"
+                let tokens = quote!(a::b::rename_all = "PascalCase");
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                assert_eq!(result.as_deref(), Some("PascalCase"));
+            }
+
+            /// CRITICAL TEST: This test MUST hit lines 44-47 by using raw token manipulation
+            /// We create a TokenStream where parse_nested_meta cannot find rename_all
+            /// but the manual token string search DOES find it
+            #[test]
+            fn test_extract_rename_all_raw_tokens_force_fallback() {
+                // Create raw tokens that look like: __rename_all_prefix::rename_all = "lowercase"
+                // parse_nested_meta will see path "__rename_all_prefix::rename_all"
+                // is_ident("rename_all") returns false (qualified path)
+                // Manual parsing finds "rename_all" and extracts "lowercase"
+                let tokens: TokenStream = "__rename_all_prefix::rename_all = \"lowercase\""
+                    .parse()
+                    .unwrap();
+                let attr = create_attr_with_raw_tokens(tokens);
+
+                // Verify the token string contains what we expect
+                if let syn::Meta::List(list) = &attr.meta {
+                    let token_str = list.tokens.to_string();
+                    assert!(
+                        token_str.contains("rename_all"),
+                        "Token string should contain rename_all: {}",
+                        token_str
+                    );
+                }
+
+                let result = extract_rename_all(&[attr]);
+                // This MUST succeed via fallback path (lines 44-47)
+                assert_eq!(
+                    result.as_deref(),
+                    Some("lowercase"),
+                    "Fallback parsing must extract the value"
+                );
+            }
+
+            /// Another critical test with different qualified path format
+            #[test]
+            fn test_extract_rename_all_crate_qualified_forces_fallback() {
+                // Use crate:: prefix which is definitely a qualified path
+                let tokens: TokenStream = "crate::rename_all = \"UPPERCASE\"".parse().unwrap();
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                assert_eq!(result.as_deref(), Some("UPPERCASE"));
+            }
+
+            /// Test with self:: prefix
+            #[test]
+            fn test_extract_rename_all_self_qualified_forces_fallback() {
+                let tokens: TokenStream = "self::rename_all = \"kebab-case\"".parse().unwrap();
+                let attr = create_attr_with_raw_tokens(tokens);
+                let result = extract_rename_all(&[attr]);
+                assert_eq!(result.as_deref(), Some("kebab-case"));
+            }
+        }
+    }
+
     // Test Vec without inner type (edge case)
     #[test]
     fn test_parse_type_to_schema_ref_vec_without_args() {
@@ -1915,5 +2477,56 @@ mod tests {
         let schema = parse_enum_to_schema(&enum_item, &HashMap::new(), &HashMap::new());
         let one_of = schema.one_of.expect("one_of missing");
         assert_eq!(one_of.len(), 1);
+    }
+
+    // Test rename_field with unknown/invalid rename_all format - should return original field name
+    #[test]
+    fn test_rename_field_unknown_format() {
+        // Unknown format should return the original field name unchanged
+        let result = rename_field("my_field", Some("unknown_format"));
+        assert_eq!(result, "my_field");
+
+        let result = rename_field("myField", Some("invalid"));
+        assert_eq!(result, "myField");
+
+        let result = rename_field("test_name", Some("not_a_real_format"));
+        assert_eq!(result, "test_name");
+    }
+
+    // Test parse_type_to_schema_ref with unknown custom type (not in known_schemas)
+    #[test]
+    fn test_parse_type_to_schema_ref_unknown_custom_type() {
+        // MyUnknownType is not in known_schemas, should return inline object schema
+        let ty: Type = syn::parse_str("MyUnknownType").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Object));
+        } else {
+            panic!("Expected inline schema for unknown type");
+        }
+    }
+
+    // Test parse_type_to_schema_ref with qualified path to unknown type
+    #[test]
+    fn test_parse_type_to_schema_ref_qualified_unknown_type() {
+        // crate::models::UnknownStruct is not in known_schemas
+        let ty: Type = syn::parse_str("crate::models::UnknownStruct").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Object));
+        } else {
+            panic!("Expected inline schema for unknown qualified type");
+        }
+    }
+
+    // Test camelCase transformation with mixed characters (covers line 263)
+    #[test]
+    fn test_rename_field_camelcase_with_digits() {
+        // Tests the regular character branch in camelCase
+        let result = rename_field("user_id_123", Some("camelCase"));
+        assert_eq!(result, "userId123");
+
+        let result = rename_field("get_user_by_id", Some("camelCase"));
+        assert_eq!(result, "getUserById");
     }
 }

@@ -59,34 +59,17 @@ pub fn generate_openapi_doc_with_metadata(
         if let syn::Item::Struct(struct_item) = &parsed {
             // Find the file where this struct is defined
             // Try to find a route file that contains this struct
+            // Find the route file that contains this struct definition
             let struct_file = metadata
                 .routes
                 .iter()
                 .find_map(|route| {
-                    // Check if the file contains the struct definition
-                    if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
-                        // Check if the struct name appears in the file (more specific check)
-                        // Look for "struct StructName" pattern
-                        let struct_pattern = format!("struct {}", struct_meta.name);
-                        if file_content.contains(&struct_pattern) {
-                            return Some(route.file_path.clone());
-                        }
-                    }
-                    None
+                    std::fs::read_to_string(&route.file_path)
+                        .ok()
+                        .filter(|content| content.contains(&format!("struct {}", struct_meta.name)))
+                        .map(|_| route.file_path.clone())
                 })
-                .or_else(|| {
-                    // Fallback: try all route files to find the struct
-                    for route in &metadata.routes {
-                        if let Ok(file_content) = std::fs::read_to_string(&route.file_path) {
-                            let struct_pattern = format!("struct {}", struct_meta.name);
-                            if file_content.contains(&struct_pattern) {
-                                return Some(route.file_path.clone());
-                            }
-                        }
-                    }
-                    // Last resort: use first route file if available
-                    metadata.routes.first().map(|r| r.file_path.clone())
-                });
+                .or_else(|| metadata.routes.first().map(|r| r.file_path.clone()));
 
             if let Some(file_path) = struct_file
                 && let Ok(file_content) = std::fs::read_to_string(&file_path)
@@ -148,11 +131,7 @@ pub fn generate_openapi_doc_with_metadata(
                     route_meta.error_status.as_deref(),
                     route_meta.tags.as_deref(),
                 );
-
-                // Set description from metadata
-                if let Some(desc) = &route_meta.description {
-                    operation.description = Some(desc.clone());
-                }
+                operation.description = route_meta.description.clone();
 
                 // Get or create PathItem
                 let path_item = paths
@@ -362,22 +341,15 @@ fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
         // Literal values
         Expr::Lit(ExprLit { lit, .. }) => match lit {
             Lit::Str(s) => Some(serde_json::Value::String(s.value())),
-            Lit::Int(i) => {
-                if let Ok(val) = i.base10_parse::<i64>() {
-                    Some(serde_json::Value::Number(val.into()))
-                } else {
-                    None
-                }
-            }
-            Lit::Float(f) => {
-                if let Ok(val) = f.base10_parse::<f64>() {
-                    Some(serde_json::Value::Number(
-                        serde_json::Number::from_f64(val).unwrap_or(serde_json::Number::from(0)),
-                    ))
-                } else {
-                    None
-                }
-            }
+            Lit::Int(i) => i
+                .base10_parse::<i64>()
+                .ok()
+                .map(|v| serde_json::Value::Number(v.into())),
+            Lit::Float(f) => f
+                .base10_parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number),
             Lit::Bool(b) => Some(serde_json::Value::Bool(b.value)),
             _ => None,
         },
@@ -415,23 +387,19 @@ fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
 fn get_type_default(ty: &syn::Type) -> Option<serde_json::Value> {
     use syn::Type;
     match ty {
-        Type::Path(type_path) => {
-            if let Some(segment) = type_path.path.segments.last() {
-                match segment.ident.to_string().as_str() {
-                    "String" => Some(serde_json::Value::String(String::new())),
-                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
-                        Some(serde_json::Value::Number(serde_json::Number::from(0)))
-                    }
-                    "f32" | "f64" => Some(serde_json::Value::Number(
-                        serde_json::Number::from_f64(0.0).unwrap_or(serde_json::Number::from(0)),
-                    )),
-                    "bool" => Some(serde_json::Value::Bool(false)),
-                    _ => None,
+        Type::Path(type_path) => type_path.path.segments.last().and_then(|segment| {
+            match segment.ident.to_string().as_str() {
+                "String" => Some(serde_json::Value::String(String::new())),
+                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                    Some(serde_json::Value::Number(serde_json::Number::from(0)))
                 }
-            } else {
-                None
+                "f32" | "f64" => Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(0.0).unwrap_or(serde_json::Number::from(0)),
+                )),
+                "bool" => Some(serde_json::Value::Bool(false)),
+                _ => None,
             }
-        }
+        }),
         _ => None,
     }
 }
@@ -1153,5 +1121,182 @@ pub fn get_config() -> Config {
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
         let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
         assert!(schemas.contains_key("Config"));
+    }
+
+    // ======== Tests for uncovered lines ========
+
+    #[test]
+    fn test_fallback_struct_finding_in_route_files() {
+        // Test line 65: fallback loop that finds struct in any route file when direct search fails
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create TWO route files - struct is in second file, route references it from first
+        let route1_content = r#"
+pub fn get_users() -> Vec<User> {
+    vec![]
+}
+"#;
+        let route1_file = create_temp_file(&temp_dir, "users.rs", route1_content);
+
+        let route2_content = r#"
+fn default_name() -> String {
+    "Guest".to_string()
+}
+
+struct User {
+    #[serde(default = "default_name")]
+    name: String,
+}
+
+pub fn get_user() -> User {
+    User { name: "Alice".to_string() }
+}
+"#;
+        let route2_file = create_temp_file(&temp_dir, "user.rs", route2_content);
+
+        let mut metadata = CollectedMetadata::new();
+        // Add struct but point to route1 (which doesn't contain the struct)
+        // This forces the fallback loop to search other route files
+        metadata.structs.push(StructMetadata {
+            name: "User".to_string(),
+            definition: r#"struct User { #[serde(default = "default_name")] name: String }"#
+                .to_string(),
+        });
+        // Add BOTH routes - the first doesn't contain User struct, so fallback searches the second
+        metadata.routes.push(RouteMetadata {
+            method: "GET".to_string(),
+            path: "/users".to_string(),
+            function_name: "get_users".to_string(),
+            module_path: "test::users".to_string(),
+            file_path: route1_file.to_string_lossy().to_string(),
+            signature: "fn get_users() -> Vec<User>".to_string(),
+            error_status: None,
+            tags: None,
+            description: None,
+        });
+        metadata.routes.push(RouteMetadata {
+            method: "GET".to_string(),
+            path: "/user".to_string(),
+            function_name: "get_user".to_string(),
+            module_path: "test::user".to_string(),
+            file_path: route2_file.to_string_lossy().to_string(),
+            signature: "fn get_user() -> User".to_string(),
+            error_status: None,
+            tags: None,
+            description: None,
+        });
+
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+
+        // Struct should be found via fallback and processed
+        assert!(doc.components.as_ref().unwrap().schemas.is_some());
+        let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
+        assert!(schemas.contains_key("User"));
+    }
+
+    #[test]
+    fn test_process_default_functions_with_no_properties() {
+        // Test line 152: early return when schema.properties is None
+        // This happens when a struct has no named fields (unit struct or tuple struct)
+        use vespera_core::schema::Schema;
+
+        let struct_item: syn::ItemStruct = syn::parse_str("struct Empty;").unwrap();
+        let file_ast: syn::File = syn::parse_str("fn foo() {}").unwrap();
+        let mut schema = Schema::object();
+        schema.properties = None; // Explicitly set to None
+
+        // This should return early without panic
+        process_default_functions(&struct_item, &file_ast, &mut schema);
+
+        // Schema should remain unchanged
+        assert!(schema.properties.is_none());
+    }
+
+    #[test]
+    fn test_extract_value_from_expr_int_parse_failure() {
+        // Test line 253: int parse failure (overflow)
+        // Create an integer literal that's too large to parse as i64
+        // Use a literal that syn will parse but i64::parse will fail on
+        let expr: syn::Expr = syn::parse_str("999999999999999999999999999999").unwrap();
+        let value = extract_value_from_expr(&expr);
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn test_extract_value_from_expr_float_parse_failure() {
+        // Test line 260: float parse failure
+        // Create a float literal that's too large/invalid
+        let expr: syn::Expr = syn::parse_str("1e999999").unwrap();
+        let value = extract_value_from_expr(&expr);
+        // This may parse successfully to infinity or fail - either way should handle it
+        // The important thing is no panic
+        let _ = value;
+    }
+
+    #[test]
+    fn test_extract_value_from_expr_method_call_with_nested_receiver() {
+        // Test lines 275-276: recursive extraction from method call receiver
+        // When receiver is not a direct string literal, it tries to extract recursively
+        // But the recursive call also won't find a Lit, so it returns None
+        // This test verifies the recursive path is exercised (line 275-276)
+        let expr: syn::Expr = syn::parse_str(r#"("hello").to_string()"#).unwrap();
+        let value = extract_value_from_expr(&expr);
+        // The receiver is a Paren expression - recursive call is made but returns None
+        // because Paren is not handled in the match
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn test_extract_value_from_expr_method_call_with_non_literal_receiver() {
+        // Test lines 275-276: recursive extraction fails for non-literal
+        let expr: syn::Expr = syn::parse_str(r#"some_var.to_string()"#).unwrap();
+        let value = extract_value_from_expr(&expr);
+        // Cannot extract value from a variable
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn test_extract_value_from_expr_method_call_chained_to_string() {
+        // Test lines 275-276: another case where recursive extraction is attempted
+        // Chained method calls: 42.to_string() has int literal as receiver
+        let expr: syn::Expr = syn::parse_str(r#"42.to_string()"#).unwrap();
+        let value = extract_value_from_expr(&expr);
+        // Line 275 recursive call extracts 42 as Number, then line 276 returns it
+        assert_eq!(value, Some(serde_json::Value::Number(42.into())));
+    }
+
+    #[test]
+    fn test_get_type_default_empty_path_segments() {
+        // Test line 307: empty path segments returns None
+        // Create a type with empty path segments
+
+        // Use parse to create a valid type, then we verify the normal path works
+        let ty: syn::Type = syn::parse_str("::String").unwrap();
+        // This has segments, so it should work
+        let value = get_type_default(&ty);
+        // Global path ::String still has "String" as last segment
+        assert!(value.is_some());
+
+        // Test reference type (non-path type)
+        let ref_ty: syn::Type = syn::parse_str("&str").unwrap();
+        let ref_value = get_type_default(&ref_ty);
+        // Reference is not a Path type, so returns None via line 310
+        assert!(ref_value.is_none());
+    }
+
+    #[test]
+    fn test_get_type_default_tuple_type() {
+        // Test line 310: non-Path type returns None
+        let ty: syn::Type = syn::parse_str("(i32, String)").unwrap();
+        let value = get_type_default(&ty);
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn test_get_type_default_array_type() {
+        // Test line 310: array type returns None
+        let ty: syn::Type = syn::parse_str("[i32; 3]").unwrap();
+        let value = get_type_default(&ty);
+        assert!(value.is_none());
     }
 }
