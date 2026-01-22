@@ -849,6 +849,37 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                 "f32" | "f64" => SchemaRef::Inline(Box::new(Schema::number())),
                 "bool" => SchemaRef::Inline(Box::new(Schema::boolean())),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
+                // Date-time types from chrono crate
+                "DateTime" | "NaiveDateTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date-time".to_string()),
+                    ..Schema::string()
+                })),
+                "NaiveDate" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date".to_string()),
+                    ..Schema::string()
+                })),
+                "NaiveTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("time".to_string()),
+                    ..Schema::string()
+                })),
+                // Date-time types from time crate
+                "OffsetDateTime" | "PrimitiveDateTime" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date-time".to_string()),
+                    ..Schema::string()
+                })),
+                "Date" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("date".to_string()),
+                    ..Schema::string()
+                })),
+                "Time" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("time".to_string()),
+                    ..Schema::string()
+                })),
+                // Duration types
+                "Duration" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("duration".to_string()),
+                    ..Schema::string()
+                })),
                 // Standard library types that should not be referenced
                 // Note: HashMap and BTreeMap are handled above in generic types
                 "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
