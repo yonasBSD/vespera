@@ -3,8 +3,8 @@ mod routes;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use vespera::{Schema, axum, vespera};
 use third::ThirdApp;
+use vespera::{Schema, axum, vespera};
 
 pub struct AppState {
     pub config: String,

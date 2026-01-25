@@ -1,8 +1,5 @@
 use serde::Deserialize;
-use vespera::{
-    Schema,
-    axum::extract::Query,
-};
+use vespera::{Schema, axum::extract::Query};
 
 /// Third app root endpoint
 #[vespera::route(get, path = "/third")]

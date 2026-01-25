@@ -460,8 +460,8 @@ fn generate_and_write_openapi(
     );
 
     // Merge specs from child apps at compile time
-    if !input.merge.is_empty() {
-        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+    if !input.merge.is_empty()
+        && let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
             let manifest_path = Path::new(&manifest_dir);
             let target_dir = find_target_dir(manifest_path);
             let vespera_dir = target_dir.join("vespera");
@@ -472,17 +472,15 @@ fn generate_and_write_openapi(
                     let struct_name = last_segment.ident.to_string();
                     let spec_file = vespera_dir.join(format!("{}.openapi.json", struct_name));
 
-                    if let Ok(spec_content) = std::fs::read_to_string(&spec_file) {
-                        if let Ok(child_spec) =
+                    if let Ok(spec_content) = std::fs::read_to_string(&spec_file)
+                        && let Ok(child_spec) =
                             serde_json::from_str::<vespera_core::openapi::OpenApi>(&spec_content)
                         {
                             openapi_doc.merge(child_spec);
                         }
-                    }
                 }
             }
         }
-    }
 
     let json_str = serde_json::to_string_pretty(&openapi_doc)
         .map_err(|e| format!("Failed to serialize OpenAPI document: {}", e))?;
@@ -577,13 +575,11 @@ fn find_target_dir(manifest_path: &Path) -> std::path::PathBuf {
 
         // Check if this is a workspace root (has Cargo.toml with [workspace])
         let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&cargo_toml) {
-                if contents.contains("[workspace]") {
+        if cargo_toml.exists()
+            && let Ok(contents) = std::fs::read_to_string(&cargo_toml)
+                && contents.contains("[workspace]") {
                     return dir.join("target");
                 }
-            }
-        }
 
         current = dir.parent();
     }
@@ -864,8 +860,7 @@ pub fn export_app(input: TokenStream) -> TokenStream {
     // Write spec to temp file for compile-time merging by parent apps
     // The file is written to target/vespera/{StructName}.openapi.json
     let name_str = name.to_string();
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     // Find target directory (go up from manifest dir to workspace root if needed)
     let manifest_path = Path::new(&manifest_dir);
     let target_dir = find_target_dir(manifest_path);

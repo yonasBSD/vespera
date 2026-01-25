@@ -153,7 +153,7 @@ impl OpenApi {
 
         // Merge components
         if let Some(other_components) = other.components {
-            let self_components = self.components.get_or_insert_with(|| Components {
+            let self_components = self.components.get_or_insert(Components {
                 schemas: None,
                 responses: None,
                 parameters: None,
