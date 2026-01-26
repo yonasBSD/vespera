@@ -1,0 +1,1 @@
+{"changes":{"crates/vespera_core/Cargo.toml":"Patch","crates/vespera/Cargo.toml":"Patch","crates/vespera_macro/Cargo.toml":"Patch"},"note":"Support nested generic","date":"2026-01-26T07:06:46.307922700Z"}
