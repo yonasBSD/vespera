@@ -713,11 +713,10 @@ fn substitute_type(ty: &Type, generic_params: &[String], concrete_types: &[&Type
 
                 if let syn::PathArguments::None = &segment.arguments {
                     // Direct generic parameter substitution
-                    if let Some(index) = generic_params.iter().position(|p| p == &ident_str) {
-                        if let Some(concrete_ty) = concrete_types.get(index) {
+                    if let Some(index) = generic_params.iter().position(|p| p == &ident_str)
+                        && let Some(concrete_ty) = concrete_types.get(index) {
                             return (*concrete_ty).clone();
                         }
-                    }
                 }
             }
 
@@ -730,13 +729,9 @@ fn substitute_type(ty: &Type, generic_params: &[String], concrete_types: &[&Type
                         let mut new_args = syn::punctuated::Punctuated::new();
                         for arg in &args.args {
                             let new_arg = match arg {
-                                syn::GenericArgument::Type(inner_ty) => {
-                                    syn::GenericArgument::Type(substitute_type(
-                                        inner_ty,
-                                        generic_params,
-                                        concrete_types,
-                                    ))
-                                }
+                                syn::GenericArgument::Type(inner_ty) => syn::GenericArgument::Type(
+                                    substitute_type(inner_ty, generic_params, concrete_types),
+                                ),
                                 other => other.clone(),
                             };
                             new_args.push(new_arg);
@@ -771,21 +766,33 @@ fn substitute_type(ty: &Type, generic_params: &[String], concrete_types: &[&Type
                 and_token: type_ref.and_token,
                 lifetime: type_ref.lifetime.clone(),
                 mutability: type_ref.mutability,
-                elem: Box::new(substitute_type(&type_ref.elem, generic_params, concrete_types)),
+                elem: Box::new(substitute_type(
+                    &type_ref.elem,
+                    generic_params,
+                    concrete_types,
+                )),
             })
         }
         Type::Slice(type_slice) => {
             // Handle [T]
             Type::Slice(syn::TypeSlice {
                 bracket_token: type_slice.bracket_token,
-                elem: Box::new(substitute_type(&type_slice.elem, generic_params, concrete_types)),
+                elem: Box::new(substitute_type(
+                    &type_slice.elem,
+                    generic_params,
+                    concrete_types,
+                )),
             })
         }
         Type::Array(type_array) => {
             // Handle [T; N]
             Type::Array(syn::TypeArray {
                 bracket_token: type_array.bracket_token,
-                elem: Box::new(substitute_type(&type_array.elem, generic_params, concrete_types)),
+                elem: Box::new(substitute_type(
+                    &type_array.elem,
+                    generic_params,
+                    concrete_types,
+                )),
                 semi_token: type_array.semi_token,
                 len: type_array.len.clone(),
             })

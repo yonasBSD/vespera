@@ -79,7 +79,8 @@ pub struct PaginatedResponse<T: Serialize> {
     pub total_page: i32,
 }
 #[vespera::route(get, path = "/generic5")]
-pub async fn generic_endpoint5() -> Result<Json<PaginatedResponse<ContactResponse>>, (vespera::axum::http::StatusCode, String)> {
+pub async fn generic_endpoint5()
+-> Result<Json<PaginatedResponse<ContactResponse>>, (vespera::axum::http::StatusCode, String)> {
     Ok(Json(PaginatedResponse {
         items: vec![ContactResponse {
             id: 1,
