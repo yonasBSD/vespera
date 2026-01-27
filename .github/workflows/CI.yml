@@ -37,6 +37,8 @@ jobs:
         run: cargo check
       - name: Lint
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test Deploy
+        run: cargo publish --dry-run
       - name: Test
         run: |
           # rust coverage issue
@@ -50,8 +52,6 @@ jobs:
           echo 'use_small_heuristics = "Default"' >> .rustfmt.toml
           cargo fmt
           cargo tarpaulin --out Lcov Stdout --engine llvm
-      - name: Test Deploy
-        run: cargo publish --dry-run
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5
         with:
