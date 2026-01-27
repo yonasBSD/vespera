@@ -6,6 +6,7 @@ mod method;
 mod openapi_generator;
 mod parser;
 mod route;
+mod schema_macro;
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -69,10 +70,8 @@ static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
 fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macro2::TokenStream) {
     let name = &input.ident;
     let generics = &input.generics;
-    let metadata = StructMetadata {
-        name: name.to_string(),
-        definition: quote::quote!(#input).to_string(),
-    };
+    // Schema-derived types appear in OpenAPI spec (include_in_openapi: true)
+    let metadata = StructMetadata::new(name.to_string(), quote::quote!(#input).to_string());
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let expanded = quote! {
         impl #impl_generics vespera::schema::SchemaBuilder for #name #ty_generics #where_clause {}
@@ -87,6 +86,129 @@ pub fn derive_schema(input: TokenStream) -> TokenStream {
     let (metadata, expanded) = process_derive_schema(&input);
     SCHEMA_STORAGE.lock().unwrap().push(metadata);
     TokenStream::from(expanded)
+}
+
+/// Generate an OpenAPI Schema from a type with optional field filtering.
+///
+/// This macro creates a `vespera::schema::Schema` struct at compile time
+/// from a type that has `#[derive(Schema)]`.
+///
+/// # Syntax
+///
+/// ```ignore
+/// // Full schema (all fields)
+/// let user_schema = schema!(User);
+///
+/// // Schema with fields omitted
+/// let response_schema = schema!(User, omit = ["password", "internal_id"]);
+///
+/// // Schema with only specified fields (pick)
+/// let summary_schema = schema!(User, pick = ["id", "name"]);
+/// ```
+///
+/// # Parameters
+///
+/// - `Type`: The type to generate schema for (must have `#[derive(Schema)]`)
+/// - `omit = [...]`: Optional list of field names to exclude from the schema
+/// - `pick = [...]`: Optional list of field names to include (excludes all others)
+///
+/// Note: `omit` and `pick` cannot be used together.
+///
+/// # Example
+///
+/// ```ignore
+/// use vespera::{Schema, schema};
+///
+/// #[derive(Schema)]
+/// struct User {
+///     pub id: i32,
+///     pub name: String,
+///     pub email: String,
+///     pub password: String,  // sensitive!
+/// }
+///
+/// // For API responses, omit password
+/// let response_schema = schema!(User, omit = ["password"]);
+///
+/// // For list endpoints, only return summary fields
+/// let list_schema = schema!(User, pick = ["id", "name"]);
+/// ```
+#[proc_macro]
+pub fn schema(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as schema_macro::SchemaInput);
+
+    // Get stored schemas
+    let storage = SCHEMA_STORAGE.lock().unwrap();
+
+    match schema_macro::generate_schema_code(&input, &storage) {
+        Ok(tokens) => TokenStream::from(tokens),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Generate a new struct type derived from an existing type with field filtering.
+///
+/// This macro creates a new struct at compile time by picking or omitting fields
+/// from an existing type that has `#[derive(Schema)]`.
+///
+/// # Syntax
+///
+/// ```ignore
+/// // Pick specific fields
+/// schema_type!(CreateUserRequest from User, pick = ["name", "email"]);
+///
+/// // Omit specific fields
+/// schema_type!(UserResponse from User, omit = ["password", "internal_id"]);
+///
+/// // Without Clone derive
+/// schema_type!(UserUpdate from User, pick = ["name"], clone = false);
+/// ```
+///
+/// # Parameters
+///
+/// - `NewTypeName`: The name of the new struct to generate
+/// - `from SourceType`: The source type to derive from (must have `#[derive(Schema)]`)
+/// - `pick = [...]`: List of field names to include (excludes all others)
+/// - `omit = [...]`: List of field names to exclude
+/// - `clone = bool`: Whether to derive Clone (default: true)
+///
+/// Note: `omit` and `pick` cannot be used together.
+///
+/// # Example
+///
+/// ```ignore
+/// use vespera::{Schema, schema_type};
+///
+/// #[derive(Schema)]
+/// pub struct User {
+///     pub id: i32,
+///     pub name: String,
+///     pub email: String,
+///     pub password: String,
+/// }
+///
+/// // Generate CreateUserRequest with only name and email
+/// schema_type!(CreateUserRequest from User, pick = ["name", "email"]);
+///
+/// // Generate UserPublic without password
+/// schema_type!(UserPublic from User, omit = ["password"]);
+///
+/// // Now use in handlers:
+/// pub async fn create_user(Json(req): Json<CreateUserRequest>) -> Json<UserPublic> {
+///     // ...
+/// }
+/// ```
+#[proc_macro]
+pub fn schema_type(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as schema_macro::SchemaTypeInput);
+
+    // Get stored schemas
+    let storage = SCHEMA_STORAGE.lock().unwrap();
+
+    match schema_macro::generate_schema_type_code(&input, &storage) {
+        Ok(tokens) => TokenStream::from(tokens),
+        Err(e) => e.to_compile_error().into(),
+    }
 }
 
 /// Server configuration for OpenAPI

@@ -29,14 +29,18 @@ pub fn generate_openapi_doc_with_metadata(
     let mut all_tags: BTreeSet<String> = BTreeSet::new();
 
     // First, register all schema names and store struct definitions
+    // Note: We register ALL structs (including include_in_openapi: false) so that
+    // schema_type! generated types can reference them. The filtering happens below.
     for struct_meta in &metadata.structs {
         let schema_name = struct_meta.name.clone();
         known_schema_names.insert(schema_name.clone(), schema_name);
         struct_definitions.insert(struct_meta.name.clone(), struct_meta.definition.clone());
     }
 
-    // Then, parse all struct and enum schemas (now they can reference each other)
-    for struct_meta in &metadata.structs {
+    // Then, parse struct and enum schemas that should appear in OpenAPI
+    // Only include structs where include_in_openapi is true
+    // (i.e., from #[derive(Schema)], not from cross-file lookup)
+    for struct_meta in metadata.structs.iter().filter(|s| s.include_in_openapi) {
         let parsed = syn::parse_str::<syn::Item>(&struct_meta.definition).unwrap();
         let mut schema = match &parsed {
             syn::Item::Struct(struct_item) => {
@@ -496,6 +500,7 @@ pub fn get_users() -> String {
         metadata.structs.push(StructMetadata {
             name: "User".to_string(),
             definition: "struct User { id: i32, name: String }".to_string(),
+            ..Default::default()
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
@@ -511,6 +516,7 @@ pub fn get_users() -> String {
         metadata.structs.push(StructMetadata {
             name: "Status".to_string(),
             definition: "enum Status { Active, Inactive, Pending }".to_string(),
+            ..Default::default()
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
@@ -527,6 +533,7 @@ pub fn get_users() -> String {
         metadata.structs.push(StructMetadata {
             name: "Message".to_string(),
             definition: "enum Message { Text(String), User { id: i32, name: String } }".to_string(),
+            ..Default::default()
         });
 
         let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
@@ -551,6 +558,7 @@ pub fn get_status() -> Status {
         metadata.structs.push(StructMetadata {
             name: "Status".to_string(),
             definition: "enum Status { Active, Inactive }".to_string(),
+            ..Default::default()
         });
         metadata.routes.push(RouteMetadata {
             method: "GET".to_string(),
@@ -588,6 +596,7 @@ pub fn get_status() -> Status {
             name: "Config".to_string(),
             // This will be parsed as syn::Item::Const, triggering the fallback case
             definition: "const CONFIG: i32 = 42;".to_string(),
+            ..Default::default()
         });
 
         // This should panic when fallback tries to parse const as struct
@@ -610,6 +619,7 @@ pub fn get_user() -> User {
         metadata.structs.push(StructMetadata {
             name: "User".to_string(),
             definition: "struct User { id: i32, name: String }".to_string(),
+            ..Default::default()
         });
         metadata.routes.push(RouteMetadata {
             method: "GET".to_string(),
@@ -1058,6 +1068,7 @@ pub fn get_user() -> User {
             name: "User".to_string(),
             definition: r#"struct User { #[serde(default = "default_name")] name: String }"#
                 .to_string(),
+            ..Default::default()
         });
         metadata.routes.push(RouteMetadata {
             method: "GET".to_string(),
@@ -1103,6 +1114,7 @@ pub fn get_config() -> Config {
             definition:
                 r#"struct Config { #[serde(default)] enabled: bool, #[serde(default)] count: i32 }"#
                     .to_string(),
+            ..Default::default()
         });
         metadata.routes.push(RouteMetadata {
             method: "GET".to_string(),
@@ -1161,6 +1173,7 @@ pub fn get_user() -> User {
             name: "User".to_string(),
             definition: r#"struct User { #[serde(default = "default_name")] name: String }"#
                 .to_string(),
+            ..Default::default()
         });
         // Add BOTH routes - the first doesn't contain User struct, so fallback searches the second
         metadata.routes.push(RouteMetadata {
