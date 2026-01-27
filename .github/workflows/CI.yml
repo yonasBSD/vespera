@@ -50,6 +50,8 @@ jobs:
           echo 'use_small_heuristics = "Default"' >> .rustfmt.toml
           cargo fmt
           cargo tarpaulin --out Lcov Stdout --engine llvm
+      - name: Test Deploy
+        run: cargo publish --dry-run
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v5
         with:

@@ -454,7 +454,6 @@ fn find_struct_from_path(ty: &Type) -> Option<StructMetadata> {
 /// Or:     `schema_type!(NewTypeName from SourceType, omit = ["field1", "field2"])`
 /// Or:     `schema_type!(NewTypeName from SourceType, rename = [("old", "new")])`
 /// Or:     `schema_type!(NewTypeName from SourceType, add = [("field": Type)])`
-#[derive(Debug)]
 pub struct SchemaTypeInput {
     /// The new type name to generate
     pub new_type: Ident,
@@ -994,8 +993,11 @@ mod tests {
         let tokens = quote::quote!(UserDTO from User, unknown = ["a"]);
         let result: syn::Result<SchemaTypeInput> = syn::parse2(tokens);
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unknown parameter"));
+        // Note: Can't use unwrap_err() because SchemaTypeInput doesn't impl Debug (contains syn::Type)
+        match result {
+            Err(e) => assert!(e.to_string().contains("unknown parameter")),
+            Ok(_) => panic!("Expected error"),
+        }
     }
 
     // Tests for `add` parameter
