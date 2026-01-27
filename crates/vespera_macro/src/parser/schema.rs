@@ -125,7 +125,7 @@ pub fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
 
 /// Extract skip attribute from field attributes
 /// Returns true if #[serde(skip)] is present
-pub(super) fn extract_skip(attrs: &[syn::Attribute]) -> bool {
+pub fn extract_skip(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if attr.path().is_ident("serde")
             && let syn::Meta::List(meta_list) = &attr.meta
@@ -941,7 +941,7 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                 "bool" => SchemaRef::Inline(Box::new(Schema::boolean())),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
                 // Date-time types from chrono crate
-                "DateTime" | "NaiveDateTime" => SchemaRef::Inline(Box::new(Schema {
+                "DateTime" | "NaiveDateTime" | "DateTimeWithTimeZone" | "DateTimeUtc" | "DateTimeLocal" => SchemaRef::Inline(Box::new(Schema {
                     format: Some("date-time".to_string()),
                     ..Schema::string()
                 })),

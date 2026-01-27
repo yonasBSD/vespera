@@ -233,6 +233,58 @@ All parameters support environment variable fallbacks:
 
 ---
 
+## `schema_type!` Macro
+
+Generate request/response types from existing structs. Perfect for creating API types from database models.
+
+### Basic Usage
+
+```rust
+use vespera::schema_type;
+
+// Pick specific fields only
+schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+
+// Omit specific fields  
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+
+// Add new fields
+schema_type!(UpdateUserRequest from crate::models::user::Model, pick = ["name"], add = [("id": i32)]);
+```
+
+### Cross-File References
+
+Reference structs from other files using module paths:
+
+```rust
+// In src/routes/users.rs - references src/models/user.rs
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+```
+
+### Auto-Generated `From` Impl
+
+When `add` is NOT used, a `From` impl is automatically generated:
+
+```rust
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+
+// Now you can do:
+let model: Model = db.find_user(id).await?;
+Json(model.into())  // Automatic conversion!
+```
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `pick` | Include only specified fields |
+| `omit` | Exclude specified fields |
+| `rename` | Rename fields: `rename = [("old", "new")]` |
+| `add` | Add new fields (disables auto `From` impl) |
+| `clone` | Control Clone derive (default: true) |
+
+---
+
 ## Advanced Usage
 
 ### Adding State

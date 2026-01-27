@@ -162,6 +162,107 @@ npx @apidevtools/swagger-cli validate openapi.json
 
 ---
 
+## schema_type! Macro
+
+Generate request/response types from existing structs with field filtering. Supports cross-file references and auto-generates `From` impl.
+
+### Basic Syntax
+
+```rust
+// Pick specific fields
+schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+
+// Omit specific fields
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash", "internal_id"]);
+
+// Add new fields (NOTE: no From impl generated when using add)
+schema_type!(UpdateUserRequest from crate::models::user::Model, pick = ["name"], add = [("id": i32)]);
+
+// Rename fields
+schema_type!(UserDTO from crate::models::user::Model, rename = [("id", "user_id")]);
+
+// Disable Clone derive
+schema_type!(LargeResponse from SomeType, clone = false);
+```
+
+### Cross-File References
+
+Reference structs from other files using full module paths:
+
+```rust
+// In src/routes/users.rs
+use vespera::schema_type;
+
+// Reference model from src/models/user.rs
+schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+```
+
+The macro reads the source file at compile time - no special annotations needed on the source struct.
+
+### Auto-Generated From Impl
+
+When `add` is NOT used, `schema_type!` generates a `From` impl for easy conversion:
+
+```rust
+// This:
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+
+// Generates:
+pub struct UserResponse { id, name, email, created_at }
+
+impl From<crate::models::user::Model> for UserResponse {
+    fn from(source: crate::models::user::Model) -> Self {
+        Self { id: source.id, name: source.name, ... }
+    }
+}
+
+// Usage:
+let model: Model = db.find_user(id).await?;
+Json(model.into())  // Easy conversion!
+```
+
+**Note:** `From` is NOT generated when `add` is used (can't auto-populate added fields).
+
+### Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `pick` | Include only these fields | `pick = ["name", "email"]` |
+| `omit` | Exclude these fields | `omit = ["password"]` |
+| `rename` | Rename fields | `rename = [("id", "user_id")]` |
+| `add` | Add new fields (disables From impl) | `add = [("extra": String)]` |
+| `clone` | Control Clone derive (default: true) | `clone = false` |
+
+### Use Case: Sea-ORM Models
+
+Perfect for creating API types from database models:
+
+```rust
+// src/models/user.rs (Sea-ORM entity)
+#[derive(Clone, Debug, DeriveEntityModel, Serialize, Deserialize)]
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+    pub password_hash: String,  // Never expose!
+    pub created_at: DateTimeWithTimeZone,
+}
+
+// src/routes/users.rs
+schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+
+#[vespera::route(get, path = "/{id}")]
+pub async fn get_user(Path(id): Path<i32>, State(db): State<DbPool>) -> Json<UserResponse> {
+    let user = User::find_by_id(id).one(&db).await.unwrap().unwrap();
+    Json(user.into())  // From impl handles conversion
+}
+```
+
+---
+
 ## Merging Multiple Vespera Apps
 
 Combine routes and OpenAPI specs from multiple apps at compile time.
