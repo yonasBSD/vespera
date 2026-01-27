@@ -1,6 +1,8 @@
 use axum_example::{create_app, create_app_with_layer};
 use axum_test::TestServer;
 use serde_json::json;
+use serde::{Deserialize, Serialize};
+use vespera::{Schema, schema};
 
 #[tokio::test]
 async fn test_health_endpoint() {
@@ -402,4 +404,276 @@ async fn test_app_with_layer() {
 #[tokio::test]
 async fn test_openapi() {
     insta::assert_snapshot!("openapi", std::fs::read_to_string("openapi.json").unwrap());
+}
+
+// Tests for schema! macro
+// Note: schema! requires #[derive(Schema)] in the same compilation unit,
+// so we define the test structs here.
+
+/// Test struct for schema! macro tests
+#[derive(Serialize, Deserialize, Clone, Schema)]
+pub struct TestUser {
+    pub id: u32,
+    pub name: String,
+    pub email: String,
+}
+
+/// Test struct with optional fields
+#[derive(Serialize, Deserialize, Clone, Schema)]
+pub struct TestUserWithOptional {
+    pub id: u32,
+    pub name: String,
+    pub email: Option<String>,
+    #[serde(default)]
+    pub bio: String,
+}
+
+/// Test struct with serde rename
+#[derive(Serialize, Deserialize, Clone, Schema)]
+#[serde(rename_all = "camelCase")]
+pub struct TestUserCamelCase {
+    pub user_id: u32,
+    pub user_name: String,
+    pub email_address: String,
+}
+
+#[test]
+fn test_schema_macro_full() {
+    // Generate full schema for TestUser
+    let user_schema = schema!(TestUser);
+
+    // Verify schema type
+    assert_eq!(
+        user_schema.schema_type,
+        Some(vespera::schema::SchemaType::Object)
+    );
+
+    // Verify all properties are present
+    let properties = user_schema.properties.unwrap();
+    assert!(properties.contains_key("id"), "Missing 'id' property");
+    assert!(properties.contains_key("name"), "Missing 'name' property");
+    assert!(properties.contains_key("email"), "Missing 'email' property");
+
+    // Verify required fields
+    let required = user_schema.required.unwrap();
+    assert!(required.contains(&"id".to_string()));
+    assert!(required.contains(&"name".to_string()));
+    assert!(required.contains(&"email".to_string()));
+}
+
+#[test]
+fn test_schema_macro_with_omit() {
+    // Generate schema with 'email' field omitted
+    let user_schema = schema!(TestUser, omit = ["email"]);
+
+    // Verify schema type
+    assert_eq!(
+        user_schema.schema_type,
+        Some(vespera::schema::SchemaType::Object)
+    );
+
+    // Verify properties - email should be omitted
+    let properties = user_schema.properties.unwrap();
+    assert!(properties.contains_key("id"), "Missing 'id' property");
+    assert!(properties.contains_key("name"), "Missing 'name' property");
+    assert!(!properties.contains_key("email"), "'email' should be omitted");
+
+    // Verify required fields - email should not be in required
+    let required = user_schema.required.unwrap();
+    assert!(required.contains(&"id".to_string()));
+    assert!(required.contains(&"name".to_string()));
+    assert!(!required.contains(&"email".to_string()));
+}
+
+#[test]
+fn test_schema_macro_with_multiple_omit() {
+    // Generate schema with multiple fields omitted
+    let user_schema = schema!(TestUser, omit = ["id", "email"]);
+
+    // Verify properties - id and email should be omitted
+    let properties = user_schema.properties.unwrap();
+    assert!(!properties.contains_key("id"), "'id' should be omitted");
+    assert!(properties.contains_key("name"), "Missing 'name' property");
+    assert!(!properties.contains_key("email"), "'email' should be omitted");
+
+    // Verify only 'name' is required
+    let required = user_schema.required.unwrap();
+    assert_eq!(required.len(), 1);
+    assert!(required.contains(&"name".to_string()));
+}
+
+#[test]
+fn test_schema_macro_with_pick() {
+    // Generate schema with only 'id' and 'name' fields
+    let user_schema = schema!(TestUser, pick = ["id", "name"]);
+
+    // Verify properties - only id and name should be present
+    let properties = user_schema.properties.unwrap();
+    assert!(properties.contains_key("id"), "Missing 'id' property");
+    assert!(properties.contains_key("name"), "Missing 'name' property");
+    assert!(!properties.contains_key("email"), "'email' should not be picked");
+
+    // Verify required fields
+    let required = user_schema.required.unwrap();
+    assert!(required.contains(&"id".to_string()));
+    assert!(required.contains(&"name".to_string()));
+}
+
+#[test]
+fn test_schema_macro_with_optional_fields() {
+    // Generate schema for struct with optional fields
+    let user_schema = schema!(TestUserWithOptional);
+
+    let properties = user_schema.properties.unwrap();
+    assert_eq!(properties.len(), 4);
+
+    // Only 'id' and 'name' should be required
+    // 'email' is Option<T> and 'bio' has #[serde(default)]
+    let required = user_schema.required.unwrap();
+    assert!(required.contains(&"id".to_string()));
+    assert!(required.contains(&"name".to_string()));
+    assert!(!required.contains(&"email".to_string()), "'email' is Option<T>, should not be required");
+    assert!(!required.contains(&"bio".to_string()), "'bio' has default, should not be required");
+}
+
+#[test]
+fn test_schema_macro_with_rename_all() {
+    // Generate schema for struct with rename_all = "camelCase"
+    let user_schema = schema!(TestUserCamelCase);
+
+    let properties = user_schema.properties.unwrap();
+
+    // Properties should have camelCase names
+    assert!(properties.contains_key("userId"), "Missing 'userId' property (renamed from user_id)");
+    assert!(properties.contains_key("userName"), "Missing 'userName' property (renamed from user_name)");
+    assert!(properties.contains_key("emailAddress"), "Missing 'emailAddress' property (renamed from email_address)");
+
+    // Should NOT have snake_case names
+    assert!(!properties.contains_key("user_id"));
+    assert!(!properties.contains_key("user_name"));
+    assert!(!properties.contains_key("email_address"));
+}
+
+#[test]
+fn test_schema_macro_omit_with_renamed_field() {
+    // Omit using the JSON name (camelCase)
+    let user_schema = schema!(TestUserCamelCase, omit = ["emailAddress"]);
+
+    let properties = user_schema.properties.unwrap();
+    assert!(properties.contains_key("userId"));
+    assert!(properties.contains_key("userName"));
+    assert!(!properties.contains_key("emailAddress"), "'emailAddress' should be omitted");
+}
+
+#[test]
+fn test_schema_macro_omit_with_rust_field_name() {
+    // Omit using the Rust field name (snake_case) - should also work
+    let user_schema = schema!(TestUserCamelCase, omit = ["email_address"]);
+
+    let properties = user_schema.properties.unwrap();
+    assert!(properties.contains_key("userId"));
+    assert!(properties.contains_key("userName"));
+    assert!(!properties.contains_key("emailAddress"), "'email_address' (rust name) should omit 'emailAddress'");
+}
+
+// Tests for schema_type! with rename option
+
+#[tokio::test]
+async fn test_get_user_dto_with_renamed_fields() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/users/dto/42").await;
+
+    response.assert_status_ok();
+    let user: serde_json::Value = response.json();
+
+    // JSON should use original field names (id, name) due to serde(rename)
+    // even though Rust struct uses user_id, display_name
+    assert_eq!(user["id"], 42, "JSON should serialize 'user_id' as 'id'");
+    assert_eq!(user["name"], "User 42", "JSON should serialize 'display_name' as 'name'");
+    
+    // Verify renamed field names are NOT in JSON
+    assert!(user.get("user_id").is_none(), "'user_id' should not appear in JSON");
+    assert!(user.get("display_name").is_none(), "'display_name' should not appear in JSON");
+}
+
+// Tests for schema_type! with add option
+
+#[tokio::test]
+async fn test_create_user_with_meta_add_fields() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    // CreateUserWithMeta has: name, email (from User) + request_id, created_at (added)
+    let request_body = json!({
+        "name": "Test User",
+        "email": "test@example.com",
+        "request_id": "req-12345",
+        "created_at": null
+    });
+
+    let response = server.post("/users/with-meta").json(&request_body).await;
+
+    response.assert_status_ok();
+    let result: serde_json::Value = response.json();
+
+    // Verify fields from User (picked)
+    assert_eq!(result["name"], "Test User");
+    assert_eq!(result["email"], "test@example.com");
+    
+    // Verify added fields
+    assert_eq!(result["request_id"], "req-12345");
+    assert_eq!(result["created_at"], "2024-01-27T12:00:00Z"); // Server fills this in
+}
+
+// Tests for schema_type! with sea-orm-like models
+
+#[tokio::test]
+async fn test_memo_create_with_picked_fields() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    // CreateMemoRequest has only: title, content (picked from Memo)
+    let request_body = json!({
+        "title": "Test Memo",
+        "content": "This is test content"
+    });
+
+    let response = server.post("/memos").json(&request_body).await;
+
+    response.assert_status_ok();
+    let result: serde_json::Value = response.json();
+
+    assert_eq!(result["title"], "Test Memo");
+    assert_eq!(result["content"], "This is test content");
+    
+    // These fields should NOT be in the response (not picked)
+    assert!(result.get("id").is_none(), "id should not be in CreateMemoRequest");
+    assert!(result.get("created_at").is_none(), "created_at should not be in CreateMemoRequest");
+}
+
+#[tokio::test]
+async fn test_memo_update_with_added_id_field() {
+    let app = create_app();
+    let server = TestServer::new(app).unwrap();
+
+    // UpdateMemoRequest has: title, content (picked) + id (added)
+    let request_body = json!({
+        "id": 42,
+        "title": "Updated Memo",
+        "content": "Updated content"
+    });
+
+    let response = server.put("/memos").json(&request_body).await;
+
+    response.assert_status_ok();
+    let result: serde_json::Value = response.json();
+
+    // Verify picked fields
+    assert_eq!(result["title"], "Updated Memo");
+    assert_eq!(result["content"], "Updated content");
+    
+    // Verify added field
+    assert_eq!(result["id"], 42, "id should be present (added field)");
 }

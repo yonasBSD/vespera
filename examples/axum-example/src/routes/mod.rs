@@ -13,6 +13,7 @@ pub mod error;
 pub mod foo;
 pub mod generic;
 pub mod health;
+pub mod memos;
 pub mod path;
 pub mod typed_header;
 pub mod users;

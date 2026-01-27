@@ -607,6 +607,106 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         }
       }
     },
+    "/memos": {
+      "post": {
+        "operationId": "create_memo",
+        "description": "Create a new memo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateMemoRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "update_memo",
+        "description": "Update a memo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateMemoRequest"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memos/format": {
+      "get": {
+        "operationId": "get_memo_format",
+        "description": "Get memo response format",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memos/{id}": {
+      "get": {
+        "operationId": "get_memo",
+        "description": "Get memo by id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/no-schema-query": {
       "get": {
         "operationId": "mod_file_with_no_schema_query",
@@ -1037,7 +1137,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
     "/users": {
       "get": {
         "operationId": "get_users",
-        "description": "Get all users",
+        "description": "Get all users (returns public response without internal_score)",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -1046,7 +1146,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/User"
+                    "$ref": "#/components/schemas/UserPublicResponse"
                   }
                 }
               }
@@ -1056,7 +1156,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "post": {
         "operationId": "create_user",
-        "description": "Create a new user",
+        "description": "Create a new user\nRequest body uses CreateUserRequest (generated from User with only name, email)",
         "requestBody": {
           "required": true,
           "content": {
@@ -1073,7 +1173,35 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/User"
+                  "$ref": "#/components/schemas/UserPublicResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/dto/{id}": {
+      "get": {
+        "operationId": "get_user_dto",
+        "description": "Get user DTO (demonstrates field rename feature)\nThe Rust struct uses user_id/display_name, but JSON uses id/name",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDTO"
                 }
               }
             }
@@ -1098,10 +1226,59 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         }
       }
     },
+    "/users/summary": {
+      "get": {
+        "operationId": "get_users_summary",
+        "description": "Get user summaries (minimal fields for list views)",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/with-meta": {
+      "post": {
+        "operationId": "create_user_with_meta",
+        "description": "Create a new user with metadata (demonstrates `add` feature)\nRequest body uses CreateUserWithMeta (picks name/email, adds request_id/created_at)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserWithMeta"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateUserWithMeta"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users/{id}": {
       "get": {
         "operationId": "get_user",
-        "description": "Get user by ID",
+        "description": "Get user by ID (full internal view)",
         "parameters": [
           {
             "name": "id",
@@ -1354,6 +1531,21 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "createdAt"
         ]
       },
+      "CreateMemoRequest": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "content"
+        ]
+      },
       "CreateUserRequest": {
         "type": "object",
         "properties": {
@@ -1367,6 +1559,29 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         "required": [
           "name",
           "email"
+        ]
+      },
+      "CreateUserWithMeta": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "request_id"
         ]
       },
       "Enum": {
@@ -1688,6 +1903,30 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "age"
         ]
       },
+      "MemoResponse": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "content",
+          "created_at"
+        ]
+      },
       "PaginatedResponse": {
         "type": "object",
         "properties": {
@@ -1920,7 +2159,64 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "age"
         ]
       },
+      "UpdateMemoRequest": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "content",
+          "id"
+        ]
+      },
       "User": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "internal_score": {
+            "type": "integer",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email"
+        ]
+      },
+      "UserDTO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "UserPublicResponse": {
         "type": "object",
         "properties": {
           "email": {
@@ -1937,6 +2233,21 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "id",
           "name",
           "email"
+        ]
+      },
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
         ]
       }
     }
