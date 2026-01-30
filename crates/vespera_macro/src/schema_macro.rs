@@ -469,10 +469,11 @@ pub struct SchemaTypeInput {
     pub add: Option<Vec<(String, Type)>>,
     /// Whether to derive Clone (default: true)
     pub derive_clone: bool,
-    /// Fields to wrap in Option<T> for partial updates.
-    /// - `partial` (bare) = all fields become Option<T>
-    /// - `partial = ["field1", "field2"]` = only listed fields become Option<T>
-    /// Fields already Option<T> are left unchanged.
+    /// Fields to wrap in `Option<T>` for partial updates.
+    ///
+    /// - `partial` (bare) = all fields become `Option<T>`
+    /// - `partial = ["field1", "field2"]` = only listed fields become `Option<T>`
+    /// - Fields already `Option<T>` are left unchanged.
     pub partial: Option<PartialMode>,
 }
 
