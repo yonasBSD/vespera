@@ -3,12 +3,14 @@ mod routes;
 
 use std::sync::Arc;
 
+use sea_orm::{Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 use third::ThirdApp;
 use vespera::{Schema, axum, vespera};
 
 pub struct AppState {
     pub config: String,
+    pub db: Arc<DatabaseConnection>,
 }
 
 #[derive(Serialize, Deserialize, Schema)]
@@ -18,7 +20,8 @@ pub struct TestStruct {
 }
 
 /// Create the application router for testing
-pub fn create_app() -> axum::Router {
+pub async fn create_app() -> axum::Router {
+    let db = Database::connect("sqlite://:memory:").await.unwrap();
     vespera!(
         openapi = ["examples/axum-example/openapi.json", "openapi.json"],
         docs_url = "/docs",
@@ -27,11 +30,12 @@ pub fn create_app() -> axum::Router {
     )
     .with_state(Arc::new(AppState {
         config: "test".to_string(),
+        db: Arc::new(db),
     }))
 }
 
 /// Create the application router with a layer for testing VesperaRouter::layer
-pub fn create_app_with_layer() -> axum::Router {
+pub async fn create_app_with_layer() -> axum::Router {
     use tower_http::cors::{Any, CorsLayer};
 
     let cors = CorsLayer::new()
@@ -39,6 +43,7 @@ pub fn create_app_with_layer() -> axum::Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let db = Database::connect("sqlite://:memory:").await.unwrap();
     vespera!(
         openapi = ["examples/axum-example/openapi.json", "openapi.json"],
         docs_url = "/docs",
@@ -48,5 +53,6 @@ pub fn create_app_with_layer() -> axum::Router {
     .layer(cors)
     .with_state(Arc::new(AppState {
         config: "test".to_string(),
+        db: Arc::new(db),
     }))
 }

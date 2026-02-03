@@ -703,6 +703,33 @@
         }
       }
     },
+    "/memos/{id}/rel": {
+      "get": {
+        "operationId": "get_memo_rel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoResponseRel"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/no-schema-query": {
       "get": {
         "operationId": "mod_file_with_no_schema_query",
@@ -987,7 +1014,7 @@
     "/third": {
       "get": {
         "operationId": "third_root_endpoint",
-        "description": "Third app root endpoint",
+        "description": "/ Third app root endpoint",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -1008,7 +1035,7 @@
         "tags": [
           "third"
         ],
-        "description": "Third app hello endpoint",
+        "description": "/ Third app hello endpoint",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -1560,7 +1587,7 @@
       "CreateUserWithMeta": {
         "type": "object",
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "nullable": true
           },
@@ -1570,14 +1597,14 @@
           "name": {
             "type": "string"
           },
-          "request_id": {
+          "requestId": {
             "type": "string"
           }
         },
         "required": [
           "name",
           "email",
-          "request_id"
+          "requestId"
         ]
       },
       "Enum": {
@@ -1905,7 +1932,7 @@
           "content": {
             "type": "string"
           },
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1914,12 +1941,105 @@
           },
           "title": {
             "type": "string"
+          },
+          "userId": {
+            "type": "integer"
           }
         },
         "required": [
           "id",
+          "userId",
           "title",
           "content",
+          "createdAt"
+        ]
+      },
+      "MemoResponseRel": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "createdAt",
+          "user"
+        ]
+      },
+      "MemoSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "createdAt",
+          "updatedAt",
+          "user"
+        ]
+      },
+      "MemoSnakeCase": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
           "created_at"
         ]
       },
@@ -2229,6 +2349,42 @@
           "id",
           "name",
           "email"
+        ]
+      },
+      "UserSchema": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "memos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoSchema"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "createdAt",
+          "updatedAt",
+          "memos"
         ]
       },
       "UserSummary": {

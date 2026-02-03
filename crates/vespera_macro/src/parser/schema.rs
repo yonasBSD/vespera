@@ -9,6 +9,49 @@ pub fn strip_raw_prefix(ident: &str) -> &str {
     ident.strip_prefix("r#").unwrap_or(ident)
 }
 
+/// Extract a Schema name from a SeaORM Entity type path.
+///
+/// Converts paths like:
+/// - `super::user::Entity` → "User"
+/// - `crate::models::memo::Entity` → "Memo"
+///
+/// The schema name is derived from the module containing Entity,
+/// converted to PascalCase (first letter uppercase).
+fn extract_schema_name_from_entity(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Path(type_path) => {
+            let segments: Vec<_> = type_path.path.segments.iter().collect();
+
+            // Need at least 2 segments: module::Entity
+            if segments.len() < 2 {
+                return None;
+            }
+
+            // Check if last segment is "Entity"
+            let last = segments.last()?;
+            if last.ident != "Entity" {
+                return None;
+            }
+
+            // Get the second-to-last segment (module name)
+            let module_segment = segments.get(segments.len() - 2)?;
+            let module_name = module_segment.ident.to_string();
+
+            // Convert to PascalCase (capitalize first letter)
+            let schema_name = {
+                let mut chars = module_name.chars();
+                match chars.next() {
+                    None => module_name,
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                }
+            };
+
+            Some(schema_name)
+        }
+        _ => None,
+    }
+}
+
 pub fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("serde") {
@@ -870,6 +913,12 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
             // Handle generic types
             if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                 match ident_str.as_str() {
+                    // Box<T> -> T's schema (Box is just heap allocation, transparent for schema)
+                    "Box" => {
+                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                            return parse_type_to_schema_ref(inner_ty, known_schemas, struct_definitions);
+                        }
+                    }
                     "Vec" | "Option" => {
                         if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                             let inner_schema = parse_type_to_schema_ref(
@@ -898,6 +947,36 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                                 }
                             }
                         }
+                    }
+                    // SeaORM relation types: convert Entity to Schema reference
+                    "HasOne" => {
+                        // HasOne<Entity> -> nullable reference to corresponding Schema
+                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if let Some(schema_name) = extract_schema_name_from_entity(inner_ty) {
+                                return SchemaRef::Inline(Box::new(Schema {
+                                    ref_path: Some(format!("#/components/schemas/{}", schema_name)),
+                                    schema_type: None,
+                                    nullable: Some(true),
+                                    ..Schema::new(SchemaType::Object)
+                                }));
+                            }
+                        }
+                        // Fallback: generic object
+                        return SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)));
+                    }
+                    "HasMany" => {
+                        // HasMany<Entity> -> array of references to corresponding Schema
+                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                            if let Some(schema_name) = extract_schema_name_from_entity(inner_ty) {
+                                let inner_ref =
+                                    SchemaRef::Ref(Reference::new(format!("#/components/schemas/{}", schema_name)));
+                                return SchemaRef::Inline(Box::new(Schema::array(inner_ref)));
+                            }
+                        }
+                        // Fallback: array of generic objects
+                        return SchemaRef::Inline(Box::new(Schema::array(SchemaRef::Inline(
+                            Box::new(Schema::new(SchemaType::Object)),
+                        ))));
                     }
                     "HashMap" | "BTreeMap" => {
                         // HashMap<K, V> or BTreeMap<K, V> -> object with additionalProperties
@@ -987,12 +1066,45 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                     // Use just the type name (handles both crate::TestStruct and TestStruct)
                     let type_name = ident_str.clone();
 
-                    if known_schemas.contains_key(&type_name) {
+                    // For paths like `module::Schema`, try to find the schema name
+                    // by checking if there's a schema named `ModuleSchema` or `ModuleNameSchema`
+                    let resolved_name = if type_name == "Schema" && path.segments.len() > 1 {
+                        // Get the parent module name (e.g., "user" from "crate::models::user::Schema")
+                        let parent_segment = &path.segments[path.segments.len() - 2];
+                        let parent_name = parent_segment.ident.to_string();
+
+                        // Try PascalCase version: "user" -> "UserSchema"
+                        let pascal_name = {
+                            let mut chars = parent_name.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(c) => {
+                                    c.to_uppercase().collect::<String>() + chars.as_str() + "Schema"
+                                }
+                            }
+                        };
+
+                        if known_schemas.contains_key(&pascal_name) {
+                            pascal_name
+                        } else {
+                            // Try lowercase version: "userSchema"
+                            let lower_name = format!("{}Schema", parent_name);
+                            if known_schemas.contains_key(&lower_name) {
+                                lower_name
+                            } else {
+                                type_name.clone()
+                            }
+                        }
+                    } else {
+                        type_name.clone()
+                    };
+
+                    if known_schemas.contains_key(&resolved_name) {
                         // Check if this is a generic type with type parameters
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             // This is a concrete generic type like GenericStruct<String>
                             // Inline the schema by substituting generic parameters with concrete types
-                            if let Some(base_def) = struct_definitions.get(&type_name)
+                            if let Some(base_def) = struct_definitions.get(&resolved_name)
                                 && let Ok(mut parsed) = syn::parse_str::<syn::ItemStruct>(base_def)
                             {
                                 // Extract generic parameter names from the struct definition
@@ -1049,7 +1161,7 @@ pub(super) fn parse_type_to_schema_ref_with_schemas(
                             }
                         }
                         // Non-generic type or generic without parameters - use reference
-                        SchemaRef::Ref(Reference::schema(&type_name))
+                        SchemaRef::Ref(Reference::schema(&resolved_name))
                     } else {
                         // For unknown custom types, return object schema instead of reference
                         // This prevents creating invalid references to non-existent schemas

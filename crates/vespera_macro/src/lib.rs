@@ -66,12 +66,37 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
+/// Extract custom schema name from #[schema(name = "...")] attribute
+fn extract_schema_name_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("schema") {
+            let mut custom_name = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("name") {
+                    let value = meta.value()?;
+                    let lit: syn::LitStr = value.parse()?;
+                    custom_name = Some(lit.value());
+                }
+                Ok(())
+            });
+            if custom_name.is_some() {
+                return custom_name;
+            }
+        }
+    }
+    None
+}
+
 /// Process derive input and return metadata + expanded code
 fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macro2::TokenStream) {
     let name = &input.ident;
     let generics = &input.generics;
+
+    // Check for custom schema name from #[schema(name = "...")] attribute
+    let schema_name = extract_schema_name_attr(&input.attrs).unwrap_or_else(|| name.to_string());
+
     // Schema-derived types appear in OpenAPI spec (include_in_openapi: true)
-    let metadata = StructMetadata::new(name.to_string(), quote::quote!(#input).to_string());
+    let metadata = StructMetadata::new(schema_name, quote::quote!(#input).to_string());
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let expanded = quote! {
         impl #impl_generics vespera::schema::SchemaBuilder for #name #ty_generics #where_clause {}
@@ -80,7 +105,9 @@ fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macr
 }
 
 /// Derive macro for Schema
-#[proc_macro_derive(Schema)]
+///
+/// Supports `#[schema(name = "CustomName")]` attribute to set custom OpenAPI schema name.
+#[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let (metadata, expanded) = process_derive_schema(&input);
@@ -205,10 +232,17 @@ pub fn schema_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaTypeInput);
 
     // Get stored schemas
-    let storage = SCHEMA_STORAGE.lock().unwrap();
+    let mut storage = SCHEMA_STORAGE.lock().unwrap();
 
     match schema_macro::generate_schema_type_code(&input, &storage) {
-        Ok(tokens) => TokenStream::from(tokens),
+        Ok((tokens, generated_metadata)) => {
+            // If custom name is provided, register the schema directly
+            // This ensures it appears in OpenAPI even when `ignore` is set
+            if let Some(metadata) = generated_metadata {
+                storage.push(metadata);
+            }
+            TokenStream::from(tokens)
+        }
         Err(e) => e.to_compile_error().into(),
     }
 }

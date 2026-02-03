@@ -707,6 +707,33 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         }
       }
     },
+    "/memos/{id}/rel": {
+      "get": {
+        "operationId": "get_memo_rel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoResponseRel"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/no-schema-query": {
       "get": {
         "operationId": "mod_file_with_no_schema_query",
@@ -1564,7 +1591,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       "CreateUserWithMeta": {
         "type": "object",
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "nullable": true
           },
@@ -1574,14 +1601,14 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "name": {
             "type": "string"
           },
-          "request_id": {
+          "requestId": {
             "type": "string"
           }
         },
         "required": [
           "name",
           "email",
-          "request_id"
+          "requestId"
         ]
       },
       "Enum": {
@@ -1909,7 +1936,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "content": {
             "type": "string"
           },
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1918,13 +1945,86 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           },
           "title": {
             "type": "string"
+          },
+          "userId": {
+            "type": "integer"
           }
         },
         "required": [
           "id",
+          "userId",
           "title",
           "content",
-          "created_at"
+          "createdAt"
+        ]
+      },
+      "MemoResponseRel": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "createdAt",
+          "user"
+        ]
+      },
+      "MemoSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "createdAt",
+          "updatedAt",
+          "user"
         ]
       },
       "PaginatedResponse": {
@@ -2233,6 +2333,42 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "id",
           "name",
           "email"
+        ]
+      },
+      "UserSchema": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "memos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoSchema"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "createdAt",
+          "updatedAt",
+          "memos"
         ]
       },
       "UserSummary": {

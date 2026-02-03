@@ -9,7 +9,7 @@ use quote::quote;
 use std::collections::HashSet;
 use std::path::Path;
 use syn::punctuated::Punctuated;
-use syn::{Ident, LitStr, Token, Type, bracketed, parenthesized, parse::Parse, parse::ParseStream};
+use syn::{bracketed, parenthesized, parse::Parse, parse::ParseStream, Ident, LitStr, Token, Type};
 
 use crate::metadata::StructMetadata;
 use crate::parser::{
@@ -153,6 +153,398 @@ fn extract_type_name(ty: &Type) -> Result<String, syn::Error> {
             ty,
             "expected a type path (e.g., `User` or `crate::User`)",
         )),
+    }
+}
+
+/// Check if a type is a qualified path (has multiple segments like crate::models::User)
+fn is_qualified_path(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => type_path.path.segments.len() > 1,
+        _ => false,
+    }
+}
+
+/// Check if a type is a SeaORM relation type (HasOne, HasMany, BelongsTo)
+fn is_seaorm_relation_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                let ident = segment.ident.to_string();
+                matches!(ident.as_str(), "HasOne" | "HasMany" | "BelongsTo")
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Check if a struct is a SeaORM Model (has #[sea_orm::model] or #[sea_orm(table_name = ...)] attribute)
+fn is_seaorm_model(struct_item: &syn::ItemStruct) -> bool {
+    for attr in &struct_item.attrs {
+        // Check for #[sea_orm::model] or #[sea_orm(...)]
+        let path = attr.path();
+        if path.is_ident("sea_orm") {
+            return true;
+        }
+        // Check for path like sea_orm::model
+        let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        if segments.first().is_some_and(|s| s == "sea_orm") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Relation field info for generating from_model code
+#[derive(Clone)]
+struct RelationFieldInfo {
+    /// Field name in the generated struct
+    field_name: syn::Ident,
+    /// Relation type: "HasOne", "HasMany", or "BelongsTo"
+    relation_type: String,
+    /// Target Schema path (e.g., crate::models::user::Schema)
+    schema_path: TokenStream,
+    /// Whether the relation is optional
+    is_optional: bool,
+    /// Foreign key field name (for BelongsTo)
+    fk_field: Option<String>,
+}
+
+/// Extract the "from" field name from a sea_orm belongs_to attribute.
+/// e.g., `#[sea_orm(belongs_to, from = "user_id", to = "id")]` → Some("user_id")
+fn extract_belongs_to_from_field(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("sea_orm") {
+            let mut from_field = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("from") {
+                    if let Ok(value) = meta.value() {
+                        if let Ok(lit) = value.parse::<syn::LitStr>() {
+                            from_field = Some(lit.value());
+                        }
+                    }
+                }
+                Ok(())
+            });
+            if from_field.is_some() {
+                return from_field;
+            }
+        }
+    }
+    None
+}
+
+/// Check if a field in the struct is optional (Option<T>).
+fn is_field_optional_in_struct(struct_item: &syn::ItemStruct, field_name: &str) -> bool {
+    if let syn::Fields::Named(fields_named) = &struct_item.fields {
+        for field in &fields_named.named {
+            if let Some(ident) = &field.ident {
+                if ident == field_name {
+                    return is_option_type(&field.ty);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Convert a SeaORM relation type to a Schema type AND return relation info.
+///
+/// - `#[sea_orm(has_one)]` → Always `Option<Box<Schema>>`
+/// - `#[sea_orm(has_many)]` → Always `Vec<Schema>`
+/// - `#[sea_orm(belongs_to, from = "field")]`:
+///   - If `from` field is `Option<T>` → `Option<Box<Schema>>`
+///   - If `from` field is required → `Box<Schema>`
+///
+/// The `source_module_path` is used to resolve relative paths like `super::`.
+/// e.g., if source is `crate::models::memo::Model`, module path is `crate::models::memo`
+///
+/// Returns None if the type is not a relation type or conversion fails.
+/// Returns (TokenStream, RelationFieldInfo) on success for use in from_model generation.
+fn convert_relation_type_to_schema_with_info(
+    ty: &Type,
+    field_attrs: &[syn::Attribute],
+    parsed_struct: &syn::ItemStruct,
+    source_module_path: &[String],
+    field_name: syn::Ident,
+) -> Option<(TokenStream, RelationFieldInfo)> {
+    let type_path = match ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    let segment = type_path.path.segments.last()?;
+    let ident_str = segment.ident.to_string();
+
+    // Check if this is a relation type with generic argument
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => args,
+        _ => return None,
+    };
+
+    // Get the inner Entity type
+    let inner_ty = match args.args.first()? {
+        syn::GenericArgument::Type(ty) => ty,
+        _ => return None,
+    };
+
+    // Extract the path and convert to absolute Schema path
+    let inner_path = match inner_ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    // Collect segments as strings
+    let segments: Vec<String> = inner_path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+
+    // Convert path to absolute, resolving `super::` relative to source module
+    let absolute_segments: Vec<String> = if !segments.is_empty() && segments[0] == "super" {
+        let super_count = segments.iter().take_while(|s| *s == "super").count();
+        let parent_path_len = source_module_path.len().saturating_sub(super_count);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in segments.iter().skip(super_count) {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    } else if !segments.is_empty() && segments[0] == "crate" {
+        segments
+            .iter()
+            .map(|s| {
+                if s == "Entity" {
+                    "Schema".to_string()
+                } else {
+                    s.clone()
+                }
+            })
+            .collect()
+    } else {
+        let parent_path_len = source_module_path.len().saturating_sub(1);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in &segments {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    };
+
+    // Build the absolute path as tokens
+    let path_idents: Vec<syn::Ident> = absolute_segments
+        .iter()
+        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+        .collect();
+    let schema_path = quote! { #(#path_idents)::* };
+
+    // Convert based on relation type
+    match ident_str.as_str() {
+        "HasOne" => {
+            // HasOne → Check FK field to determine optionality
+            // If FK is Option<T> → relation is optional: Option<Box<Schema>>
+            // If FK is required → relation is required: Box<Schema>
+            let fk_field = extract_belongs_to_from_field(field_attrs);
+            let is_optional = fk_field
+                .as_ref()
+                .map(|f| is_field_optional_in_struct(parsed_struct, f))
+                .unwrap_or(true); // Default to optional if we can't determine
+
+            let converted = if is_optional {
+                quote! { Option<Box<#schema_path>> }
+            } else {
+                quote! { Box<#schema_path> }
+            };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "HasOne".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional,
+                fk_field,
+            };
+            Some((converted, info))
+        }
+        "HasMany" => {
+            let converted = quote! { Vec<#schema_path> };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "HasMany".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional: false,
+                fk_field: None,
+            };
+            Some((converted, info))
+        }
+        "BelongsTo" => {
+            // BelongsTo → Check FK field to determine optionality
+            // If FK is Option<T> → relation is optional: Option<Box<Schema>>
+            // If FK is required → relation is required: Box<Schema>
+            let fk_field = extract_belongs_to_from_field(field_attrs);
+            let is_optional = fk_field
+                .as_ref()
+                .map(|f| is_field_optional_in_struct(parsed_struct, f))
+                .unwrap_or(true); // Default to optional if we can't determine
+
+            let converted = if is_optional {
+                quote! { Option<Box<#schema_path>> }
+            } else {
+                quote! { Box<#schema_path> }
+            };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "BelongsTo".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional,
+                fk_field,
+            };
+            Some((converted, info))
+        }
+        _ => None,
+    }
+}
+
+/// Convert a SeaORM relation type to a Schema type.
+///
+/// - `#[sea_orm(has_one)]` → Always `Option<Box<Schema>>`
+/// - `#[sea_orm(has_many)]` → Always `Vec<Schema>`
+/// - `#[sea_orm(belongs_to, from = "field")]`:
+///   - If `from` field is `Option<T>` → `Option<Box<Schema>>`
+///   - If `from` field is required → `Box<Schema>`
+///
+/// The `source_module_path` is used to resolve relative paths like `super::`.
+/// e.g., if source is `crate::models::memo::Model`, module path is `crate::models::memo`
+///
+/// Returns None if the type is not a relation type or conversion fails.
+#[allow(dead_code)]
+fn convert_relation_type_to_schema(
+    ty: &Type,
+    field_attrs: &[syn::Attribute],
+    parsed_struct: &syn::ItemStruct,
+    source_module_path: &[String],
+) -> Option<TokenStream> {
+    let type_path = match ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    let segment = type_path.path.segments.last()?;
+    let ident_str = segment.ident.to_string();
+
+    // Check if this is a relation type with generic argument
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => args,
+        _ => return None,
+    };
+
+    // Get the inner Entity type
+    let inner_ty = match args.args.first()? {
+        syn::GenericArgument::Type(ty) => ty,
+        _ => return None,
+    };
+
+    // Extract the path and convert to absolute Schema path
+    let inner_path = match inner_ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    // Collect segments as strings
+    let segments: Vec<String> = inner_path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+
+    // Convert path to absolute, resolving `super::` relative to source module
+    // e.g., super::user::Entity with source_module_path = [crate, models, memo]
+    //       → [crate, models, user, Schema]
+    let absolute_segments: Vec<String> = if !segments.is_empty() && segments[0] == "super" {
+        // Count how many `super` segments
+        let super_count = segments.iter().take_while(|s| *s == "super").count();
+
+        // Go up `super_count` levels from source module path
+        let parent_path_len = source_module_path.len().saturating_sub(super_count);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+
+        // Append remaining segments (after super::), replacing Entity with Schema
+        for seg in segments.iter().skip(super_count) {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    } else if !segments.is_empty() && segments[0] == "crate" {
+        // Already absolute path, just replace Entity with Schema
+        segments
+            .iter()
+            .map(|s| {
+                if s == "Entity" {
+                    "Schema".to_string()
+                } else {
+                    s.clone()
+                }
+            })
+            .collect()
+    } else {
+        // Relative path without super, assume same module level
+        // Prepend source module's parent path
+        let parent_path_len = source_module_path.len().saturating_sub(1);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in &segments {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    };
+
+    // Build the absolute path as tokens
+    let path_idents: Vec<syn::Ident> = absolute_segments
+        .iter()
+        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+        .collect();
+    let schema_path = quote! { #(#path_idents)::* };
+
+    // Convert based on relation type
+    match ident_str.as_str() {
+        "HasOne" => {
+            // HasOne → Always Option<Box<Schema>>
+            Some(quote! { Option<Box<#schema_path>> })
+        }
+        "HasMany" => {
+            // HasMany → Vec<Schema>
+            Some(quote! { Vec<#schema_path> })
+        }
+        "BelongsTo" => {
+            // BelongsTo → Check if "from" field is optional
+            if let Some(from_field) = extract_belongs_to_from_field(field_attrs) {
+                if is_field_optional_in_struct(parsed_struct, &from_field) {
+                    // from field is Option → relation is optional
+                    Some(quote! { Option<Box<#schema_path>> })
+                } else {
+                    // from field is required → relation is required
+                    Some(quote! { Box<#schema_path> })
+                }
+            } else {
+                // Fallback: treat as optional if we can't determine
+                Some(quote! { Option<Box<#schema_path>> })
+            }
+        }
+        _ => None,
     }
 }
 
@@ -448,12 +840,76 @@ fn find_struct_from_path(ty: &Type) -> Option<StructMetadata> {
     None
 }
 
+/// Find struct definition from a schema path string (e.g., "crate::models::user::Schema").
+///
+/// Similar to `find_struct_from_path` but takes a string path instead of syn::Type.
+fn find_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
+    // Get CARGO_MANIFEST_DIR to locate src folder
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let src_dir = Path::new(&manifest_dir).join("src");
+
+    // Parse the path string into segments
+    let segments: Vec<&str> = path_str.split("::").filter(|s| !s.is_empty()).collect();
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    // The last segment is the struct name
+    let struct_name = segments.last()?.to_string();
+
+    // Build possible file paths from the module path
+    // e.g., crate::models::user::Schema -> src/models/user.rs
+    let module_segments: Vec<&str> = segments[..segments.len() - 1]
+        .iter()
+        .filter(|s| **s != "crate" && **s != "self" && **s != "super")
+        .copied()
+        .collect();
+
+    if module_segments.is_empty() {
+        return None;
+    }
+
+    // Try different file path patterns
+    let file_paths = vec![
+        src_dir.join(format!("{}.rs", module_segments.join("/"))),
+        src_dir.join(format!("{}/mod.rs", module_segments.join("/"))),
+    ];
+
+    for file_path in file_paths {
+        if !file_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&file_path).ok()?;
+        let file_ast = syn::parse_file(&content).ok()?;
+
+        // Look for the struct in the file
+        for item in &file_ast.items {
+            match item {
+                syn::Item::Struct(struct_item) if struct_item.ident == struct_name => {
+                    return Some(StructMetadata::new_model(
+                        struct_name.clone(),
+                        quote::quote!(#struct_item).to_string(),
+                    ));
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    None
+}
+
 /// Input for the schema_type! macro
 ///
 /// Syntax: `schema_type!(NewTypeName from SourceType, pick = ["field1", "field2"])`
 /// Or:     `schema_type!(NewTypeName from SourceType, omit = ["field1", "field2"])`
 /// Or:     `schema_type!(NewTypeName from SourceType, rename = [("old", "new")])`
 /// Or:     `schema_type!(NewTypeName from SourceType, add = [("field": Type)])`
+/// Or:     `schema_type!(NewTypeName from SourceType, ignore)` - skip Schema derive
+/// Or:     `schema_type!(NewTypeName from SourceType, name = "CustomName")` - custom OpenAPI name
+/// Or:     `schema_type!(NewTypeName from SourceType, rename_all = "camelCase")` - serde rename_all
 pub struct SchemaTypeInput {
     /// The new type name to generate
     pub new_type: Ident,
@@ -475,6 +931,15 @@ pub struct SchemaTypeInput {
     /// - `partial = ["field1", "field2"]` = only listed fields become `Option<T>`
     /// - Fields already `Option<T>` are left unchanged.
     pub partial: Option<PartialMode>,
+    /// Whether to skip deriving the Schema trait (default: false)
+    /// Use `ignore` keyword to set this to true.
+    pub ignore_schema: bool,
+    /// Custom OpenAPI schema name (overrides Rust struct name)
+    /// Use `name = "CustomName"` to set this.
+    pub schema_name: Option<String>,
+    /// Serde rename_all strategy (e.g., "camelCase", "snake_case", "PascalCase")
+    /// If not specified, defaults to "camelCase" when source has no rename_all
+    pub rename_all: Option<String>,
 }
 
 /// Mode for the `partial` keyword in schema_type!
@@ -549,6 +1014,9 @@ impl Parse for SchemaTypeInput {
         let mut add = None;
         let mut derive_clone = true;
         let mut partial = None;
+        let mut ignore_schema = false;
+        let mut schema_name = None;
+        let mut rename_all = None;
 
         // Parse optional parameters
         while input.peek(Token![,]) {
@@ -615,11 +1083,27 @@ impl Parse for SchemaTypeInput {
                         partial = Some(PartialMode::All);
                     }
                 }
+                "ignore" => {
+                    // bare `ignore` — skip Schema derive
+                    ignore_schema = true;
+                }
+                "name" => {
+                    // name = "CustomSchemaName" — custom OpenAPI schema name
+                    input.parse::<Token![=]>()?;
+                    let name_lit: LitStr = input.parse()?;
+                    schema_name = Some(name_lit.value());
+                }
+                "rename_all" => {
+                    // rename_all = "camelCase" — serde rename_all strategy
+                    input.parse::<Token![=]>()?;
+                    let rename_all_lit: LitStr = input.parse()?;
+                    rename_all = Some(rename_all_lit.value());
+                }
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "unknown parameter: `{}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, or `partial`",
+                            "unknown parameter: `{}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, `partial`, `ignore`, `name`, or `rename_all`",
                             ident_str
                         ),
                     ));
@@ -644,37 +1128,594 @@ impl Parse for SchemaTypeInput {
             add,
             derive_clone,
             partial,
+            ignore_schema,
+            schema_name,
+            rename_all,
         })
     }
 }
 
+/// Extract the module path from a type (excluding the type name itself).
+/// e.g., `crate::models::memo::Model` → ["crate", "models", "memo"]
+fn extract_module_path(ty: &Type) -> Vec<String> {
+    match ty {
+        Type::Path(type_path) => {
+            let segments: Vec<String> = type_path
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect();
+            // Return all but the last segment (which is the type name)
+            if segments.len() > 1 {
+                segments[..segments.len() - 1].to_vec()
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![],
+    }
+}
+
+/// Detect circular reference fields in a related schema.
+///
+/// When generating `MemoSchema.user`, we need to check if `UserSchema` has any fields
+/// that reference back to `MemoSchema` (e.g., `memos: Vec<MemoSchema>`).
+///
+/// Returns a list of field names that would create circular references.
+fn detect_circular_fields(
+    _source_schema_name: &str,
+    source_module_path: &[String],
+    related_schema_def: &str,
+) -> Vec<String> {
+    let mut circular_fields = Vec::new();
+
+    // Parse the related schema definition
+    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_schema_def) else {
+        return circular_fields;
+    };
+
+    // Get the source module name (e.g., "memo" from ["crate", "models", "memo"])
+    let source_module = source_module_path.last().map(|s| s.as_str()).unwrap_or("");
+
+    if let syn::Fields::Named(fields_named) = &parsed.fields {
+        for field in &fields_named.named {
+            let Some(field_ident) = &field.ident else {
+                continue;
+            };
+            let field_name = field_ident.to_string();
+
+            // Check if this field's type references the source schema
+            let field_ty = &field.ty;
+            let ty_str = quote::quote!(#field_ty).to_string();
+
+            // Normalize whitespace: quote!() produces "foo :: bar" instead of "foo::bar"
+            // Remove all whitespace to make pattern matching reliable
+            let ty_str_normalized = ty_str.replace(' ', "");
+
+            // Check for patterns like:
+            // - Vec<memo::Schema> or Vec<MemoSchema>
+            // - Box<memo::Schema> or Box<MemoSchema>
+            // - Option<Box<memo::Schema>>
+            // - HasMany<memo::Entity>
+            // - HasOne<memo::Entity>
+            // - BelongsTo<memo::Entity>
+            let is_circular = ty_str_normalized.contains(&format!("{}::Schema", source_module))
+                || ty_str_normalized.contains(&format!("{}::Entity", source_module))
+                || ty_str_normalized
+                    .contains(&format!("{}Schema", capitalize_first(source_module)));
+
+            if is_circular {
+                circular_fields.push(field_name);
+            }
+        }
+    }
+
+    circular_fields
+}
+
+/// Capitalize the first letter of a string.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+/// Generate inline struct construction for a related schema, excluding circular fields.
+///
+/// Instead of `<user::Schema as From<_>>::from(r)`, generates:
+/// ```ignore
+/// user::Schema {
+///     id: r.id,
+///     name: r.name,
+///     memos: vec![], // circular field - use default
+/// }
+/// ```
+fn generate_inline_struct_construction(
+    schema_path: &TokenStream,
+    related_schema_def: &str,
+    circular_fields: &[String],
+    var_name: &str,
+) -> TokenStream {
+    // Parse the related schema definition
+    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_schema_def) else {
+        // Fallback to From::from if parsing fails
+        let var_ident = syn::Ident::new(var_name, proc_macro2::Span::call_site());
+        return quote! { <#schema_path as From<_>>::from(#var_ident) };
+    };
+
+    let var_ident = syn::Ident::new(var_name, proc_macro2::Span::call_site());
+
+    // Get the named fields for FK checking
+    let fields_named = match &parsed.fields {
+        syn::Fields::Named(f) => f,
+        _ => {
+            return quote! { <#schema_path as From<_>>::from(#var_ident) };
+        }
+    };
+
+    let field_assignments: Vec<TokenStream> = fields_named
+        .named
+        .iter()
+        .filter_map(|field| {
+            let field_ident = field.ident.as_ref()?;
+            let field_name = field_ident.to_string();
+
+            // Skip fields marked with serde(skip)
+            if extract_skip(&field.attrs) {
+                return None;
+            }
+
+            if circular_fields.contains(&field_name) || is_seaorm_relation_type(&field.ty) {
+                // Circular field or relation field - generate appropriate default
+                // based on the SeaORM relation type
+                Some(generate_default_for_relation_field(
+                    &field.ty,
+                    field_ident,
+                    &field.attrs,
+                    fields_named,
+                ))
+            } else {
+                // Regular field - copy from model
+                Some(quote! { #field_ident: #var_ident.#field_ident })
+            }
+        })
+        .collect();
+
+    quote! {
+        #schema_path {
+            #(#field_assignments),*
+        }
+    }
+}
+
+/// Check if a circular relation field in the related schema is required (Box<T>) or optional (Option<Box<T>>).
+///
+/// Returns true if the circular relation is required and needs a parent stub.
+fn is_circular_relation_required(related_model_def: &str, circular_field_name: &str) -> bool {
+    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_model_def) else {
+        return false;
+    };
+
+    if let syn::Fields::Named(fields_named) = &parsed.fields {
+        for field in &fields_named.named {
+            let Some(field_ident) = &field.ident else {
+                continue;
+            };
+            if field_ident.to_string() != circular_field_name {
+                continue;
+            }
+
+            // Check if this is a HasOne/BelongsTo with required FK
+            let ty_str = quote::quote!(#field.ty).to_string().replace(' ', "");
+            if ty_str.contains("HasOne<") || ty_str.contains("BelongsTo<") {
+                // Check FK field optionality
+                let fk_field = extract_belongs_to_from_field(&field.attrs);
+                if let Some(fk) = fk_field {
+                    // Find FK field and check if it's Option
+                    for f in &fields_named.named {
+                        if f.ident.as_ref().map(|i| i.to_string()) == Some(fk.clone()) {
+                            return !is_option_type(&f.ty);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Generate a default value for a SeaORM relation field in inline construction.
+///
+/// - `HasMany<T>` → `vec![]`
+/// - `HasOne<T>`/`BelongsTo<T>` with optional FK → `None`
+/// - `HasOne<T>`/`BelongsTo<T>` with required FK → needs parent stub (handled separately)
+fn generate_default_for_relation_field(
+    ty: &Type,
+    field_ident: &syn::Ident,
+    field_attrs: &[syn::Attribute],
+    all_fields: &syn::FieldsNamed,
+) -> TokenStream {
+    let ty_str = quote::quote!(#ty).to_string().replace(' ', "");
+
+    // Check the SeaORM relation type
+    if ty_str.contains("HasMany<") {
+        // HasMany → Vec<Schema> → empty vec
+        quote! { #field_ident: vec![] }
+    } else if ty_str.contains("HasOne<") || ty_str.contains("BelongsTo<") {
+        // Check FK field optionality
+        let fk_field = extract_belongs_to_from_field(field_attrs);
+        let is_optional = fk_field
+            .as_ref()
+            .map(|fk| {
+                all_fields.named.iter().any(|f| {
+                    f.ident.as_ref().map(|i| i.to_string()) == Some(fk.clone())
+                        && is_option_type(&f.ty)
+                })
+            })
+            .unwrap_or(true);
+
+        if is_optional {
+            // Option<Box<Schema>> → None
+            quote! { #field_ident: None }
+        } else {
+            // Box<Schema> (required) → use __parent_stub__
+            // This variable will be defined by the caller when needed
+            quote! { #field_ident: Box::new(__parent_stub__.clone()) }
+        }
+    } else {
+        // Unknown relation type - try Default::default()
+        quote! { #field_ident: Default::default() }
+    }
+}
+
+/// Generate `from_model` impl for SeaORM Model WITH relations (async version).
+///
+/// When circular references are detected, generates inline struct construction
+/// that excludes circular fields (sets them to default values).
+///
+/// ```ignore
+/// impl NewType {
+///     pub async fn from_model(
+///         model: SourceType,
+///         db: &sea_orm::DatabaseConnection,
+///     ) -> Result<Self, sea_orm::DbErr> {
+///         // Load related entities
+///         let user = model.find_related(user::Entity).one(db).await?;
+///         let tags = model.find_related(tag::Entity).all(db).await?;
+///         
+///         Ok(Self {
+///             id: model.id,
+///             // Inline construction with circular field defaulted:
+///             user: user.map(|r| Box::new(user::Schema { id: r.id, memos: vec![], ... })),
+///             tags: tags.into_iter().map(|r| tag::Schema { ... }).collect(),
+///         })
+///     }
+/// }
+/// ```
+fn generate_from_model_with_relations(
+    new_type_name: &syn::Ident,
+    source_type: &Type,
+    field_mappings: &[(syn::Ident, syn::Ident, bool, bool)],
+    relation_fields: &[RelationFieldInfo],
+    source_module_path: &[String],
+    _schema_storage: &[StructMetadata],
+) -> TokenStream {
+    // Build relation loading statements
+    let relation_loads: Vec<TokenStream> = relation_fields
+        .iter()
+        .map(|rel| {
+            let field_name = &rel.field_name;
+            let entity_path =
+                build_entity_path_from_schema_path(&rel.schema_path, source_module_path);
+
+            match rel.relation_type.as_str() {
+                "HasOne" | "BelongsTo" => {
+                    // Load single related entity
+                    quote! {
+                        let #field_name = model.find_related(#entity_path).one(db).await?;
+                    }
+                }
+                "HasMany" => {
+                    // Load multiple related entities
+                    quote! {
+                        let #field_name = model.find_related(#entity_path).all(db).await?;
+                    }
+                }
+                _ => quote! {},
+            }
+        })
+        .collect();
+
+    // Check if we need a parent stub for HasMany relations with required circular back-refs
+    // This is needed when: UserSchema.memos has MemoSchema which has required user: Box<UserSchema>
+    let needs_parent_stub = relation_fields.iter().any(|rel| {
+        if rel.relation_type != "HasMany" {
+            return false;
+        }
+        let schema_path_str = rel.schema_path.to_string().replace(' ', "");
+        let model_path_str = schema_path_str.replace("::Schema", "::Model");
+        let related_model = find_struct_from_schema_path(&model_path_str);
+
+        if let Some(ref model) = related_model {
+            let circular_fields = detect_circular_fields(
+                new_type_name.to_string().as_str(),
+                source_module_path,
+                &model.definition,
+            );
+            // Check if any circular field is a required relation
+            circular_fields
+                .iter()
+                .any(|cf| is_circular_relation_required(&model.definition, cf))
+        } else {
+            false
+        }
+    });
+
+    // Generate parent stub field assignments (non-relation fields from model)
+    let parent_stub_fields: Vec<TokenStream> = if needs_parent_stub {
+        field_mappings
+            .iter()
+            .map(|(new_ident, source_ident, _wrapped, is_relation)| {
+                if *is_relation {
+                    // For relation fields in stub, use defaults
+                    if let Some(rel) = relation_fields
+                        .iter()
+                        .find(|r| &r.field_name == source_ident)
+                    {
+                        match rel.relation_type.as_str() {
+                            "HasMany" => quote! { #new_ident: vec![] },
+                            _ if rel.is_optional => quote! { #new_ident: None },
+                            // Required single relations in parent stub - this shouldn't happen
+                            // as we're creating stub to break circular ref
+                            _ => quote! { #new_ident: None },
+                        }
+                    } else {
+                        quote! { #new_ident: Default::default() }
+                    }
+                } else {
+                    // Regular field - clone from model
+                    quote! { #new_ident: model.#source_ident.clone() }
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // Build field assignments
+    // For relation fields, check for circular references and use inline construction if needed
+    let field_assignments: Vec<TokenStream> = field_mappings
+        .iter()
+        .map(|(new_ident, source_ident, wrapped, is_relation)| {
+            if *is_relation {
+                // Find the relation info for this field
+                if let Some(rel) = relation_fields.iter().find(|r| &r.field_name == source_ident) {
+                    let schema_path = &rel.schema_path;
+                    
+                    // Try to find the related MODEL definition to check for circular refs
+                    // The schema_path is like "crate::models::user::Schema", but the actual
+                    // struct is "Model" in the same module. We need to look up the Model
+                    // to see if it has relations pointing back to us.
+                    let schema_path_str = schema_path.to_string().replace(' ', "");
+                    
+                    // Convert schema path to model path: Schema -> Model
+                    let model_path_str = schema_path_str.replace("::Schema", "::Model");
+                    
+                    // Try to find the related Model definition from file
+                    let related_model_from_file = find_struct_from_schema_path(&model_path_str);
+                    
+                    // Get the definition string
+                    let related_def_str = related_model_from_file
+                        .as_ref()
+                        .map(|s| s.definition.as_str())
+                        .unwrap_or("");
+                    
+                    // Check for circular references
+                    // The source module path tells us what module we're in (e.g., ["crate", "models", "memo"])
+                    // We need to check if the related model has any relation fields pointing back to our module
+                    let circular_fields = detect_circular_fields(
+                        new_type_name.to_string().as_str(),
+                        source_module_path,
+                        related_def_str,
+                    );
+                    
+                    let has_circular = !circular_fields.is_empty();
+                    
+                    match rel.relation_type.as_str() {
+                        "HasOne" | "BelongsTo" => {
+                            if has_circular {
+                                // Use inline construction to break circular ref
+                                let inline_construct = generate_inline_struct_construction(
+                                    schema_path,
+                                    related_def_str,
+                                    &circular_fields,
+                                    "r",
+                                );
+                                if rel.is_optional {
+                                    quote! {
+                                        #new_ident: #source_ident.map(|r| Box::new(#inline_construct))
+                                    }
+                                } else {
+                                    quote! {
+                                        #new_ident: Box::new({
+                                            let r = #source_ident.ok_or_else(|| sea_orm::DbErr::RecordNotFound(
+                                                format!("Required relation '{}' not found", stringify!(#source_ident))
+                                            ))?;
+                                            #inline_construct
+                                        })
+                                    }
+                                }
+                            } else {
+                                // No circular ref - use From::from()
+                                if rel.is_optional {
+                                    quote! {
+                                        #new_ident: #source_ident.map(|r| Box::new(<#schema_path as From<_>>::from(r)))
+                                    }
+                                } else {
+                                    quote! {
+                                        #new_ident: Box::new(<#schema_path as From<_>>::from(
+                                            #source_ident.ok_or_else(|| sea_orm::DbErr::RecordNotFound(
+                                                format!("Required relation '{}' not found", stringify!(#source_ident))
+                                            ))?
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                        "HasMany" => {
+                            if has_circular {
+                                // Use inline construction to break circular ref
+                                let inline_construct = generate_inline_struct_construction(
+                                    schema_path,
+                                    related_def_str,
+                                    &circular_fields,
+                                    "r",
+                                );
+                                quote! {
+                                    #new_ident: #source_ident.into_iter().map(|r| #inline_construct).collect()
+                                }
+                            } else {
+                                quote! {
+                                    #new_ident: #source_ident.into_iter().map(|r| <#schema_path as From<_>>::from(r)).collect()
+                                }
+                            }
+                        }
+                        _ => quote! { #new_ident: Default::default() },
+                    }
+                } else {
+                    quote! { #new_ident: Default::default() }
+                }
+            } else if *wrapped {
+                quote! { #new_ident: Some(model.#source_ident) }
+            } else {
+                quote! { #new_ident: model.#source_ident }
+            }
+        })
+        .collect();
+
+    // Circular references are now handled automatically via inline construction
+    // For HasMany with required circular back-refs, we create a parent stub first
+
+    // Generate parent stub definition if needed
+    let parent_stub_def = if needs_parent_stub {
+        quote! {
+            #[allow(unused_variables)]
+            let __parent_stub__ = Self {
+                #(#parent_stub_fields),*
+            };
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        impl #new_type_name {
+            pub async fn from_model(
+                model: #source_type,
+                db: &sea_orm::DatabaseConnection,
+            ) -> Result<Self, sea_orm::DbErr> {
+                use sea_orm::ModelTrait;
+
+                #(#relation_loads)*
+
+                #parent_stub_def
+
+                Ok(Self {
+                    #(#field_assignments),*
+                })
+            }
+        }
+    }
+}
+
+/// Build Entity path from Schema path.
+/// e.g., `crate::models::user::Schema` -> `crate::models::user::Entity`
+fn build_entity_path_from_schema_path(
+    schema_path: &TokenStream,
+    _source_module_path: &[String],
+) -> TokenStream {
+    // Parse the schema path to extract segments
+    let path_str = schema_path.to_string();
+    let segments: Vec<&str> = path_str.split("::").map(|s| s.trim()).collect();
+
+    // Replace "Schema" with "Entity" in the last segment
+    let entity_segments: Vec<String> = segments
+        .iter()
+        .map(|s| {
+            if *s == "Schema" {
+                "Entity".to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .collect();
+
+    // Build the path tokens
+    let path_idents: Vec<syn::Ident> = entity_segments
+        .iter()
+        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+        .collect();
+
+    quote! { #(#path_idents)::* }
+}
+
 /// Generate a new struct type from an existing type with field filtering
+///
+/// Returns (TokenStream, Option<StructMetadata>) where the metadata is returned
+/// when a custom `name` is provided (for direct registration in SCHEMA_STORAGE).
 pub fn generate_schema_type_code(
     input: &SchemaTypeInput,
     schema_storage: &[StructMetadata],
-) -> Result<TokenStream, syn::Error> {
+) -> Result<(TokenStream, Option<StructMetadata>), syn::Error> {
     // Extract type name from the source Type
     let source_type_name = extract_type_name(&input.source_type)?;
 
-    // Find struct definition in storage first (for same-file structs)
+    // Extract the module path for resolving relative paths in relation types
+    let source_module_path = extract_module_path(&input.source_type);
+
+    // Find struct definition - lookup order depends on whether path is qualified
+    // For qualified paths (crate::models::memo::Model), try file lookup FIRST
+    // to avoid name collisions when multiple modules have same struct name (e.g., Model)
     let struct_def_owned: StructMetadata;
-    let struct_def = if let Some(found) = schema_storage.iter().find(|s| s.name == source_type_name)
-    {
-        found
-    } else if let Some(found) = find_struct_from_path(&input.source_type) {
-        // Try to find from file path (for cross-file structs like models::memo::Model)
-        struct_def_owned = found;
-        &struct_def_owned
+    let struct_def = if is_qualified_path(&input.source_type) {
+        // Qualified path: try file lookup first, then storage
+        if let Some(found) = find_struct_from_path(&input.source_type) {
+            struct_def_owned = found;
+            &struct_def_owned
+        } else if let Some(found) = schema_storage.iter().find(|s| s.name == source_type_name) {
+            found
+        } else {
+            return Err(syn::Error::new_spanned(
+                &input.source_type,
+                format!(
+                    "type `{}` not found. Either:\n\
+                     1. Use #[derive(Schema)] in the same file\n\
+                     2. Use full module path like `crate::models::memo::Model` to reference a struct from another file",
+                    source_type_name
+                ),
+            ));
+        }
     } else {
-        return Err(syn::Error::new_spanned(
-            &input.source_type,
-            format!(
-                "type `{}` not found. Either:\n\
-                 1. Use #[derive(Schema)] in the same file\n\
-                 2. Use full module path like `crate::models::memo::Model` to reference a struct from another file",
-                source_type_name
-            ),
-        ));
+        // Simple name: try storage first (for same-file structs), then file lookup
+        if let Some(found) = schema_storage.iter().find(|s| s.name == source_type_name) {
+            found
+        } else if let Some(found) = find_struct_from_path(&input.source_type) {
+            struct_def_owned = found;
+            &struct_def_owned
+        } else {
+            return Err(syn::Error::new_spanned(
+                &input.source_type,
+                format!(
+                    "type `{}` not found. Either:\n\
+                     1. Use #[derive(Schema)] in the same file\n\
+                     2. Use full module path like `crate::models::memo::Model` to reference a struct from another file",
+                    source_type_name
+                ),
+            ));
+        }
     };
 
     // Parse the struct definition
@@ -689,6 +1730,7 @@ pub fn generate_schema_type_code(
     })?;
 
     // Extract all field names from source struct for validation
+    // Include relation fields since they can be converted to Schema types
     let source_field_names: HashSet<String> =
         if let syn::Fields::Named(fields_named) = &parsed_struct.fields {
             fields_named
@@ -790,18 +1832,47 @@ pub fn generate_schema_type_code(
         .into_iter()
         .collect();
 
-    // Extract serde attributes from source struct
-    let serde_attrs: Vec<_> = parsed_struct
+    // Extract serde attributes from source struct, excluding rename_all (we'll handle it separately)
+    let serde_attrs_without_rename_all: Vec<_> = parsed_struct
         .attrs
         .iter()
-        .filter(|attr| attr.path().is_ident("serde"))
+        .filter(|attr| {
+            if !attr.path().is_ident("serde") {
+                return false;
+            }
+            // Check if this serde attr contains rename_all
+            let mut has_rename_all = false;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("rename_all") {
+                    has_rename_all = true;
+                }
+                Ok(())
+            });
+            !has_rename_all
+        })
         .collect();
+
+    // Determine the rename_all strategy:
+    // 1. If input.rename_all is specified, use it
+    // 2. Else if source has rename_all, use it
+    // 3. Else default to "camelCase"
+    let effective_rename_all = if let Some(ref ra) = input.rename_all {
+        ra.clone()
+    } else {
+        // Check source struct for existing rename_all
+        extract_rename_all(&parsed_struct.attrs).unwrap_or_else(|| "camelCase".to_string())
+    };
+
+    // Check if source is a SeaORM Model
+    let is_source_seaorm_model = is_seaorm_model(&parsed_struct);
 
     // Generate new struct with filtered fields
     let new_type_name = &input.new_type;
     let mut field_tokens = Vec::new();
-    // Track field mappings for From impl: (new_field_ident, source_field_ident, wrapped_in_option)
-    let mut field_mappings: Vec<(syn::Ident, syn::Ident, bool)> = Vec::new();
+    // Track field mappings for From impl: (new_field_ident, source_field_ident, wrapped_in_option, is_relation)
+    let mut field_mappings: Vec<(syn::Ident, syn::Ident, bool, bool)> = Vec::new();
+    // Track relation field info for from_model generation
+    let mut relation_fields: Vec<RelationFieldInfo> = Vec::new();
 
     if let syn::Fields::Named(fields_named) = &parsed_struct.fields {
         for field in &fields_named.named {
@@ -821,15 +1892,41 @@ pub fn generate_schema_type_code(
                 continue;
             }
 
+            // Check if this is a SeaORM relation type
+            let is_relation = is_seaorm_relation_type(&field.ty);
+
             // Get field components, applying partial wrapping if needed
             let original_ty = &field.ty;
             let should_wrap_option = (partial_all || partial_set.contains(&rust_field_name))
-                && !is_option_type(original_ty);
-            let field_ty: Box<dyn quote::ToTokens> = if should_wrap_option {
-                Box::new(quote! { Option<#original_ty> })
-            } else {
-                Box::new(quote! { #original_ty })
-            };
+                && !is_option_type(original_ty)
+                && !is_relation; // Don't wrap relations in another Option
+
+            // Determine field type: convert relation types to Schema types
+            let (field_ty, relation_info): (Box<dyn quote::ToTokens>, Option<RelationFieldInfo>) =
+                if is_relation {
+                    // Convert HasOne/HasMany/BelongsTo to Schema type
+                    if let Some((converted, rel_info)) = convert_relation_type_to_schema_with_info(
+                        original_ty,
+                        &field.attrs,
+                        &parsed_struct,
+                        &source_module_path,
+                        field.ident.clone().unwrap(),
+                    ) {
+                        (Box::new(converted), Some(rel_info))
+                    } else {
+                        // Fallback: skip if conversion fails
+                        continue;
+                    }
+                } else if should_wrap_option {
+                    (Box::new(quote! { Option<#original_ty> }), None)
+                } else {
+                    (Box::new(quote! { #original_ty }), None)
+                };
+
+            // Collect relation info
+            if let Some(info) = relation_info {
+                relation_fields.push(info);
+            }
             let vis = &field.vis;
             let source_field_ident = field.ident.clone().unwrap();
 
@@ -875,7 +1972,12 @@ pub fn generate_schema_type_code(
                 });
 
                 // Track mapping: new field name <- source field name
-                field_mappings.push((new_field_ident, source_field_ident, should_wrap_option));
+                field_mappings.push((
+                    new_field_ident,
+                    source_field_ident,
+                    should_wrap_option,
+                    is_relation,
+                ));
             } else {
                 // No rename, keep field with only serde attrs
                 let field_ident = field.ident.clone().unwrap();
@@ -886,7 +1988,12 @@ pub fn generate_schema_type_code(
                 });
 
                 // Track mapping: same name
-                field_mappings.push((field_ident.clone(), field_ident, should_wrap_option));
+                field_mappings.push((
+                    field_ident.clone(),
+                    field_ident,
+                    should_wrap_option,
+                    is_relation,
+                ));
             }
         }
     }
@@ -908,12 +2015,30 @@ pub fn generate_schema_type_code(
         quote! {}
     };
 
-    // Generate From impl only if `add` is not used (can't auto-populate added fields)
+    // Conditionally include Schema derive based on ignore_schema flag
+    // Also generate #[schema(name = "...")] attribute if custom name is provided AND Schema is derived
+    let (schema_derive, schema_name_attr) = if input.ignore_schema {
+        (quote! {}, quote! {})
+    } else if let Some(ref name) = input.schema_name {
+        (
+            quote! { vespera::Schema },
+            quote! { #[schema(name = #name)] },
+        )
+    } else {
+        (quote! { vespera::Schema }, quote! {})
+    };
+
+    // Check if there are any relation fields
+    let has_relation_fields = field_mappings.iter().any(|(_, _, _, is_rel)| *is_rel);
+
+    // Generate From impl only if:
+    // 1. `add` is not used (can't auto-populate added fields)
+    // 2. There are no relation fields (relation fields don't exist on source Model)
     let source_type = &input.source_type;
-    let from_impl = if input.add.is_none() {
+    let from_impl = if input.add.is_none() && !has_relation_fields {
         let field_assignments: Vec<_> = field_mappings
             .iter()
-            .map(|(new_ident, source_ident, wrapped)| {
+            .map(|(new_ident, source_ident, wrapped, _is_relation)| {
                 if *wrapped {
                     quote! { #new_ident: Some(source.#source_ident) }
                 } else {
@@ -935,16 +2060,56 @@ pub fn generate_schema_type_code(
         quote! {}
     };
 
+    // Generate from_model impl for SeaORM Models WITH relations
+    // - No relations: Use `From` trait (generated above)
+    // - Has relations: async fn from_model(model: Model, db: &DatabaseConnection) -> Result<Self, DbErr>
+    let from_model_impl = if is_source_seaorm_model && input.add.is_none() && has_relation_fields {
+        generate_from_model_with_relations(
+            new_type_name,
+            source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            schema_storage,
+        )
+    } else {
+        quote! {}
+    };
+
     // Generate the new struct
-    Ok(quote! {
-        #[derive(serde::Serialize, serde::Deserialize, #clone_derive vespera::Schema)]
-        #(#serde_attrs)*
+    let generated_tokens = quote! {
+        #[derive(serde::Serialize, serde::Deserialize, #clone_derive #schema_derive)]
+        #schema_name_attr
+        #[serde(rename_all = #effective_rename_all)]
+        #(#serde_attrs_without_rename_all)*
         pub struct #new_type_name {
             #(#field_tokens),*
         }
 
         #from_impl
-    })
+        #from_model_impl
+    };
+
+    // If custom name is provided, create metadata for direct registration
+    // This ensures the schema appears in OpenAPI even when `ignore` is set
+    let metadata = if let Some(ref custom_name) = input.schema_name {
+        // Build struct definition string for metadata (without derives/attrs for parsing)
+        let struct_def = quote! {
+            #[serde(rename_all = #effective_rename_all)]
+            #(#serde_attrs_without_rename_all)*
+            pub struct #new_type_name {
+                #(#field_tokens),*
+            }
+        };
+        Some(StructMetadata::new(
+            custom_name.clone(),
+            struct_def.to_string(),
+        ))
+    } else {
+        None
+    };
+
+    Ok((generated_tokens, metadata))
 }
 
 #[cfg(test)]
@@ -1174,7 +2339,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         // id and name should be wrapped in Option, bio already Option stays unchanged
         assert!(output.contains("Option < i32 >"));
         assert!(output.contains("Option < String >"));
@@ -1192,7 +2358,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         // name should be Option<String>, but id and email should remain unwrapped
         assert!(output.contains("UpdateUser"));
     }
@@ -1226,7 +2393,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         // From impl should wrap values in Some()
         assert!(output.contains("Some (source . id)"));
         assert!(output.contains("Some (source . name)"));
@@ -1599,7 +2767,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         assert!(output.contains("CreateUser"));
         assert!(output.contains("name"));
     }
@@ -1616,7 +2785,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         assert!(output.contains("SafeUser"));
         // Should not contain password
         assert!(!output.contains("password"));
@@ -1634,7 +2804,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         assert!(output.contains("UserWithExtra"));
         assert!(output.contains("extra"));
     }
@@ -1652,7 +2823,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         assert!(output.contains("impl From"));
         assert!(output.contains("for UserResponse"));
     }
@@ -1670,7 +2842,8 @@ mod tests {
         let result = generate_schema_type_code(&input, &storage);
 
         assert!(result.is_ok());
-        let output = result.unwrap().to_string();
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
         // Should NOT contain From impl when add is used
         assert!(!output.contains("impl From"));
     }

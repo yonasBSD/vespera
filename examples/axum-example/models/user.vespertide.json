@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dev-five-git/vespertide/refs/heads/main/schemas/model.schema.json",
+  "name": "user",
+  "columns": [
+    { "name": "id", "type": "integer", "nullable": false, "primary_key": { "auto_increment": true } },
+    { "name": "email", "type": "text", "nullable": false, "unique": true, "index": true },
+    { "name": "name", "type": { "kind": "varchar", "length": 100 }, "nullable": false },
+    { "name": "created_at", "type": "timestamptz", "nullable": false, "default": "NOW()" },
+    { "name": "updated_at", "type": "timestamptz", "nullable": false, "default": "NOW()" }
+  ]
+}
