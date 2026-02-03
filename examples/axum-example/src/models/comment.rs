@@ -21,9 +21,8 @@ pub struct Model {
     pub memo: HasOne<super::memo::Entity>,
 }
 
-vespera::schema_type!(Schema from Model, name = "CommentSchema");
-
 // Index definitions (SeaORM uses Statement builders externally)
 // (unnamed) on [user_id]
 // (unnamed) on [memo_id]
+vespera::schema_type!(Schema from Model, name = "CommentSchema");
 impl ActiveModelBehavior for ActiveModel {}

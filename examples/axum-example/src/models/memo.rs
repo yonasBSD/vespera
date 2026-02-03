@@ -37,10 +37,7 @@ pub struct Model {
     pub comments: HasMany<super::comment::Entity>,
 }
 
-// Schema WITH user relation - has async from_model(model, db) method
-// Circular refs auto-handled: when loading user, its memos field is set to vec![]
-vespera::schema_type!(Schema from Model, name = "MemoSchema");
-
 // Index definitions (SeaORM uses Statement builders externally)
 // (unnamed) on [user_id]
+vespera::schema_type!(Schema from Model, name = "MemoSchema");
 impl ActiveModelBehavior for ActiveModel {}

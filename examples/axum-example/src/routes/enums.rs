@@ -17,6 +17,7 @@ pub async fn enum_endpoint() -> Json<Enum> {
     Json(Enum::A)
 }
 
+/// Enum2 Description
 #[derive(Serialize, Deserialize, Schema)]
 pub enum Enum2 {
     A(String),

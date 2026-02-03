@@ -3,6 +3,33 @@ use std::collections::{BTreeMap, HashMap};
 use syn::{Fields, Type};
 use vespera_core::schema::{Reference, Schema, SchemaRef, SchemaType};
 
+/// Extract doc comments from attributes.
+/// Returns concatenated doc comment string or None if no doc comments.
+pub fn extract_doc_comment(attrs: &[syn::Attribute]) -> Option<String> {
+    let mut doc_lines = Vec::new();
+
+    for attr in attrs {
+        if attr.path().is_ident("doc")
+            && let syn::Meta::NameValue(meta_nv) = &attr.meta
+            && let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(lit_str),
+                ..
+            }) = &meta_nv.value
+        {
+            let line = lit_str.value();
+            // Trim leading space that rustdoc adds
+            let trimmed = line.strip_prefix(' ').unwrap_or(&line);
+            doc_lines.push(trimmed.to_string());
+        }
+    }
+
+    if doc_lines.is_empty() {
+        None
+    } else {
+        Some(doc_lines.join("\n"))
+    }
+}
+
 /// Strips the `r#` prefix from raw identifiers.
 /// E.g., `r#type` becomes `type`.
 pub fn strip_raw_prefix(ident: &str) -> &str {
@@ -437,6 +464,9 @@ pub fn parse_enum_to_schema(
     known_schemas: &HashMap<String, String>,
     struct_definitions: &HashMap<String, String>,
 ) -> Schema {
+    // Extract enum-level doc comment for schema description
+    let enum_description = extract_doc_comment(&enum_item.attrs);
+
     // Extract rename_all attribute from enum
     let rename_all = extract_rename_all(&enum_item.attrs);
 
@@ -466,6 +496,7 @@ pub fn parse_enum_to_schema(
 
         Schema {
             schema_type: Some(SchemaType::String),
+            description: enum_description,
             r#enum: if enum_values.is_empty() {
                 None
             } else {
@@ -488,10 +519,14 @@ pub fn parse_enum_to_schema(
                 rename_field(&variant_name, rename_all.as_deref())
             };
 
+            // Extract variant-level doc comment
+            let variant_description = extract_doc_comment(&variant.attrs);
+
             let variant_schema = match &variant.fields {
                 syn::Fields::Unit => {
                     // Unit variant: {"const": "VariantName"}
                     Schema {
+                        description: variant_description,
                         r#enum: Some(vec![serde_json::Value::String(variant_key)]),
                         ..Schema::string()
                     }
@@ -510,6 +545,7 @@ pub fn parse_enum_to_schema(
                         properties.insert(variant_key.clone(), inner_schema);
 
                         Schema {
+                            description: variant_description.clone(),
                             properties: Some(properties),
                             required: Some(vec![variant_key]),
                             ..Schema::object()
@@ -546,6 +582,7 @@ pub fn parse_enum_to_schema(
                         );
 
                         Schema {
+                            description: variant_description.clone(),
                             properties: Some(properties),
                             required: Some(vec![variant_key]),
                             ..Schema::object()
@@ -577,8 +614,30 @@ pub fn parse_enum_to_schema(
                         };
 
                         let field_type = &field.ty;
-                        let schema_ref =
+                        let mut schema_ref =
                             parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
+
+                        // Extract doc comment from field and set as description
+                        if let Some(doc) = extract_doc_comment(&field.attrs) {
+                            match &mut schema_ref {
+                                SchemaRef::Inline(schema) => {
+                                    schema.description = Some(doc);
+                                }
+                                SchemaRef::Ref(_) => {
+                                    let ref_schema = std::mem::replace(
+                                        &mut schema_ref,
+                                        SchemaRef::Inline(Box::new(Schema::object())),
+                                    );
+                                    if let SchemaRef::Ref(reference) = ref_schema {
+                                        schema_ref = SchemaRef::Inline(Box::new(Schema {
+                                            description: Some(doc),
+                                            all_of: Some(vec![SchemaRef::Ref(reference)]),
+                                            ..Default::default()
+                                        }));
+                                    }
+                                }
+                            }
+                        }
 
                         variant_properties.insert(field_name.clone(), schema_ref);
 
@@ -621,6 +680,7 @@ pub fn parse_enum_to_schema(
                     );
 
                     Schema {
+                        description: variant_description,
                         properties: Some(properties),
                         required: Some(vec![variant_key]),
                         ..Schema::object()
@@ -633,6 +693,7 @@ pub fn parse_enum_to_schema(
 
         Schema {
             schema_type: None, // oneOf doesn't have a single type
+            description: enum_description,
             one_of: if one_of_schemas.is_empty() {
                 None
             } else {
@@ -650,6 +711,9 @@ pub fn parse_struct_to_schema(
 ) -> Schema {
     let mut properties = BTreeMap::new();
     let mut required = Vec::new();
+
+    // Extract struct-level doc comment for schema description
+    let struct_description = extract_doc_comment(&struct_item.attrs);
 
     // Extract rename_all attribute from struct
     let rename_all = extract_rename_all(&struct_item.attrs);
@@ -680,6 +744,31 @@ pub fn parse_struct_to_schema(
 
                 let mut schema_ref =
                     parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
+
+                // Extract doc comment from field and set as description
+                if let Some(doc) = extract_doc_comment(&field.attrs) {
+                    match &mut schema_ref {
+                        SchemaRef::Inline(schema) => {
+                            schema.description = Some(doc);
+                        }
+                        SchemaRef::Ref(_) => {
+                            // For $ref schemas, we need to wrap in an allOf to add description
+                            // OpenAPI 3.1 allows siblings to $ref, so we can add description directly
+                            // by converting to inline schema with description + allOf[$ref]
+                            let ref_schema = std::mem::replace(
+                                &mut schema_ref,
+                                SchemaRef::Inline(Box::new(Schema::object())),
+                            );
+                            if let SchemaRef::Ref(reference) = ref_schema {
+                                schema_ref = SchemaRef::Inline(Box::new(Schema {
+                                    description: Some(doc),
+                                    all_of: Some(vec![SchemaRef::Ref(reference)]),
+                                    ..Default::default()
+                                }));
+                            }
+                        }
+                    }
+                }
 
                 // Check for default attribute
                 let has_default = extract_default(&field.attrs).is_some();
@@ -727,6 +816,7 @@ pub fn parse_struct_to_schema(
 
     Schema {
         schema_type: Some(SchemaType::Object),
+        description: struct_description,
         properties: if properties.is_empty() {
             None
         } else {
@@ -2846,5 +2936,219 @@ mod tests {
 
         let result = rename_field("get_user_by_id", Some("camelCase"));
         assert_eq!(result, "getUserById");
+    }
+
+    // Tests for extract_doc_comment function
+    #[test]
+    fn test_extract_doc_comment_single_line() {
+        let attrs: Vec<syn::Attribute> = syn::parse_quote! {
+            #[doc = " This is a doc comment"]
+        };
+        let result = extract_doc_comment(&attrs);
+        assert_eq!(result, Some("This is a doc comment".to_string()));
+    }
+
+    #[test]
+    fn test_extract_doc_comment_multi_line() {
+        let attrs: Vec<syn::Attribute> = syn::parse_quote! {
+            #[doc = " First line"]
+            #[doc = " Second line"]
+            #[doc = " Third line"]
+        };
+        let result = extract_doc_comment(&attrs);
+        assert_eq!(
+            result,
+            Some("First line\nSecond line\nThird line".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_doc_comment_no_leading_space() {
+        let attrs: Vec<syn::Attribute> = syn::parse_quote! {
+            #[doc = "No leading space"]
+        };
+        let result = extract_doc_comment(&attrs);
+        assert_eq!(result, Some("No leading space".to_string()));
+    }
+
+    #[test]
+    fn test_extract_doc_comment_empty() {
+        let attrs: Vec<syn::Attribute> = vec![];
+        let result = extract_doc_comment(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_doc_comment_with_non_doc_attrs() {
+        let attrs: Vec<syn::Attribute> = syn::parse_quote! {
+            #[derive(Debug)]
+            #[doc = " The doc comment"]
+            #[serde(rename = "test")]
+        };
+        let result = extract_doc_comment(&attrs);
+        assert_eq!(result, Some("The doc comment".to_string()));
+    }
+
+    // Tests for extract_schema_name_from_entity function
+    #[test]
+    fn test_extract_schema_name_from_entity_super_path() {
+        let ty: Type = syn::parse_str("super::user::Entity").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, Some("User".to_string()));
+    }
+
+    #[test]
+    fn test_extract_schema_name_from_entity_crate_path() {
+        let ty: Type = syn::parse_str("crate::models::memo::Entity").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, Some("Memo".to_string()));
+    }
+
+    #[test]
+    fn test_extract_schema_name_from_entity_not_entity() {
+        let ty: Type = syn::parse_str("crate::models::user::Model").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_schema_name_from_entity_single_segment() {
+        let ty: Type = syn::parse_str("Entity").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_schema_name_from_entity_non_path_type() {
+        let ty: Type = syn::parse_str("&str").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_schema_name_from_entity_empty_module_name() {
+        // Tests the branch where module name has no characters (edge case)
+        let ty: Type = syn::parse_str("super::some_module::Entity").unwrap();
+        let result = extract_schema_name_from_entity(&ty);
+        assert_eq!(result, Some("Some_module".to_string()));
+    }
+
+    // Tests for enum with doc comments on variants
+    #[test]
+    fn test_parse_enum_to_schema_with_variant_descriptions() {
+        let enum_src = r#"
+            /// Enum description
+            enum Status {
+                /// Active variant
+                Active,
+                /// Inactive variant
+                Inactive,
+            }
+        "#;
+        let enum_item: syn::ItemEnum = syn::parse_str(enum_src).unwrap();
+        let schema = parse_enum_to_schema(&enum_item, &HashMap::new(), &HashMap::new());
+        assert_eq!(schema.description, Some("Enum description".to_string()));
+    }
+
+    #[test]
+    fn test_parse_enum_to_schema_data_variant_with_description() {
+        let enum_src = r#"
+            /// Data enum
+            enum Event {
+                /// Text event description
+                Text(String),
+                /// Number event description
+                Number(i32),
+            }
+        "#;
+        let enum_item: syn::ItemEnum = syn::parse_str(enum_src).unwrap();
+        let schema = parse_enum_to_schema(&enum_item, &HashMap::new(), &HashMap::new());
+        assert_eq!(schema.description, Some("Data enum".to_string()));
+        assert!(schema.one_of.is_some());
+        let one_of = schema.one_of.unwrap();
+        assert_eq!(one_of.len(), 2);
+        // Check first variant has description
+        if let SchemaRef::Inline(variant_schema) = &one_of[0] {
+            assert_eq!(
+                variant_schema.description,
+                Some("Text event description".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_enum_to_schema_struct_variant_with_field_docs() {
+        let enum_src = r#"
+            enum Event {
+                /// Record variant
+                Record {
+                    /// The value field
+                    value: i32,
+                    /// The name field
+                    name: String,
+                },
+            }
+        "#;
+        let enum_item: syn::ItemEnum = syn::parse_str(enum_src).unwrap();
+        let schema = parse_enum_to_schema(&enum_item, &HashMap::new(), &HashMap::new());
+        assert!(schema.one_of.is_some());
+        let one_of = schema.one_of.unwrap();
+        if let SchemaRef::Inline(variant_schema) = &one_of[0] {
+            assert_eq!(
+                variant_schema.description,
+                Some("Record variant".to_string())
+            );
+        }
+    }
+
+    // Tests for struct with doc comments
+    #[test]
+    fn test_parse_struct_to_schema_with_description() {
+        let struct_src = r#"
+            /// User struct description
+            struct User {
+                /// User ID
+                id: i32,
+                /// User name
+                name: String,
+            }
+        "#;
+        let struct_item: syn::ItemStruct = syn::parse_str(struct_src).unwrap();
+        let schema = parse_struct_to_schema(&struct_item, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            schema.description,
+            Some("User struct description".to_string())
+        );
+        // Check field descriptions
+        let props = schema.properties.unwrap();
+        if let SchemaRef::Inline(id_schema) = props.get("id").unwrap() {
+            assert_eq!(id_schema.description, Some("User ID".to_string()));
+        }
+        if let SchemaRef::Inline(name_schema) = props.get("name").unwrap() {
+            assert_eq!(name_schema.description, Some("User name".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_field_with_ref_and_description() {
+        let struct_src = r#"
+            struct Container {
+                /// The user reference
+                user: User,
+            }
+        "#;
+        let struct_item: syn::ItemStruct = syn::parse_str(struct_src).unwrap();
+        let mut known = HashMap::new();
+        known.insert("User".to_string(), "struct User { id: i32 }".to_string());
+        let schema = parse_struct_to_schema(&struct_item, &known, &HashMap::new());
+        let props = schema.properties.unwrap();
+        // Field with $ref and description should use allOf
+        if let SchemaRef::Inline(user_schema) = props.get("user").unwrap() {
+            assert_eq!(
+                user_schema.description,
+                Some("The user reference".to_string())
+            );
+            assert!(user_schema.all_of.is_some());
+        }
     }
 }
