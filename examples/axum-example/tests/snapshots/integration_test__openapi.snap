@@ -1616,6 +1616,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "CreateUserRequest": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "email": {
             "type": "string"
@@ -1631,6 +1632,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "CreateUserWithMeta": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "createdAt": {
             "type": "string",
@@ -1661,6 +1663,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         ]
       },
       "Enum2": {
+        "description": "Enum2 Description",
         "oneOf": [
           {
             "type": "object",
@@ -2408,6 +2411,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "User": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "email": {
             "type": "string"
@@ -2417,6 +2421,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           },
           "internal_score": {
             "type": "integer",
+            "description": "Internal field - should be omitted in public APIs",
             "nullable": true
           },
           "name": {
@@ -2431,6 +2436,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "UserDTO": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "id": {
             "type": "integer"
@@ -2446,6 +2452,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "UserPublicResponse": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "email": {
             "type": "string"
@@ -2465,23 +2472,29 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "UserSchema": {
         "type": "object",
+        "description": "User model",
         "properties": {
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Created at"
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "description": "User email"
           },
           "id": {
-            "type": "integer"
+            "type": "integer",
+            "description": "User ID"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "User name"
           },
           "updatedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Updated at"
           }
         },
         "required": [
@@ -2494,6 +2507,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "UserSummary": {
         "type": "object",
+        "description": "Full user model with all fields",
         "properties": {
           "id": {
             "type": "integer"
