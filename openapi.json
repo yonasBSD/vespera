@@ -703,6 +703,33 @@
         }
       }
     },
+    "/memos/{id}/rel": {
+      "get": {
+        "operationId": "get_memo_rel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoResponseRel"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/no-schema-query": {
       "get": {
         "operationId": "mod_file_with_no_schema_query",
@@ -1302,6 +1329,47 @@
   },
   "components": {
     "schemas": {
+      "CommentSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "memo": {
+            "$ref": "#/components/schemas/MemoSchema"
+          },
+          "memoId": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "memoId",
+          "content",
+          "createdAt",
+          "updatedAt",
+          "user",
+          "memo"
+        ]
+      },
       "ComplexStructBody": {
         "type": "object",
         "properties": {
@@ -1560,7 +1628,7 @@
       "CreateUserWithMeta": {
         "type": "object",
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "nullable": true
           },
@@ -1570,14 +1638,14 @@
           "name": {
             "type": "string"
           },
-          "request_id": {
+          "requestId": {
             "type": "string"
           }
         },
         "required": [
           "name",
           "email",
-          "request_id"
+          "requestId"
         ]
       },
       "Enum": {
@@ -1905,6 +1973,159 @@
           "content": {
             "type": "string"
           },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemoStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "status",
+          "createdAt"
+        ]
+      },
+      "MemoResponseComments": {
+        "type": "object",
+        "properties": {
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoResponseComments_Comments"
+            }
+          }
+        },
+        "required": [
+          "comments"
+        ]
+      },
+      "MemoResponseComments_Comments": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "memoId": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "memoId",
+          "content",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "MemoResponseRel": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemoStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "status",
+          "createdAt",
+          "user"
+        ]
+      },
+      "MemoSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemoStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSchema"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "content",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "user"
+        ]
+      },
+      "MemoSnakeCase": {
+        "type": "object",
+        "properties": {
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -1912,15 +2133,22 @@
           "id": {
             "type": "integer"
           },
-          "title": {
-            "type": "string"
+          "user_id": {
+            "type": "integer"
           }
         },
         "required": [
           "id",
-          "title",
-          "content",
+          "user_id",
           "created_at"
+        ]
+      },
+      "MemoStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "published",
+          "archived"
         ]
       },
       "PaginatedResponse": {
@@ -2229,6 +2457,35 @@
           "id",
           "name",
           "email"
+        ]
+      },
+      "UserSchema": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "createdAt",
+          "updatedAt"
         ]
       },
       "UserSummary": {
