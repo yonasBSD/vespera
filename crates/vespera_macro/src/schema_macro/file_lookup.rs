@@ -995,4 +995,44 @@ pub const NOT_STRUCT: i32 = 1;
         assert!(result.is_some(), "Should find Model");
         assert!(result.unwrap().definition.contains("Model"));
     }
+
+    #[test]
+    #[serial]
+    fn test_find_struct_disambiguation_fallback_contains() {
+        // Tests: No exact match, but fallback "contains" finds exactly one match
+        // This covers lines 169-174 (the fallback contains path)
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::create_dir(src_dir.join("models")).unwrap();
+        // No file named exactly "special.rs", but "special_item.rs" contains "special"
+        std::fs::write(
+            src_dir.join("models").join("special_item.rs"),
+            "pub struct Model { pub special_field: i32 }",
+        )
+        .unwrap();
+        // Another file that doesn't match
+        std::fs::write(
+            src_dir.join("models").join("regular.rs"),
+            "pub struct Model { pub regular_field: String }",
+        )
+        .unwrap();
+
+        // With hint "SpecialSchema" -> prefix "special"
+        // No exact match (no "special.rs"), but "special_item.rs" contains "special"
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("SpecialSchema"));
+        assert!(
+            result.is_some(),
+            "SpecialSchema hint should match special_item.rs via contains fallback"
+        );
+        let (metadata, module_path) = result.unwrap();
+        assert!(
+            metadata.definition.contains("special_field"),
+            "Should be special_item Model with special_field"
+        );
+        assert!(
+            module_path.contains(&"special_item".to_string()),
+            "Module path should contain 'special_item'"
+        );
+    }
 }
