@@ -206,3 +206,244 @@ pub fn capitalize_first(s: &str) -> String {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("hello", "Hello")]
+    #[case("world", "World")]
+    #[case("", "")]
+    #[case("a", "A")]
+    #[case("ABC", "ABC")]
+    #[case("camelCase", "CamelCase")]
+    fn test_capitalize_first(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(capitalize_first(input), expected);
+    }
+
+    #[rstest]
+    #[case("bool", true)]
+    #[case("i32", true)]
+    #[case("String", true)]
+    #[case("Vec", true)]
+    #[case("Option", true)]
+    #[case("HashMap", true)]
+    #[case("DateTime", true)]
+    #[case("Uuid", true)]
+    #[case("DateTimeWithTimeZone", true)]
+    #[case("CustomType", false)]
+    #[case("MyStruct", false)]
+    fn test_is_primitive_or_known_type(#[case] name: &str, #[case] expected: bool) {
+        assert_eq!(is_primitive_or_known_type(name), expected);
+    }
+
+    #[test]
+    fn test_extract_type_name_simple() {
+        let ty: syn::Type = syn::parse_str("User").unwrap();
+        let name = extract_type_name(&ty).unwrap();
+        assert_eq!(name, "User");
+    }
+
+    #[test]
+    fn test_extract_type_name_with_path() {
+        let ty: syn::Type = syn::parse_str("crate::models::User").unwrap();
+        let name = extract_type_name(&ty).unwrap();
+        assert_eq!(name, "User");
+    }
+
+    #[test]
+    fn test_extract_type_name_non_path_error() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        let result = extract_type_name(&ty);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_qualified_path_simple() {
+        let ty: syn::Type = syn::parse_str("User").unwrap();
+        assert!(!is_qualified_path(&ty));
+    }
+
+    #[test]
+    fn test_is_qualified_path_crate_path() {
+        let ty: syn::Type = syn::parse_str("crate::models::User").unwrap();
+        assert!(is_qualified_path(&ty));
+    }
+
+    #[test]
+    fn test_is_qualified_path_non_path_type() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        assert!(!is_qualified_path(&ty));
+    }
+
+    #[test]
+    fn test_is_option_type_true() {
+        let ty: syn::Type = syn::parse_str("Option<String>").unwrap();
+        assert!(is_option_type(&ty));
+    }
+
+    #[test]
+    fn test_is_option_type_false() {
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn test_is_option_type_vec_false() {
+        let ty: syn::Type = syn::parse_str("Vec<String>").unwrap();
+        assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_has_one() {
+        let ty: syn::Type = syn::parse_str("HasOne<User>").unwrap();
+        assert!(is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_has_many() {
+        let ty: syn::Type = syn::parse_str("HasMany<Post>").unwrap();
+        assert!(is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_belongs_to() {
+        let ty: syn::Type = syn::parse_str("BelongsTo<User>").unwrap();
+        assert!(is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_regular_type() {
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        assert!(!is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_non_path() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        assert!(!is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_model_with_sea_orm_attr() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            #[sea_orm(table_name = "users")]
+            struct Model {
+                id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(is_seaorm_model(&struct_item));
+    }
+
+    #[test]
+    fn test_is_seaorm_model_with_qualified_attr() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            #[sea_orm::model]
+            struct Model {
+                id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(is_seaorm_model(&struct_item));
+    }
+
+    #[test]
+    fn test_is_seaorm_model_regular_struct() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            #[derive(Debug)]
+            struct User {
+                id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(!is_seaorm_model(&struct_item));
+    }
+
+    #[test]
+    fn test_extract_module_path_simple() {
+        let ty: syn::Type = syn::parse_str("User").unwrap();
+        let result = extract_module_path(&ty);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_module_path_qualified() {
+        let ty: syn::Type = syn::parse_str("crate::models::user::Model").unwrap();
+        let result = extract_module_path(&ty);
+        assert_eq!(result, vec!["crate", "models", "user"]);
+    }
+
+    #[test]
+    fn test_extract_module_path_non_path_type() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        let result = extract_module_path(&ty);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_non_path_type() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        let module_path = vec!["crate".to_string(), "models".to_string()];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.contains("& str"));
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_already_qualified() {
+        let ty: syn::Type = syn::parse_str("crate::models::User").unwrap();
+        let module_path = vec!["crate".to_string(), "other".to_string()];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.contains("crate :: models :: User"));
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_primitive() {
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        let module_path = vec!["crate".to_string(), "models".to_string()];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "String");
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_custom_type() {
+        let ty: syn::Type = syn::parse_str("MemoStatus").unwrap();
+        let module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "memo".to_string(),
+        ];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.contains("crate :: models :: memo :: MemoStatus"));
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_empty_module() {
+        let ty: syn::Type = syn::parse_str("CustomType").unwrap();
+        let module_path: Vec<String> = vec![];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "CustomType");
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_with_generics() {
+        let ty: syn::Type = syn::parse_str("CustomType<T>").unwrap();
+        let module_path = vec!["crate".to_string(), "models".to_string()];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.contains("crate :: models :: CustomType < T >"));
+    }
+}

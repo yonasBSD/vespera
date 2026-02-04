@@ -13,18 +13,13 @@ mod input;
 mod seaorm;
 mod type_utils;
 
-#[cfg(test)]
-mod tests;
-
 use std::collections::HashSet;
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::metadata::StructMetadata;
-use crate::parser::{
-    extract_field_rename, extract_rename_all, strip_raw_prefix,
-};
+use crate::parser::{extract_field_rename, extract_rename_all, strip_raw_prefix};
 
 pub use input::{PartialMode, SchemaInput, SchemaTypeInput};
 
@@ -35,10 +30,12 @@ use inline_types::{
     generate_inline_relation_type, generate_inline_relation_type_no_relations,
     generate_inline_type_definition,
 };
-use seaorm::{convert_relation_type_to_schema_with_info, convert_type_with_chrono, RelationFieldInfo};
+use seaorm::{
+    RelationFieldInfo, convert_relation_type_to_schema_with_info, convert_type_with_chrono,
+};
 use type_utils::{
-    extract_module_path, extract_type_name, is_option_type, is_qualified_path,
-    is_seaorm_model, is_seaorm_relation_type,
+    extract_module_path, extract_type_name, is_option_type, is_qualified_path, is_seaorm_model,
+    is_seaorm_relation_type,
 };
 
 /// Generate schema code from a struct with optional field filtering
@@ -635,4 +632,350 @@ pub fn generate_schema_type_code(
     };
 
     Ok((generated_tokens, metadata))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_struct_metadata(name: &str, definition: &str) -> StructMetadata {
+        StructMetadata::new(name.to_string(), definition.to_string())
+    }
+
+    #[test]
+    fn test_generate_schema_code_simple_struct() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(User);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let output = result.unwrap().to_string();
+        assert!(output.contains("properties"));
+        assert!(output.contains("Schema"));
+    }
+
+    #[test]
+    fn test_generate_schema_code_with_omit() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String, pub password: String }",
+        )];
+
+        let tokens = quote!(User, omit = ["password"]);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let output = result.unwrap().to_string();
+        assert!(output.contains("properties"));
+    }
+
+    #[test]
+    fn test_generate_schema_code_with_pick() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String, pub email: String }",
+        )];
+
+        let tokens = quote!(User, pick = ["id", "name"]);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let output = result.unwrap().to_string();
+        assert!(output.contains("properties"));
+    }
+
+    #[test]
+    fn test_generate_schema_code_type_not_found() {
+        let storage: Vec<StructMetadata> = vec![];
+
+        let tokens = quote!(NonExistent);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn test_generate_schema_code_malformed_definition() {
+        let storage = vec![create_test_struct_metadata(
+            "BadStruct",
+            "this is not valid rust code {{{",
+        )];
+
+        let tokens = quote!(BadStruct);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed to parse"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_pick_nonexistent_field() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(NewUser from User, pick = ["nonexistent"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_omit_nonexistent_field() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(NewUser from User, omit = ["nonexistent"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_rename_nonexistent_field() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(NewUser from User, rename = [("nonexistent", "new_name")]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_type_not_found() {
+        let storage: Vec<StructMetadata> = vec![];
+
+        let tokens = quote!(NewUser from NonExistent);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_success() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(CreateUser from User, pick = ["name"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("CreateUser"));
+        assert!(output.contains("name"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_with_omit() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String, pub password: String }",
+        )];
+
+        let tokens = quote!(SafeUser from User, omit = ["password"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("SafeUser"));
+        assert!(!output.contains("password"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_with_add() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(UserWithExtra from User, add = [("extra": String)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("UserWithExtra"));
+        assert!(output.contains("extra"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_generates_from_impl() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(UserResponse from User, pick = ["id", "name"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("impl From"));
+        assert!(output.contains("for UserResponse"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_no_from_impl_with_add() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(UserWithExtra from User, add = [("extra": String)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(!output.contains("impl From"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_with_partial_all() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String, pub bio: Option<String> }",
+        )];
+
+        let tokens = quote!(UpdateUser from User, partial);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("Option < i32 >"));
+        assert!(output.contains("Option < String >"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_with_partial_fields() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String, pub email: String }",
+        )];
+
+        let tokens = quote!(UpdateUser from User, partial = ["name"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("UpdateUser"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_partial_nonexistent_field() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(UpdateUser from User, partial = ["nonexistent"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_partial_from_impl_wraps_some() {
+        let storage = vec![create_test_struct_metadata(
+            "User",
+            "pub struct User { pub id: i32, pub name: String }",
+        )];
+
+        let tokens = quote!(UpdateUser from User, partial);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("Some (source . id)"));
+        assert!(output.contains("Some (source . name)"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_preserves_struct_doc() {
+        let input = SchemaTypeInput {
+            new_type: syn::Ident::new("NewUser", proc_macro2::Span::call_site()),
+            source_type: syn::parse_str("User").unwrap(),
+            omit: None,
+            pick: None,
+            rename: None,
+            add: None,
+            derive_clone: true,
+            partial: None,
+            schema_name: None,
+            ignore_schema: false,
+            rename_all: None,
+        };
+        let struct_def = StructMetadata {
+            name: "User".to_string(),
+            definition: r#"
+                /// User struct documentation
+                pub struct User {
+                    /// The user ID
+                    pub id: i32,
+                    /// The user name
+                    pub name: String,
+                }
+            "#
+            .to_string(),
+            include_in_openapi: true,
+        };
+        let result = generate_schema_type_code(&input, &[struct_def]);
+        assert!(result.is_ok());
+        let (tokens, _) = result.unwrap();
+        let tokens_str = tokens.to_string();
+        assert!(tokens_str.contains("User struct documentation") || tokens_str.contains("doc"));
+    }
 }

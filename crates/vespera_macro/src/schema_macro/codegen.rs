@@ -208,3 +208,228 @@ pub fn schema_to_tokens(schema: &Schema) -> TokenStream {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use vespera_core::schema::{Reference, Schema, SchemaRef, SchemaType};
+
+    #[test]
+    fn test_generate_filtered_schema_empty_properties() {
+        let struct_item: syn::ItemStruct = syn::parse_str("pub struct Empty {}").unwrap();
+        let omit_set = HashSet::new();
+        let pick_set = HashSet::new();
+        let result = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        assert!(result.is_ok());
+        let output = result.unwrap().to_string();
+        assert!(output.contains("properties"));
+    }
+
+    #[test]
+    fn test_generate_filtered_schema_with_default_field() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            pub struct WithDefault {
+                #[serde(default)]
+                pub field: String,
+            }
+        "#,
+        )
+        .unwrap();
+        let omit_set = HashSet::new();
+        let pick_set = HashSet::new();
+        let result = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        assert!(result.is_ok());
+        let output = result.unwrap().to_string();
+        assert!(output.contains("None"));
+    }
+
+    #[test]
+    fn test_generate_filtered_schema_with_skip_serializing_if() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            pub struct WithSkip {
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pub field: String,
+            }
+        "#,
+        )
+        .unwrap();
+        let omit_set = HashSet::new();
+        let pick_set = HashSet::new();
+        let result = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_filtered_schema_tuple_struct() {
+        let struct_item: syn::ItemStruct =
+            syn::parse_str("pub struct Tuple(i32, String);").unwrap();
+        let omit_set = HashSet::new();
+        let pick_set = HashSet::new();
+        let result = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_schema_ref_to_tokens_ref_variant() {
+        let schema_ref = SchemaRef::Ref(Reference::new("#/components/schemas/User".to_string()));
+        let tokens = schema_ref_to_tokens(&schema_ref);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaRef :: Ref"));
+        assert!(output.contains("Reference :: new"));
+    }
+
+    #[test]
+    fn test_schema_ref_to_tokens_inline_variant() {
+        let schema = Schema::new(SchemaType::String);
+        let schema_ref = SchemaRef::Inline(Box::new(schema));
+        let tokens = schema_ref_to_tokens(&schema_ref);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaRef :: Inline"));
+        assert!(output.contains("Box :: new"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_string_type() {
+        let schema = Schema::new(SchemaType::String);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: String"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_integer_type() {
+        let schema = Schema::new(SchemaType::Integer);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Integer"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_number_type() {
+        let schema = Schema::new(SchemaType::Number);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Number"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_boolean_type() {
+        let schema = Schema::new(SchemaType::Boolean);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Boolean"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_array_type() {
+        let schema = Schema::new(SchemaType::Array);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Array"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_object_type() {
+        let schema = Schema::new(SchemaType::Object);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Object"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_null_type() {
+        let schema = Schema::new(SchemaType::Null);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("SchemaType :: Null"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_none_type() {
+        let schema = Schema {
+            schema_type: None,
+            ..Default::default()
+        };
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("schema_type : None"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_format() {
+        let mut schema = Schema::new(SchemaType::String);
+        schema.format = Some("date-time".to_string());
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("date-time"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_nullable() {
+        let mut schema = Schema::new(SchemaType::String);
+        schema.nullable = Some(true);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("Some (true)"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_nullable_false() {
+        let mut schema = Schema::new(SchemaType::String);
+        schema.nullable = Some(false);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("Some (false)"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_ref_path() {
+        let mut schema = Schema::new(SchemaType::Object);
+        schema.ref_path = Some("#/components/schemas/User".to_string());
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("#/components/schemas/User"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_items() {
+        let mut schema = Schema::new(SchemaType::Array);
+        let item_schema = Schema::new(SchemaType::String);
+        schema.items = Some(Box::new(SchemaRef::Inline(Box::new(item_schema))));
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("items"));
+        assert!(output.contains("Some (Box :: new"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_properties() {
+        use std::collections::BTreeMap;
+
+        let mut schema = Schema::new(SchemaType::Object);
+        let mut props = BTreeMap::new();
+        props.insert(
+            "name".to_string(),
+            SchemaRef::Inline(Box::new(Schema::new(SchemaType::String))),
+        );
+        schema.properties = Some(props);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("properties"));
+        assert!(output.contains("name"));
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_required() {
+        let mut schema = Schema::new(SchemaType::Object);
+        schema.required = Some(vec!["id".to_string(), "name".to_string()]);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(output.contains("required"));
+        assert!(output.contains("id"));
+        assert!(output.contains("name"));
+    }
+}

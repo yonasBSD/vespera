@@ -380,3 +380,82 @@ pub fn find_model_from_schema_path(schema_path_str: &str) -> Option<StructMetada
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_file_path_to_module_path_simple() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+        let file_path = src_dir.join("models").join("user.rs");
+        let result = file_path_to_module_path(&file_path, src_dir);
+        assert_eq!(result, vec!["crate", "models", "user"]);
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_mod_rs() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+        let file_path = src_dir.join("models").join("mod.rs");
+        let result = file_path_to_module_path(&file_path, src_dir);
+        assert_eq!(result, vec!["crate", "models"]);
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_lib_rs() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+        let file_path = src_dir.join("lib.rs");
+        let result = file_path_to_module_path(&file_path, src_dir);
+        assert_eq!(result, vec!["crate"]);
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_not_under_src() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let file_path = temp_dir.path().join("other").join("file.rs");
+        let result = file_path_to_module_path(&file_path, &src_dir);
+        assert_eq!(result, vec!["crate"]);
+    }
+
+    #[test]
+    fn test_collect_rs_files_recursive_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut files = Vec::new();
+        collect_rs_files_recursive(temp_dir.path(), &mut files);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_rs_files_recursive_nonexistent_dir() {
+        let mut files = Vec::new();
+        collect_rs_files_recursive(Path::new("/nonexistent/path"), &mut files);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_rs_files_recursive_with_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create some .rs files
+        std::fs::write(temp_dir.path().join("main.rs"), "fn main() {}").unwrap();
+        std::fs::create_dir(temp_dir.path().join("models")).unwrap();
+        std::fs::write(
+            temp_dir.path().join("models").join("user.rs"),
+            "struct User;",
+        )
+        .unwrap();
+        std::fs::write(temp_dir.path().join("other.txt"), "not a rust file").unwrap();
+
+        let mut files = Vec::new();
+        collect_rs_files_recursive(temp_dir.path(), &mut files);
+
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|f| f.extension().unwrap() == "rs"));
+    }
+}

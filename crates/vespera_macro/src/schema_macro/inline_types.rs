@@ -223,3 +223,58 @@ pub fn generate_inline_type_definition(inline_type: &InlineRelationType) -> Toke
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_inline_type_definition() {
+        let inline_type = InlineRelationType {
+            type_name: syn::Ident::new("UserInline", proc_macro2::Span::call_site()),
+            fields: vec![
+                InlineField {
+                    name: syn::Ident::new("id", proc_macro2::Span::call_site()),
+                    ty: quote!(i32),
+                    attrs: vec![],
+                },
+                InlineField {
+                    name: syn::Ident::new("name", proc_macro2::Span::call_site()),
+                    ty: quote!(String),
+                    attrs: vec![],
+                },
+            ],
+            rename_all: "camelCase".to_string(),
+        };
+
+        let tokens = generate_inline_type_definition(&inline_type);
+        let output = tokens.to_string();
+
+        assert!(output.contains("pub struct UserInline"));
+        assert!(output.contains("pub id : i32"));
+        assert!(output.contains("pub name : String"));
+        assert!(output.contains("serde :: Serialize"));
+        assert!(output.contains("serde :: Deserialize"));
+        assert!(output.contains("vespera :: Schema"));
+        assert!(output.contains("camelCase"));
+    }
+
+    #[test]
+    fn test_generate_inline_type_definition_with_attrs() {
+        let inline_type = InlineRelationType {
+            type_name: syn::Ident::new("TestType", proc_macro2::Span::call_site()),
+            fields: vec![InlineField {
+                name: syn::Ident::new("field", proc_macro2::Span::call_site()),
+                ty: quote!(String),
+                attrs: vec![syn::parse_quote!(#[serde(rename = "renamed")])],
+            }],
+            rename_all: "snake_case".to_string(),
+        };
+
+        let tokens = generate_inline_type_definition(&inline_type);
+        let output = tokens.to_string();
+
+        assert!(output.contains("TestType"));
+        assert!(output.contains("snake_case"));
+    }
+}

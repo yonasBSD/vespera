@@ -321,3 +321,320 @@ pub fn generate_inline_type_construction(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        "Memo",
+        &["crate", "models", "memo"],
+        r#"pub struct UserSchema {
+            pub id: i32,
+            pub memos: HasMany<memo::Entity>,
+        }"#,
+        vec![]  // HasMany is not considered circular
+    )]
+    #[case(
+        "User",
+        &["crate", "models", "user"],
+        r#"pub struct MemoSchema {
+            pub id: i32,
+            pub user: BelongsTo<user::Entity>,
+        }"#,
+        vec!["user".to_string()]
+    )]
+    #[case(
+        "User",
+        &["crate", "models", "user"],
+        r#"pub struct MemoSchema {
+            pub id: i32,
+            pub user: HasOne<user::Entity>,
+        }"#,
+        vec!["user".to_string()]
+    )]
+    #[case(
+        "User",
+        &["crate", "models", "user"],
+        r#"pub struct MemoSchema {
+            pub id: i32,
+            pub user: Box<user::Schema>,
+        }"#,
+        vec!["user".to_string()]
+    )]
+    #[case(
+        "Memo",
+        &["crate", "models", "memo"],
+        r#"pub struct UserSchema {
+            pub id: i32,
+            pub name: String,
+        }"#,
+        vec![]  // No circular fields
+    )]
+    fn test_detect_circular_fields(
+        #[case] source_schema_name: &str,
+        #[case] source_module_path: &[&str],
+        #[case] related_schema_def: &str,
+        #[case] expected: Vec<String>,
+    ) {
+        let module_path: Vec<String> = source_module_path.iter().map(|s| s.to_string()).collect();
+        let result = detect_circular_fields(source_schema_name, &module_path, related_schema_def);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_detect_circular_fields_invalid_struct() {
+        let result = detect_circular_fields("Test", &["crate".to_string()], "not valid rust");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_detect_circular_fields_unnamed_fields() {
+        let result = detect_circular_fields(
+            "Test",
+            &[
+                "crate".to_string(),
+                "models".to_string(),
+                "test".to_string(),
+            ],
+            "pub struct TupleStruct(i32, String);",
+        );
+        assert!(result.is_empty());
+    }
+
+    #[rstest]
+    #[case(
+        r#"pub struct Model {
+            pub id: i32,
+            pub user: BelongsTo<user::Entity>,
+        }"#,
+        true
+    )]
+    #[case(
+        r#"pub struct Model {
+            pub id: i32,
+            pub user: HasOne<user::Entity>,
+        }"#,
+        true
+    )]
+    #[case(
+        r#"pub struct Model {
+            pub id: i32,
+            pub name: String,
+        }"#,
+        false
+    )]
+    #[case(
+        r#"pub struct Model {
+            pub id: i32,
+            pub items: HasMany<item::Entity>,
+        }"#,
+        false  // HasMany alone doesn't count as FK relation
+    )]
+    fn test_has_fk_relations(#[case] model_def: &str, #[case] expected: bool) {
+        assert_eq!(has_fk_relations(model_def), expected);
+    }
+
+    #[test]
+    fn test_has_fk_relations_invalid_struct() {
+        assert!(!has_fk_relations("not valid rust"));
+    }
+
+    #[test]
+    fn test_has_fk_relations_unnamed_fields() {
+        assert!(!has_fk_relations("pub struct TupleStruct(i32, String);"));
+    }
+
+    #[test]
+    fn test_is_circular_relation_required_invalid_struct() {
+        assert!(!is_circular_relation_required("not valid rust", "user"));
+    }
+
+    #[test]
+    fn test_is_circular_relation_required_unnamed_fields() {
+        assert!(!is_circular_relation_required(
+            "pub struct TupleStruct(i32, String);",
+            "user"
+        ));
+    }
+
+    #[test]
+    fn test_is_circular_relation_required_field_not_found() {
+        let model_def = r#"pub struct Model {
+            pub id: i32,
+            pub name: String,
+        }"#;
+        assert!(!is_circular_relation_required(model_def, "nonexistent"));
+    }
+
+    #[test]
+    fn test_generate_default_for_relation_field_has_many() {
+        let ty: syn::Type = syn::parse_str("HasMany<user::Entity>").unwrap();
+        let field_ident = syn::Ident::new("users", proc_macro2::Span::call_site());
+        let all_fields: syn::FieldsNamed = syn::parse_str("{ pub id: i32 }").unwrap();
+        let tokens = generate_default_for_relation_field(&ty, &field_ident, &[], &all_fields);
+        let output = tokens.to_string();
+        assert!(output.contains("users : vec ! []"));
+    }
+
+    #[test]
+    fn test_generate_default_for_relation_field_has_one_optional() {
+        let ty: syn::Type = syn::parse_str("HasOne<user::Entity>").unwrap();
+        let field_ident = syn::Ident::new("user", proc_macro2::Span::call_site());
+        let all_fields: syn::FieldsNamed = syn::parse_str("{ pub user_id: Option<i32> }").unwrap();
+        let tokens = generate_default_for_relation_field(&ty, &field_ident, &[], &all_fields);
+        let output = tokens.to_string();
+        assert!(output.contains("user : None"));
+    }
+
+    #[test]
+    fn test_generate_default_for_relation_field_unknown_type() {
+        let ty: syn::Type = syn::parse_str("SomeUnknownType<T>").unwrap();
+        let field_ident = syn::Ident::new("field", proc_macro2::Span::call_site());
+        let all_fields: syn::FieldsNamed = syn::parse_str("{ pub id: i32 }").unwrap();
+        let tokens = generate_default_for_relation_field(&ty, &field_ident, &[], &all_fields);
+        let output = tokens.to_string();
+        assert!(output.contains("Default :: default ()"));
+    }
+
+    #[test]
+    fn test_generate_inline_struct_construction_invalid_struct() {
+        let schema_path = quote! { user::Schema };
+        let tokens =
+            generate_inline_struct_construction(&schema_path, "not valid rust", &[], "model");
+        let output = tokens.to_string();
+        assert!(output.contains("From"));
+    }
+
+    #[test]
+    fn test_generate_inline_struct_construction_tuple_struct() {
+        let schema_path = quote! { user::Schema };
+        let tokens = generate_inline_struct_construction(
+            &schema_path,
+            "pub struct TupleStruct(i32, String);",
+            &[],
+            "model",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("From"));
+    }
+
+    #[test]
+    fn test_generate_inline_struct_construction_with_fields() {
+        let schema_path = quote! { user::Schema };
+        let tokens = generate_inline_struct_construction(
+            &schema_path,
+            r#"pub struct UserSchema {
+                pub id: i32,
+                pub name: String,
+            }"#,
+            &[],
+            "r",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("user :: Schema"));
+        assert!(output.contains("id : r . id"));
+        assert!(output.contains("name : r . name"));
+    }
+
+    #[test]
+    fn test_generate_inline_struct_construction_with_circular_field() {
+        let schema_path = quote! { user::Schema };
+        let tokens = generate_inline_struct_construction(
+            &schema_path,
+            r#"pub struct UserSchema {
+                pub id: i32,
+                pub memos: HasMany<memo::Entity>,
+            }"#,
+            &["memos".to_string()],
+            "r",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("user :: Schema"));
+        assert!(output.contains("id : r . id"));
+        assert!(output.contains("memos : vec ! []"));
+    }
+
+    #[test]
+    fn test_generate_inline_struct_construction_skip_serde_skip_fields() {
+        let schema_path = quote! { user::Schema };
+        let tokens = generate_inline_struct_construction(
+            &schema_path,
+            r#"pub struct UserSchema {
+                pub id: i32,
+                #[serde(skip)]
+                pub internal: String,
+            }"#,
+            &[],
+            "r",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("id : r . id"));
+        assert!(!output.contains("internal : r . internal"));
+    }
+
+    #[test]
+    fn test_generate_inline_type_construction_invalid_struct() {
+        let inline_type_name = syn::Ident::new("TestInline", proc_macro2::Span::call_site());
+        let tokens = generate_inline_type_construction(
+            &inline_type_name,
+            &["id".to_string()],
+            "not valid rust",
+            "model",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("Default :: default ()"));
+    }
+
+    #[test]
+    fn test_generate_inline_type_construction_tuple_struct() {
+        let inline_type_name = syn::Ident::new("TestInline", proc_macro2::Span::call_site());
+        let tokens = generate_inline_type_construction(
+            &inline_type_name,
+            &["id".to_string()],
+            "pub struct TupleStruct(i32, String);",
+            "model",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("Default :: default ()"));
+    }
+
+    #[test]
+    fn test_generate_inline_type_construction_with_fields() {
+        let inline_type_name = syn::Ident::new("UserInline", proc_macro2::Span::call_site());
+        let tokens = generate_inline_type_construction(
+            &inline_type_name,
+            &["id".to_string(), "name".to_string()],
+            r#"pub struct Model {
+                pub id: i32,
+                pub name: String,
+                pub email: String,
+            }"#,
+            "r",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("UserInline"));
+        assert!(output.contains("id : r . id"));
+        assert!(output.contains("name : r . name"));
+        assert!(!output.contains("email : r . email"));
+    }
+
+    #[test]
+    fn test_generate_inline_type_construction_skips_relations() {
+        let inline_type_name = syn::Ident::new("UserInline", proc_macro2::Span::call_site());
+        let tokens = generate_inline_type_construction(
+            &inline_type_name,
+            &["id".to_string(), "memos".to_string()],
+            r#"pub struct Model {
+                pub id: i32,
+                pub memos: HasMany<memo::Entity>,
+            }"#,
+            "r",
+        );
+        let output = tokens.to_string();
+        assert!(output.contains("id : r . id"));
+        assert!(!output.contains("memos : r . memos"));
+    }
+}

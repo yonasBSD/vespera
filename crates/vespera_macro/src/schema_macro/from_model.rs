@@ -368,3 +368,29 @@ pub fn generate_from_model_with_relations(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_entity_path_from_schema_path() {
+        let schema_path = quote! { crate::models::user::Schema };
+        let result = build_entity_path_from_schema_path(&schema_path, &[]);
+        let output = result.to_string();
+        assert!(output.contains("crate"));
+        assert!(output.contains("models"));
+        assert!(output.contains("user"));
+        assert!(output.contains("Entity"));
+        assert!(!output.contains("Schema"));
+    }
+
+    #[test]
+    fn test_build_entity_path_simple() {
+        let schema_path = quote! { user::Schema };
+        let result = build_entity_path_from_schema_path(&schema_path, &[]);
+        let output = result.to_string();
+        assert!(output.contains("user"));
+        assert!(output.contains("Entity"));
+    }
+}

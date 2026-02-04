@@ -3,7 +3,7 @@
 //! Defines input structures for `schema!` and `schema_type!` macros.
 
 use syn::punctuated::Punctuated;
-use syn::{bracketed, parenthesized, parse::Parse, parse::ParseStream, Ident, LitStr, Token, Type};
+use syn::{Ident, LitStr, Token, Type, bracketed, parenthesized, parse::Parse, parse::ParseStream};
 
 /// Input for the schema! macro
 ///
@@ -312,5 +312,295 @@ impl Parse for SchemaTypeInput {
             schema_name,
             rename_all,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_schema_input_simple() {
+        let tokens = quote::quote!(User);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        assert!(input.omit.is_none());
+        assert!(input.pick.is_none());
+    }
+
+    #[test]
+    fn test_parse_schema_input_with_omit() {
+        let tokens = quote::quote!(User, omit = ["password", "secret"]);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let omit = input.omit.unwrap();
+        assert_eq!(omit, vec!["password", "secret"]);
+    }
+
+    #[test]
+    fn test_parse_schema_input_with_pick() {
+        let tokens = quote::quote!(User, pick = ["id", "name"]);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        let pick = input.pick.unwrap();
+        assert_eq!(pick, vec!["id", "name"]);
+    }
+
+    #[test]
+    fn test_parse_schema_input_omit_and_pick_error() {
+        let tokens = quote::quote!(User, omit = ["a"], pick = ["b"]);
+        let result: syn::Result<SchemaInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_schema_input_trailing_comma() {
+        let tokens = quote::quote!(User, omit = ["password"],);
+        let input: SchemaInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.omit.unwrap(), vec!["password"]);
+    }
+
+    #[test]
+    fn test_parse_schema_input_unknown_param() {
+        let tokens = quote::quote!(User, unknown = ["a"]);
+        let result: syn::Result<SchemaInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("unknown parameter"));
+        }
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_simple() {
+        let tokens = quote::quote!(CreateUser from User);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.new_type.to_string(), "CreateUser");
+        assert!(input.omit.is_none());
+        assert!(input.pick.is_none());
+        assert!(input.rename.is_none());
+        assert!(input.derive_clone);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_pick() {
+        let tokens = quote::quote!(CreateUser from User, pick = ["name", "email"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.new_type.to_string(), "CreateUser");
+        let pick = input.pick.unwrap();
+        assert_eq!(pick, vec!["name", "email"]);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_rename() {
+        let tokens =
+            quote::quote!(UserDTO from User, rename = [("id", "user_id"), ("name", "full_name")]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.new_type.to_string(), "UserDTO");
+        let rename = input.rename.unwrap();
+        assert_eq!(rename.len(), 2);
+        assert_eq!(rename[0], ("id".to_string(), "user_id".to_string()));
+        assert_eq!(rename[1], ("name".to_string(), "full_name".to_string()));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_single_rename() {
+        let tokens = quote::quote!(UserDTO from User, rename = [("id", "user_id")]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let rename = input.rename.unwrap();
+        assert_eq!(rename.len(), 1);
+        assert_eq!(rename[0], ("id".to_string(), "user_id".to_string()));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_pick_and_rename() {
+        let tokens =
+            quote::quote!(UserDTO from User, pick = ["id", "name"], rename = [("id", "user_id")]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["id", "name"]);
+        assert_eq!(
+            input.rename.unwrap(),
+            vec![("id".to_string(), "user_id".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_omit_and_rename() {
+        let tokens =
+            quote::quote!(UserPublic from User, omit = ["password"], rename = [("id", "user_id")]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.omit.unwrap(), vec!["password"]);
+        assert_eq!(
+            input.rename.unwrap(),
+            vec![("id".to_string(), "user_id".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_clone_false() {
+        let tokens = quote::quote!(NonCloneUser from User, clone = false);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(!input.derive_clone);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_unknown_param_error() {
+        let tokens = quote::quote!(UserDTO from User, unknown = ["a"]);
+        let result: syn::Result<SchemaTypeInput> = syn::parse2(tokens);
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.to_string().contains("unknown parameter")),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_add_single() {
+        let tokens = quote::quote!(UserWithTimestamp from User, add = [("created_at": String)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.new_type.to_string(), "UserWithTimestamp");
+        let add = input.add.unwrap();
+        assert_eq!(add.len(), 1);
+        assert_eq!(add[0].0, "created_at");
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_add_multiple() {
+        let tokens = quote::quote!(UserWithMeta from User, add = [("created_at": String), ("updated_at": Option<String>)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let add = input.add.unwrap();
+        assert_eq!(add.len(), 2);
+        assert_eq!(add[0].0, "created_at");
+        assert_eq!(add[1].0, "updated_at");
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_pick_and_add() {
+        let tokens = quote::quote!(CreateUserWithMeta from User, pick = ["name", "email"], add = [("request_id": String)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["name", "email"]);
+        let add = input.add.unwrap();
+        assert_eq!(add.len(), 1);
+        assert_eq!(add[0].0, "request_id");
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_omit_and_add() {
+        let tokens = quote::quote!(UserPublicWithMeta from User, omit = ["password"], add = [("display_name": String)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.omit.unwrap(), vec!["password"]);
+        let add = input.add.unwrap();
+        assert_eq!(add.len(), 1);
+        assert_eq!(add[0].0, "display_name");
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_add_complex_type() {
+        let tokens = quote::quote!(UserWithVec from User, add = [("tags": Vec<String>)]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let add = input.add.unwrap();
+        assert_eq!(add.len(), 1);
+        assert_eq!(add[0].0, "tags");
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_partial_all() {
+        let tokens = quote::quote!(UpdateUser from User, partial);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(matches!(input.partial, Some(PartialMode::All)));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_partial_fields() {
+        let tokens = quote::quote!(UpdateUser from User, partial = ["name", "email"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        match input.partial {
+            Some(PartialMode::Fields(fields)) => {
+                assert_eq!(fields, vec!["name", "email"]);
+            }
+            _ => panic!("Expected PartialMode::Fields"),
+        }
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_pick_and_partial() {
+        let tokens = quote::quote!(UpdateUser from User, pick = ["name", "email"], partial);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["name", "email"]);
+        assert!(matches!(input.partial, Some(PartialMode::All)));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_pick_and_partial_fields() {
+        let tokens =
+            quote::quote!(UpdateUser from User, pick = ["name", "email"], partial = ["name"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["name", "email"]);
+        match input.partial {
+            Some(PartialMode::Fields(fields)) => {
+                assert_eq!(fields, vec!["name"]);
+            }
+            _ => panic!("Expected PartialMode::Fields"),
+        }
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_ignore() {
+        let tokens = quote::quote!(NewType from User, ignore);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.ignore_schema);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_name() {
+        let tokens = quote::quote!(NewType from User, name = "CustomName");
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.schema_name.as_deref(), Some("CustomName"));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_name_and_ignore() {
+        let tokens = quote::quote!(NewType from User, name = "CustomName", ignore);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.schema_name.as_deref(), Some("CustomName"));
+        assert!(input.ignore_schema);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_rename_all() {
+        let tokens = quote::quote!(NewType from User, rename_all = "snake_case");
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.rename_all.as_deref(), Some("snake_case"));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_rename_all_with_other_params() {
+        let tokens =
+            quote::quote!(NewType from User, pick = ["id", "name"], rename_all = "snake_case");
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["id", "name"]);
+        assert_eq!(input.rename_all.as_deref(), Some("snake_case"));
+    }
+
+    #[test]
+    fn test_parse_schema_type_multiple_commas_trailing() {
+        let tokens = quote::quote!(NewType from User, pick = ["id"],);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["id"]);
+    }
+
+    #[test]
+    fn test_parse_schema_type_all_parameters() {
+        let tokens = quote::quote!(
+            NewType from User,
+            pick = ["id", "name"],
+            rename = [("id", "user_id")],
+            clone = false,
+            partial,
+            name = "CustomName",
+            rename_all = "snake_case"
+        );
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.pick.unwrap(), vec!["id", "name"]);
+        assert!(!input.derive_clone);
+        assert!(input.partial.is_some());
+        assert_eq!(input.schema_name.as_deref(), Some("CustomName"));
+        assert_eq!(input.rename_all.as_deref(), Some("snake_case"));
     }
 }

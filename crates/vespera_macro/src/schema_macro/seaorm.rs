@@ -439,3 +439,150 @@ pub fn convert_relation_type_to_schema(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        "DateTimeWithTimeZone",
+        "vespera :: chrono :: DateTime < vespera :: chrono :: FixedOffset >"
+    )]
+    #[case(
+        "DateTimeUtc",
+        "vespera :: chrono :: DateTime < vespera :: chrono :: Utc >"
+    )]
+    #[case(
+        "DateTimeLocal",
+        "vespera :: chrono :: DateTime < vespera :: chrono :: Local >"
+    )]
+    fn test_convert_seaorm_type_to_chrono(#[case] input: &str, #[case] expected_contains: &str) {
+        let ty: syn::Type = syn::parse_str(input).unwrap();
+        let tokens = convert_seaorm_type_to_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert!(output.contains(expected_contains));
+    }
+
+    #[test]
+    fn test_convert_seaorm_type_to_chrono_non_path_type() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        let tokens = convert_seaorm_type_to_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert!(output.contains("& str"));
+    }
+
+    #[test]
+    fn test_convert_seaorm_type_to_chrono_regular_type() {
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        let tokens = convert_seaorm_type_to_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "String");
+    }
+
+    #[test]
+    fn test_convert_type_with_chrono_option_datetime() {
+        let ty: syn::Type = syn::parse_str("Option<DateTimeWithTimeZone>").unwrap();
+        let tokens = convert_type_with_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert!(output.contains("Option <"));
+        assert!(output.contains("vespera :: chrono :: DateTime"));
+    }
+
+    #[test]
+    fn test_convert_type_with_chrono_vec_datetime() {
+        let ty: syn::Type = syn::parse_str("Vec<DateTimeWithTimeZone>").unwrap();
+        let tokens = convert_type_with_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert!(output.contains("Vec <"));
+        assert!(output.contains("vespera :: chrono :: DateTime"));
+    }
+
+    #[test]
+    fn test_convert_type_with_chrono_plain_type() {
+        let ty: syn::Type = syn::parse_str("i32").unwrap();
+        let tokens = convert_type_with_chrono(&ty, &[]);
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "i32");
+    }
+
+    #[test]
+    fn test_extract_belongs_to_from_field_with_from() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(belongs_to, from = "user_id", to = "id")]
+        )];
+        let result = extract_belongs_to_from_field(&attrs);
+        assert_eq!(result, Some("user_id".to_string()));
+    }
+
+    #[test]
+    fn test_extract_belongs_to_from_field_without_from() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(belongs_to, to = "id")]
+        )];
+        let result = extract_belongs_to_from_field(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_belongs_to_from_field_no_sea_orm_attr() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(skip)])];
+        let result = extract_belongs_to_from_field(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_belongs_to_from_field_empty_attrs() {
+        let result = extract_belongs_to_from_field(&[]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_is_field_optional_in_struct_optional() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct Model {
+                id: i32,
+                user_id: Option<i32>,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(is_field_optional_in_struct(&struct_item, "user_id"));
+    }
+
+    #[test]
+    fn test_is_field_optional_in_struct_required() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct Model {
+                id: i32,
+                user_id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(!is_field_optional_in_struct(&struct_item, "user_id"));
+    }
+
+    #[test]
+    fn test_is_field_optional_in_struct_field_not_found() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct Model {
+                id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        assert!(!is_field_optional_in_struct(&struct_item, "nonexistent"));
+    }
+
+    #[test]
+    fn test_is_field_optional_in_struct_tuple_struct() {
+        let struct_item: syn::ItemStruct =
+            syn::parse_str("struct TupleStruct(i32, Option<String>);").unwrap();
+        assert!(!is_field_optional_in_struct(&struct_item, "0"));
+    }
+}
