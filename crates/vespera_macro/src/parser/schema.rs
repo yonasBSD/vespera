@@ -3151,4 +3151,167 @@ mod tests {
             assert!(user_schema.all_of.is_some());
         }
     }
+
+    // Coverage tests for lines 794-795: Box<T> type handling
+    #[test]
+    fn test_parse_type_to_schema_ref_box_type() {
+        let ty: Type = syn::parse_str("Box<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        // Box<T> should be transparent - returns T's schema
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                assert_eq!(schema.schema_type, Some(SchemaType::String));
+            }
+            _ => panic!("Expected inline schema for Box<String>"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_box_with_known_type() {
+        let mut known = HashMap::new();
+        known.insert("User".to_string(), "User".to_string());
+        let ty: Type = syn::parse_str("Box<User>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
+        // Box<User> should return User's schema ref
+        match schema_ref {
+            SchemaRef::Ref(reference) => {
+                assert_eq!(reference.ref_path, "#/components/schemas/User");
+            }
+            _ => panic!("Expected ref for Box<User>"),
+        }
+    }
+
+    // Coverage tests for lines 821-827: HasOne<Entity> handling
+    #[test]
+    fn test_parse_type_to_schema_ref_has_one_entity() {
+        // HasOne<super::user::Entity> should produce nullable ref to UserSchema
+        let ty: Type = syn::parse_str("HasOne<super::user::Entity>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                // Should have ref_path to UserSchema and be nullable
+                assert_eq!(
+                    schema.ref_path,
+                    Some("#/components/schemas/User".to_string())
+                );
+                assert_eq!(schema.nullable, Some(true));
+            }
+            _ => panic!("Expected inline schema for HasOne"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_has_one_fallback() {
+        // HasOne<i32> should fallback to generic object (no Entity)
+        let ty: Type = syn::parse_str("HasOne<i32>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                // Fallback: generic object
+                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+                assert!(schema.ref_path.is_none());
+            }
+            _ => panic!("Expected inline schema for HasOne fallback"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_has_one_non_entity_path() {
+        // HasOne<crate::models::User> - path doesn't end with Entity
+        let ty: Type = syn::parse_str("HasOne<crate::models::User>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                // Fallback: generic object since not "Entity"
+                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            }
+            _ => panic!("Expected inline schema"),
+        }
+    }
+
+    // Coverage tests for lines 831-838: HasMany<Entity> handling
+    #[test]
+    fn test_parse_type_to_schema_ref_has_many_entity() {
+        // HasMany<super::comment::Entity> should produce array of refs
+        let ty: Type = syn::parse_str("HasMany<super::comment::Entity>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                // Should be array type
+                assert_eq!(schema.schema_type, Some(SchemaType::Array));
+                // Items should be ref to CommentSchema
+                if let Some(SchemaRef::Ref(items_ref)) = schema.items.as_deref() {
+                    assert_eq!(items_ref.ref_path, "#/components/schemas/Comment");
+                } else {
+                    panic!("Expected items to be a $ref");
+                }
+            }
+            _ => panic!("Expected inline schema for HasMany"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_has_many_fallback() {
+        // HasMany<String> should fallback to array of objects
+        let ty: Type = syn::parse_str("HasMany<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                assert_eq!(schema.schema_type, Some(SchemaType::Array));
+                // Items should be inline object
+                if let Some(SchemaRef::Inline(items)) = schema.items.as_deref() {
+                    assert_eq!(items.schema_type, Some(SchemaType::Object));
+                } else {
+                    panic!("Expected inline items for HasMany fallback");
+                }
+            }
+            _ => panic!("Expected inline schema for HasMany fallback"),
+        }
+    }
+
+    // Coverage tests for lines 892-909: Schema path resolution
+    #[test]
+    fn test_parse_type_to_schema_ref_module_schema_path_pascal() {
+        // crate::models::user::Schema should resolve to UserSchema if in known_schemas
+        let mut known = HashMap::new();
+        known.insert("UserSchema".to_string(), "UserSchema".to_string());
+        let ty: Type = syn::parse_str("crate::models::user::Schema").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
+        match schema_ref {
+            SchemaRef::Ref(reference) => {
+                assert_eq!(reference.ref_path, "#/components/schemas/UserSchema");
+            }
+            _ => panic!("Expected $ref for module::Schema"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_module_schema_path_lower() {
+        // crate::models::user::Schema should resolve to userSchema if PascalCase not found
+        let mut known = HashMap::new();
+        known.insert("userSchema".to_string(), "userSchema".to_string());
+        let ty: Type = syn::parse_str("crate::models::user::Schema").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
+        match schema_ref {
+            SchemaRef::Ref(reference) => {
+                assert_eq!(reference.ref_path, "#/components/schemas/userSchema");
+            }
+            _ => panic!("Expected $ref for module::Schema with lowercase"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_to_schema_ref_module_schema_path_fallback() {
+        // crate::models::user::Schema with no known schemas should use Schema as-is
+        let ty: Type = syn::parse_str("crate::models::user::Schema").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashMap::new(), &HashMap::new());
+        // Falls through to unknown type handling
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                // Unknown custom type defaults to object
+                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            }
+            _ => panic!("Expected inline for unknown Schema type"),
+        }
+    }
 }

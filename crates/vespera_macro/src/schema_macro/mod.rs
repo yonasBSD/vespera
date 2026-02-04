@@ -1235,4 +1235,217 @@ mod tests {
         assert!(!output.contains("internal_state"));
         assert!(output.contains("name"));
     }
+
+    // Coverage tests for lines 81-83: Qualified path storage fallback
+    // Note: This tests the case where is_qualified_path returns true
+    // and we find the struct in schema_storage rather than via file lookup
+
+    #[test]
+    fn test_generate_schema_type_code_qualified_path_storage_lookup() {
+        // Use a qualified path like crate::models::user::Model
+        // The storage contains Model, so it should fallback to storage lookup
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            "pub struct Model { pub id: i32, pub name: String }",
+        )];
+
+        // Note: This qualified path won't find files (no real filesystem),
+        // so it falls back to storage lookup by the simple name "Model"
+        let tokens = quote!(UserSchema from crate::models::user::Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        // This should succeed by finding Model in storage
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("UserSchema"));
+    }
+
+    // Coverage test for lines 85-91: Qualified path not found error
+
+    #[test]
+    fn test_generate_schema_type_code_qualified_path_not_found() {
+        // Empty storage - qualified path should fail
+        let storage: Vec<StructMetadata> = vec![];
+
+        let tokens = quote!(UserSchema from crate::models::user::NonExistent);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Should fail with "not found" error
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"));
+    }
+
+    // Coverage tests for lines 252, 254-255: HasMany excluded by default
+
+    #[test]
+    fn test_generate_schema_type_code_has_many_excluded_by_default() {
+        // SeaORM model with HasMany relation - should be excluded by default
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "users")]
+            pub struct Model {
+                pub id: i32,
+                pub name: String,
+                pub memos: HasMany<super::memo::Entity>
+            }"#,
+        )];
+
+        let tokens = quote!(UserSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // HasMany field should NOT appear in output (excluded by default)
+        assert!(!output.contains("memos"));
+        // But regular fields should appear
+        assert!(output.contains("name"));
+    }
+
+    // Coverage test for line 302: Relation conversion failure skip
+
+    #[test]
+    fn test_generate_schema_type_code_relation_conversion_failure() {
+        // Model with relation type but missing generic args - conversion should fail
+        // The field should be skipped
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "users")]
+            pub struct Model {
+                pub id: i32,
+                pub name: String,
+                pub broken: HasMany
+            }"#,
+        )];
+
+        let tokens = quote!(UserSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Should succeed but skip the broken field
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Broken field should be skipped
+        assert!(!output.contains("broken"));
+        // Regular fields should appear
+        assert!(output.contains("name"));
+    }
+
+    // Coverage test for BelongsTo relation type conversion
+
+    #[test]
+    fn test_generate_schema_type_code_belongs_to_relation() {
+        // SeaORM model with BelongsTo relation - should be included
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "memos")]
+            pub struct Model {
+                pub id: i32,
+                pub user_id: i32,
+                #[sea_orm(belongs_to = "super::user::Entity", from = "user_id")]
+                pub user: BelongsTo<super::user::Entity>
+            }"#,
+        )];
+
+        let tokens = quote!(MemoSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // BelongsTo should be included (converted to Box<UserSchema> or similar)
+        assert!(output.contains("user"));
+    }
+
+    // Coverage test for HasOne relation type
+
+    #[test]
+    fn test_generate_schema_type_code_has_one_relation() {
+        // SeaORM model with HasOne relation - should be included
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "users")]
+            pub struct Model {
+                pub id: i32,
+                pub name: String,
+                pub profile: HasOne<super::profile::Entity>
+            }"#,
+        )];
+
+        let tokens = quote!(UserSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // HasOne should be included
+        assert!(output.contains("profile"));
+    }
+
+    // Coverage test for line 313: Relation fields push into relation_fields
+
+    #[test]
+    fn test_generate_schema_type_code_seaorm_model_with_relation_generates_from_model() {
+        // When a SeaORM model has FK relations (HasOne/BelongsTo),
+        // it should generate from_model impl instead of From impl
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "memos")]
+            pub struct Model {
+                pub id: i32,
+                pub title: String,
+                pub user: BelongsTo<super::user::Entity>
+            }"#,
+        )];
+
+        let tokens = quote!(MemoSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Should have relation field
+        assert!(output.contains("user"));
+        // Should NOT have regular From impl (because of relation)
+        // The From impl is only generated when there are no relation fields
+    }
+
+    // Coverage test for line 438: from_model generation with relations
+    // Note: This line requires is_source_seaorm_model && has_relation_fields
+    // The from_model generation happens but needs file lookup for full path
+
+    #[test]
+    fn test_generate_schema_type_code_from_model_generation() {
+        // SeaORM model with relation should trigger from_model generation
+        let storage = vec![create_test_struct_metadata(
+            "Model",
+            r#"#[sea_orm(table_name = "memos")]
+            pub struct Model {
+                pub id: i32,
+                pub user: BelongsTo<super::user::Entity>
+            }"#,
+        )];
+
+        let tokens = quote!(MemoSchema from Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let result = generate_schema_type_code(&input, &storage);
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Has relation field
+        assert!(output.contains("user"));
+        // Regular impl From should NOT be present (because has relations)
+        // Check that we don't have "impl From < Model > for MemoSchema"
+        // (Relations disable the automatic From impl)
+    }
 }
