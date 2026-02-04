@@ -372,6 +372,7 @@ pub fn generate_from_model_with_relations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_build_entity_path_from_schema_path() {
@@ -854,5 +855,820 @@ mod tests {
         assert!(output.contains(". all (db)"));
         assert!(output.contains("into_iter"));
         assert!(output.contains("collect"));
+    }
+
+    // ============================================================
+    // Coverage tests for file-based lookup branches
+    // ============================================================
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_needs_parent_stub_with_required_circular() {
+        // Coverage for lines 96, 98, 106, 108-109, 111-114, 117, 120, 124, 307
+        // Tests: HasMany relation where target model has REQUIRED circular back-ref
+        // This triggers needs_parent_stub = true and generates parent stub fields
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create memo.rs with Model that has REQUIRED circular back-ref to user
+        // The memo has `user: Box<UserSchema>` (not Option) - required
+        let memo_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub title: String,
+    pub user_id: i32,
+    #[sea_orm(belongs_to = "super::user::Entity", from = "user_id")]
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("memo.rs"), memo_model).unwrap();
+
+        // Create user.rs
+        let user_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        // Field mappings: id (regular), name (regular), memos (relation, HasMany)
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("name", proc_macro2::Span::call_site()),
+                syn::Ident::new("name", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("memos", proc_macro2::Span::call_site()),
+                syn::Ident::new("memos", proc_macro2::Span::call_site()),
+                false,
+                true, // is_relation
+            ),
+        ];
+
+        // HasMany WITHOUT inline_type_info (triggers parent stub path)
+        let relation_fields = vec![create_test_relation_info(
+            "memos",
+            "HasMany",
+            quote! { crate::models::memo::Schema },
+            false,
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        assert!(output.contains("from_model"));
+        // Should have parent stub with __parent_stub__ (line 307)
+        assert!(
+            output.contains("__parent_stub__"),
+            "Should have parent stub: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_circular_has_one_optional() {
+        // Coverage for lines 200-202
+        // Tests: HasOne with circular reference, optional
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create profile.rs with circular back-ref to user
+        let profile_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub bio: String,
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("profile.rs"), profile_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("profile", proc_macro2::Span::call_site()),
+                syn::Ident::new("profile", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasOne, optional, WITHOUT inline_type_info
+        let relation_fields = vec![create_test_relation_info(
+            "profile",
+            "HasOne",
+            quote! { crate::models::profile::Schema },
+            true, // optional
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // Circular optional should have .map(|r| Box::new(...))
+        assert!(
+            output.contains(". map (| r |"),
+            "Should have map for optional: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_circular_has_one_required() {
+        // Coverage for line 206
+        // Tests: HasOne with circular reference, required
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create profile.rs with circular back-ref to user
+        let profile_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub bio: String,
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("profile.rs"), profile_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("profile", proc_macro2::Span::call_site()),
+                syn::Ident::new("profile", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasOne, REQUIRED, WITHOUT inline_type_info
+        let relation_fields = vec![create_test_relation_info(
+            "profile",
+            "HasOne",
+            quote! { crate::models::profile::Schema },
+            false, // required
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // Required circular should have Box::new with error handling
+        assert!(
+            output.contains("Box :: new"),
+            "Should have Box::new for required: {}",
+            output
+        );
+        assert!(
+            output.contains("ok_or_else"),
+            "Should have ok_or_else: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_generate_from_model_unknown_relation_with_inline_type() {
+        // Coverage for line 192
+        // Tests: Unknown relation type WITH inline_type_info -> Default::default()
+        let new_type_name = syn::Ident::new("TestSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("weird", proc_macro2::Span::call_site()),
+                syn::Ident::new("weird", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // Unknown relation type WITH inline_type_info
+        let mut rel_info = create_test_relation_info(
+            "weird",
+            "UnknownRelationType",
+            quote! { some::Schema },
+            true,
+        );
+        rel_info.inline_type_info = Some((
+            syn::Ident::new("TestSchema_Weird", proc_macro2::Span::call_site()),
+            vec!["id".to_string()],
+        ));
+
+        let relation_fields = vec![rel_info];
+        let source_module_path = vec!["crate".to_string()];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl TestSchema"));
+        // Unknown relation with inline type should use Default::default()
+        assert!(
+            output.contains("Default :: default ()"),
+            "Should have Default::default(): {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_non_circular_has_one_with_fk_optional() {
+        // Coverage for lines 221-222
+        // Tests: HasOne with FK relations in target, no circular, optional
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create address.rs with FK relations but NO circular back-ref to user
+        let address_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub street: String,
+    pub city_id: i32,
+    pub city: BelongsTo<super::city::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("address.rs"), address_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("address", proc_macro2::Span::call_site()),
+                syn::Ident::new("address", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasOne, optional, no inline_type_info
+        let relation_fields = vec![create_test_relation_info(
+            "address",
+            "HasOne",
+            quote! { crate::models::address::Schema },
+            true, // optional
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // Non-circular with FK, optional should have match statement with async from_model
+        assert!(
+            output.contains("from_model (r , db) . await"),
+            "Should have async from_model: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_non_circular_has_one_with_fk_required() {
+        // Coverage for line 229
+        // Tests: HasOne with FK relations in target, no circular, required
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create address.rs with FK relations but NO circular back-ref to user
+        let address_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub street: String,
+    pub city_id: i32,
+    pub city: BelongsTo<super::city::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("address.rs"), address_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("address", proc_macro2::Span::call_site()),
+                syn::Ident::new("address", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasOne, REQUIRED, no inline_type_info
+        let relation_fields = vec![create_test_relation_info(
+            "address",
+            "HasOne",
+            quote! { crate::models::address::Schema },
+            false, // required
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // Required with FK should have Box::new with from_model call
+        assert!(
+            output.contains("Box :: new"),
+            "Should have Box::new: {}",
+            output
+        );
+        assert!(
+            output.contains("from_model"),
+            "Should have from_model: {}",
+            output
+        );
+        assert!(
+            output.contains("ok_or_else"),
+            "Should have ok_or_else: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_has_many_with_circular() {
+        // Coverage for lines 261-262
+        // Tests: HasMany with circular reference
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create memo.rs with circular back-ref to user
+        let memo_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub title: String,
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("memo.rs"), memo_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("memos", proc_macro2::Span::call_site()),
+                syn::Ident::new("memos", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasMany WITHOUT inline_type_info - will use generate_inline_struct_construction
+        let relation_fields = vec![create_test_relation_info(
+            "memos",
+            "HasMany",
+            quote! { crate::models::memo::Schema },
+            false,
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // HasMany with circular should have into_iter().map().collect()
+        assert!(
+            output.contains("into_iter ()"),
+            "Should have into_iter: {}",
+            output
+        );
+        assert!(
+            output.contains(". map (| r |"),
+            "Should have map: {}",
+            output
+        );
+        assert!(
+            output.contains("collect"),
+            "Should have collect: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_has_many_with_fk_no_circular() {
+        // Coverage for lines 272-276, 278
+        // Tests: HasMany with FK relations in target, no circular
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create tag.rs with FK relations but NO circular back-ref to user
+        let tag_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub category_id: i32,
+    pub category: BelongsTo<super::category::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("tag.rs"), tag_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("UserSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::user::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("tags", proc_macro2::Span::call_site()),
+                syn::Ident::new("tags", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // HasMany, no inline_type_info
+        let relation_fields = vec![create_test_relation_info(
+            "tags",
+            "HasMany",
+            quote! { crate::models::tag::Schema },
+            false,
+        )];
+
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "user".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl UserSchema"));
+        // HasMany with FK but no circular should use inline_struct_construction
+        assert!(
+            output.contains("into_iter ()"),
+            "Should have into_iter: {}",
+            output
+        );
+        assert!(
+            output.contains(". map (| r |"),
+            "Should have map: {}",
+            output
+        );
+        assert!(
+            output.contains("collect"),
+            "Should have collect: {}",
+            output
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate_from_model_inline_type_required() {
+        // Coverage for lines in inline type with required relation
+        // Tests: inline_type_info with required BelongsTo
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        let user_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save and set CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let new_type_name = syn::Ident::new("MemoSchema", proc_macro2::Span::call_site());
+        let source_type: Type = syn::parse_str("crate::models::memo::Model").unwrap();
+
+        let field_mappings = vec![
+            (
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                syn::Ident::new("id", proc_macro2::Span::call_site()),
+                false,
+                false,
+            ),
+            (
+                syn::Ident::new("user", proc_macro2::Span::call_site()),
+                syn::Ident::new("user", proc_macro2::Span::call_site()),
+                false,
+                true,
+            ),
+        ];
+
+        // BelongsTo with inline_type_info, REQUIRED
+        let mut rel_info = create_test_relation_info(
+            "user",
+            "BelongsTo",
+            quote! { crate::models::user::Schema },
+            false, // required
+        );
+        rel_info.inline_type_info = Some((
+            syn::Ident::new("MemoSchema_User", proc_macro2::Span::call_site()),
+            vec!["id".to_string(), "name".to_string()],
+        ));
+
+        let relation_fields = vec![rel_info];
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "memo".to_string(),
+        ];
+
+        let tokens = generate_from_model_with_relations(
+            &new_type_name,
+            &source_type,
+            &field_mappings,
+            &relation_fields,
+            &source_module_path,
+            &[],
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        let output = tokens.to_string();
+        assert!(output.contains("impl MemoSchema"));
+        // Required inline type should have Box::new with ok_or_else
+        assert!(
+            output.contains("Box :: new"),
+            "Should have Box::new: {}",
+            output
+        );
+        assert!(
+            output.contains("ok_or_else"),
+            "Should have ok_or_else: {}",
+            output
+        );
     }
 }
