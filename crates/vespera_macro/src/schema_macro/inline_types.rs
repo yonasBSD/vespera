@@ -659,4 +659,136 @@ mod tests {
         );
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_generate_inline_relation_type_from_def_skips_relation_types() {
+        // Test that relation types (HasOne, HasMany, BelongsTo) are skipped (line 87)
+        let parent_type_name = syn::Ident::new("MemoSchema", proc_macro2::Span::call_site());
+        let rel_info = RelationFieldInfo {
+            field_name: syn::Ident::new("user", proc_macro2::Span::call_site()),
+            relation_type: "BelongsTo".to_string(),
+            schema_path: quote!(super::user::Schema),
+            is_optional: false,
+            inline_type_info: None,
+        };
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "memo".to_string(),
+        ];
+
+        // Model with circular field AND other relation types that should be skipped
+        let model_def = r#"pub struct Model {
+            pub id: i32,
+            pub name: String,
+            pub memo: BelongsTo<memo::Entity>,
+            pub posts: HasMany<post::Entity>,
+            pub profile: HasOne<profile::Entity>
+        }"#;
+
+        let result = generate_inline_relation_type_from_def(
+            &parent_type_name,
+            &rel_info,
+            &source_module_path,
+            None,
+            model_def,
+        );
+        assert!(result.is_some());
+
+        let inline_type = result.unwrap();
+        let field_names: Vec<String> = inline_type
+            .fields
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect();
+
+        // Should have id and name
+        assert!(field_names.contains(&"id".to_string()));
+        assert!(field_names.contains(&"name".to_string()));
+        // Should NOT have any relation fields (circular or otherwise)
+        assert!(!field_names.contains(&"memo".to_string())); // circular
+        assert!(!field_names.contains(&"posts".to_string())); // HasMany - relation type
+        assert!(!field_names.contains(&"profile".to_string())); // HasOne - relation type
+    }
+
+    #[test]
+    fn test_generate_inline_relation_type_from_def_skips_serde_skip() {
+        // Test that fields with serde(skip) are skipped (line 92)
+        let parent_type_name = syn::Ident::new("MemoSchema", proc_macro2::Span::call_site());
+        let rel_info = RelationFieldInfo {
+            field_name: syn::Ident::new("user", proc_macro2::Span::call_site()),
+            relation_type: "BelongsTo".to_string(),
+            schema_path: quote!(super::user::Schema),
+            is_optional: false,
+            inline_type_info: None,
+        };
+        let source_module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "memo".to_string(),
+        ];
+
+        // Model with circular field AND serde(skip) field
+        let model_def = r#"pub struct Model {
+            pub id: i32,
+            #[serde(skip)]
+            pub internal_cache: String,
+            pub name: String,
+            pub memo: BelongsTo<memo::Entity>
+        }"#;
+
+        let result = generate_inline_relation_type_from_def(
+            &parent_type_name,
+            &rel_info,
+            &source_module_path,
+            None,
+            model_def,
+        );
+        assert!(result.is_some());
+
+        let inline_type = result.unwrap();
+        let field_names: Vec<String> = inline_type
+            .fields
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect();
+
+        // Should have id and name
+        assert!(field_names.contains(&"id".to_string()));
+        assert!(field_names.contains(&"name".to_string()));
+        // Should NOT have skipped or circular fields
+        assert!(!field_names.contains(&"internal_cache".to_string())); // serde(skip)
+        assert!(!field_names.contains(&"memo".to_string())); // circular
+    }
+
+    #[test]
+    fn test_generate_inline_relation_type_no_relations_from_def_with_schema_name_override() {
+        // Test schema_name_override Some branch (line 133)
+        let parent_type_name = syn::Ident::new("Schema", proc_macro2::Span::call_site());
+        let rel_info = RelationFieldInfo {
+            field_name: syn::Ident::new("memos", proc_macro2::Span::call_site()),
+            relation_type: "HasMany".to_string(),
+            schema_path: quote!(super::memo::Schema),
+            is_optional: false,
+            inline_type_info: None,
+        };
+
+        let model_def = r#"pub struct Model {
+            pub id: i32,
+            pub title: String
+        }"#;
+
+        // With schema_name_override
+        let result = generate_inline_relation_type_no_relations_from_def(
+            &parent_type_name,
+            &rel_info,
+            Some("UserSchema"),
+            model_def,
+        );
+        assert!(result.is_some());
+
+        let inline_type = result.unwrap();
+        // Should use the override name, not the struct name
+        assert_eq!(inline_type.type_name.to_string(), "UserSchema_Memos");
+    }
 }
