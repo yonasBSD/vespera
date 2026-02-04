@@ -56,7 +56,7 @@ fn process_route_attribute(
 }
 
 /// route attribute macro
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro_attribute]
 pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     match process_route_attribute(attr.into(), item.into()) {
@@ -110,7 +110,7 @@ fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macr
 /// Derive macro for Schema
 ///
 /// Supports `#[schema(name = "CustomName")]` attribute to set custom OpenAPI schema name.
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -164,7 +164,7 @@ pub fn derive_schema(input: TokenStream) -> TokenStream {
 /// // For list endpoints, only return summary fields
 /// let list_schema = schema!(User, pick = ["id", "name"]);
 /// ```
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaInput);
@@ -232,7 +232,7 @@ pub fn schema(input: TokenStream) -> TokenStream {
 ///     // ...
 /// }
 /// ```
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro]
 pub fn schema_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaTypeInput);
@@ -705,7 +705,7 @@ fn process_vespera_macro(
     ))
 }
 
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro]
 pub fn vespera(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AutoRouterInput);
@@ -1050,7 +1050,7 @@ fn process_export_app(
     })
 }
 
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(not(tarpaulin_include))]
 #[proc_macro]
 pub fn export_app(input: TokenStream) -> TokenStream {
     let ExportAppInput { name, dir } = syn::parse_macro_input!(input as ExportAppInput);
