@@ -106,25 +106,31 @@ pub fn convert_type_with_chrono(ty: &Type, source_module_path: &[String]) -> Tok
 
 /// Extract the "from" field name from a sea_orm belongs_to attribute.
 /// e.g., `#[sea_orm(belongs_to, from = "user_id", to = "id")]` -> Some("user_id")
+/// Also handles: `#[sea_orm(belongs_to = "Entity", from = "user_id", to = "id")]`
 pub fn extract_belongs_to_from_field(attrs: &[syn::Attribute]) -> Option<String> {
-    for attr in attrs {
-        if attr.path().is_ident("sea_orm") {
-            let mut from_field = None;
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("from")
-                    && let Ok(value) = meta.value()
-                    && let Ok(lit) = value.parse::<syn::LitStr>()
-                {
-                    from_field = Some(lit.value());
-                }
-                Ok(())
-            });
-            if from_field.is_some() {
-                return from_field;
-            }
+    attrs.iter().find_map(|attr| {
+        if !attr.path().is_ident("sea_orm") {
+            return None;
         }
-    }
-    None
+
+        let mut from_field = None;
+        // Ignore parse errors - we just won't find the field if parsing fails
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("from") {
+                from_field = meta
+                    .value()
+                    .ok()
+                    .and_then(|v| v.parse::<syn::LitStr>().ok())
+                    .map(|lit| lit.value());
+            } else if meta.input.peek(syn::Token![=]) {
+                // Consume value for key=value pairs (e.g., belongs_to = "...", to = "...")
+                // Required to allow parsing to continue to next item
+                drop(meta.value().and_then(|v| v.parse::<syn::LitStr>()));
+            }
+            Ok(())
+        });
+        from_field
+    })
 }
 
 /// Check if a field in the struct is optional (Option<T>).

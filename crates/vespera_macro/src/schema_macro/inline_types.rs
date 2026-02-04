@@ -259,6 +259,7 @@ pub fn generate_inline_type_definition(inline_type: &InlineRelationType) -> Toke
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_generate_inline_type_definition() {
@@ -796,6 +797,7 @@ mod tests {
     // These require setting up a temp directory with model files
 
     #[test]
+    #[serial]
     fn test_generate_inline_relation_type_with_file_lookup() {
         use tempfile::TempDir;
 
@@ -865,6 +867,7 @@ pub struct Model {
     }
 
     #[test]
+    #[serial]
     fn test_generate_inline_relation_type_no_relations_with_file_lookup() {
         use tempfile::TempDir;
 
@@ -930,6 +933,7 @@ pub struct Model {
     }
 
     #[test]
+    #[serial]
     fn test_generate_inline_relation_type_file_not_found() {
         use tempfile::TempDir;
 
@@ -971,6 +975,7 @@ pub struct Model {
     }
 
     #[test]
+    #[serial]
     fn test_generate_inline_relation_type_no_relations_file_not_found() {
         use tempfile::TempDir;
 
