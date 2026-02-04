@@ -24,3 +24,6 @@ rstest = "0.26"
 insta = "1.46"
 tempfile = "3"
 serial_test = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

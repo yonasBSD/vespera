@@ -56,6 +56,7 @@ fn process_route_attribute(
 }
 
 /// route attribute macro
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[proc_macro_attribute]
 pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     match process_route_attribute(attr.into(), item.into()) {
@@ -109,6 +110,7 @@ fn process_derive_schema(input: &syn::DeriveInput) -> (StructMetadata, proc_macr
 /// Derive macro for Schema
 ///
 /// Supports `#[schema(name = "CustomName")]` attribute to set custom OpenAPI schema name.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -162,6 +164,7 @@ pub fn derive_schema(input: TokenStream) -> TokenStream {
 /// // For list endpoints, only return summary fields
 /// let list_schema = schema!(User, pick = ["id", "name"]);
 /// ```
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaInput);
@@ -229,6 +232,7 @@ pub fn schema(input: TokenStream) -> TokenStream {
 ///     // ...
 /// }
 /// ```
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[proc_macro]
 pub fn schema_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaTypeInput);
@@ -669,46 +673,49 @@ fn generate_and_write_openapi(
     Ok((docs_info, redoc_info))
 }
 
+/// Process vespera macro - extracted for testability
+fn process_vespera_macro(
+    processed: &ProcessedVesperaInput,
+    schema_storage: &[StructMetadata],
+) -> syn::Result<proc_macro2::TokenStream> {
+    let folder_path = find_folder_path(&processed.folder_name);
+    if !folder_path.exists() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("Folder not found: {}", processed.folder_name),
+        ));
+    }
+
+    let mut metadata = collect_metadata(&folder_path, &processed.folder_name).map_err(|e| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("Failed to collect metadata: {}", e),
+        )
+    })?;
+    metadata.structs.extend(schema_storage.iter().cloned());
+
+    let (docs_info, redoc_info) = generate_and_write_openapi(processed, &metadata)
+        .map_err(|e| syn::Error::new(Span::call_site(), e))?;
+
+    Ok(generate_router_code(
+        &metadata,
+        docs_info,
+        redoc_info,
+        &processed.merge,
+    ))
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[proc_macro]
 pub fn vespera(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AutoRouterInput);
     let processed = process_vespera_input(input);
+    let schema_storage = SCHEMA_STORAGE.lock().unwrap();
 
-    let folder_path = find_folder_path(&processed.folder_name);
-    if !folder_path.exists() {
-        return syn::Error::new(
-            Span::call_site(),
-            format!("Folder not found: {}", processed.folder_name),
-        )
-        .to_compile_error()
-        .into();
+    match process_vespera_macro(&processed, &schema_storage) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
     }
-
-    let mut metadata = match collect_metadata(&folder_path, &processed.folder_name) {
-        Ok(m) => m,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to collect metadata: {}", e),
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-    metadata
-        .structs
-        .extend(SCHEMA_STORAGE.lock().unwrap().clone());
-
-    let (docs_info, redoc_info) = match generate_and_write_openapi(&processed, &metadata) {
-        Ok(info) => info,
-        Err(e) => {
-            return syn::Error::new(Span::call_site(), e)
-                .to_compile_error()
-                .into();
-        }
-    };
-
-    generate_router_code(&metadata, docs_info, redoc_info, &processed.merge).into()
 }
 
 fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
@@ -971,72 +978,62 @@ impl Parse for ExportAppInput {
 /// //     pub fn router() -> axum::Router { ... }
 /// // }
 /// ```
-#[proc_macro]
-pub fn export_app(input: TokenStream) -> TokenStream {
-    let ExportAppInput { name, dir } = syn::parse_macro_input!(input as ExportAppInput);
-
-    let folder_name = dir
-        .map(|d| d.value())
-        .or_else(|| std::env::var("VESPERA_DIR").ok())
-        .unwrap_or_else(|| "routes".to_string());
-
-    let folder_path = find_folder_path(&folder_name);
+///
+/// Process export_app macro - extracted for testability
+fn process_export_app(
+    name: &syn::Ident,
+    folder_name: &str,
+    schema_storage: &[StructMetadata],
+    manifest_dir: &str,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let folder_path = find_folder_path(folder_name);
     if !folder_path.exists() {
-        return syn::Error::new(
+        return Err(syn::Error::new(
             Span::call_site(),
             format!("Folder not found: {}", folder_name),
-        )
-        .to_compile_error()
-        .into();
+        ));
     }
 
-    let mut metadata = match collect_metadata(&folder_path, &folder_name) {
-        Ok(m) => m,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to collect metadata: {}", e),
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-    metadata
-        .structs
-        .extend(SCHEMA_STORAGE.lock().unwrap().clone());
+    let mut metadata = collect_metadata(&folder_path, folder_name).map_err(|e| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("Failed to collect metadata: {}", e),
+        )
+    })?;
+    metadata.structs.extend(schema_storage.iter().cloned());
 
     // Generate OpenAPI spec JSON string
     let openapi_doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
-    let spec_json = match serde_json::to_string(&openapi_doc) {
-        Ok(json) => json,
-        Err(e) => {
-            return syn::Error::new(
-                Span::call_site(),
-                format!("Failed to serialize OpenAPI spec: {}", e),
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
+    let spec_json = serde_json::to_string(&openapi_doc).map_err(|e| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("Failed to serialize OpenAPI spec: {}", e),
+        )
+    })?;
 
     // Write spec to temp file for compile-time merging by parent apps
-    // The file is written to target/vespera/{StructName}.openapi.json
     let name_str = name.to_string();
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    // Find target directory (go up from manifest dir to workspace root if needed)
-    let manifest_path = Path::new(&manifest_dir);
+    let manifest_path = Path::new(manifest_dir);
     let target_dir = find_target_dir(manifest_path);
     let vespera_dir = target_dir.join("vespera");
-    std::fs::create_dir_all(&vespera_dir)
-        .unwrap_or_else(|e| panic!("Failed to create vespera dir {:?}: {}", vespera_dir, e));
+    std::fs::create_dir_all(&vespera_dir).map_err(|e| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("Failed to create vespera dir {:?}: {}", vespera_dir, e),
+        )
+    })?;
     let spec_file = vespera_dir.join(format!("{}.openapi.json", name_str));
-    std::fs::write(&spec_file, &spec_json)
-        .unwrap_or_else(|e| panic!("Failed to write spec file {:?}: {}", spec_file, e));
+    std::fs::write(&spec_file, &spec_json).map_err(|e| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("Failed to write spec file {:?}: {}", spec_file, e),
+        )
+    })?;
 
     // Generate router code (without docs routes, no merge)
     let router_code = generate_router_code(&metadata, None, None, &[]);
 
-    quote! {
+    Ok(quote! {
         /// Auto-generated vespera app struct
         pub struct #name;
 
@@ -1050,8 +1047,24 @@ pub fn export_app(input: TokenStream) -> TokenStream {
                 #router_code
             }
         }
+    })
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[proc_macro]
+pub fn export_app(input: TokenStream) -> TokenStream {
+    let ExportAppInput { name, dir } = syn::parse_macro_input!(input as ExportAppInput);
+    let folder_name = dir
+        .map(|d| d.value())
+        .or_else(|| std::env::var("VESPERA_DIR").ok())
+        .unwrap_or_else(|| "routes".to_string());
+    let schema_storage = SCHEMA_STORAGE.lock().unwrap();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+
+    match process_export_app(&name, &folder_name, &schema_storage, &manifest_dir) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
     }
-    .into()
 }
 
 #[cfg(test)]
@@ -2536,5 +2549,79 @@ pub fn get_users() -> String {
             let result = process_route_attribute(attr, item);
             assert!(result.is_ok(), "Method {} should be valid", method);
         }
+    }
+
+    // ========== Tests for process_vespera_macro ==========
+
+    #[test]
+    fn test_process_vespera_macro_folder_not_found() {
+        let processed = ProcessedVesperaInput {
+            folder_name: "nonexistent_folder_xyz_123".to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+            merge: vec![],
+        };
+        let result = process_vespera_macro(&processed, &[]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Folder not found"));
+    }
+
+    // ========== Tests for process_export_app ==========
+
+    #[test]
+    fn test_process_export_app_folder_not_found() {
+        let name: syn::Ident = syn::parse_quote!(TestApp);
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let result = process_export_app(
+            &name,
+            "nonexistent_folder_xyz",
+            &[],
+            &temp_dir.path().to_string_lossy(),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Folder not found"));
+    }
+
+    // ========== Tests for generate_and_write_openapi with merge ==========
+
+    #[test]
+    fn test_generate_and_write_openapi_with_merge_no_manifest_dir() {
+        // When CARGO_MANIFEST_DIR is not set or merge is empty, it should work normally
+        let processed = ProcessedVesperaInput {
+            folder_name: "routes".to_string(),
+            openapi_file_names: vec![],
+            title: Some("Test".to_string()),
+            version: None,
+            docs_url: Some("/docs".to_string()),
+            redoc_url: None,
+            servers: None,
+            merge: vec![syn::parse_quote!(app::TestApp)], // Has merge but no valid manifest dir
+        };
+        let metadata = CollectedMetadata::new();
+        // This should still work - merge logic is skipped when CARGO_MANIFEST_DIR lookup fails
+        let result = generate_and_write_openapi(&processed, &metadata);
+        assert!(result.is_ok());
+    }
+
+    // ========== Tests for find_folder_path ==========
+
+    #[test]
+    fn test_find_folder_path_absolute_path() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let absolute_path = temp_dir.path().to_string_lossy().to_string();
+
+        // When given an absolute path that exists, it should return it
+        let result = find_folder_path(&absolute_path);
+        // The function tries src/{folder_name} first, then falls back to the folder_name directly
+        assert!(
+            result.to_string_lossy().contains(&absolute_path)
+                || result == Path::new(&absolute_path)
+        );
     }
 }
