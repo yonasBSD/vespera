@@ -1,0 +1,441 @@
+//! SeaORM and Chrono type conversions
+//!
+//! Handles conversion of SeaORM relation types and datetime types to their
+//! schema equivalents.
+
+use proc_macro2::TokenStream;
+use quote::quote;
+use syn::Type;
+
+use super::type_utils::{is_option_type, resolve_type_to_absolute_path};
+
+/// Relation field info for generating from_model code
+#[derive(Clone)]
+pub struct RelationFieldInfo {
+    /// Field name in the generated struct
+    pub field_name: syn::Ident,
+    /// Relation type: "HasOne", "HasMany", or "BelongsTo"
+    pub relation_type: String,
+    /// Target Schema path (e.g., crate::models::user::Schema)
+    pub schema_path: TokenStream,
+    /// Whether the relation is optional
+    pub is_optional: bool,
+    /// If Some, this relation has circular refs and uses an inline type
+    /// Contains: (inline_type_name, circular_fields_to_exclude)
+    pub inline_type_info: Option<(syn::Ident, Vec<String>)>,
+}
+
+/// Convert SeaORM datetime types to chrono equivalents.
+///
+/// This allows generated schemas to use standard chrono types instead of
+/// requiring `use sea_orm::entity::prelude::DateTimeWithTimeZone`.
+///
+/// Conversions:
+/// - `DateTimeWithTimeZone` -> `chrono::DateTime<chrono::FixedOffset>`
+/// - `DateTimeUtc` -> `chrono::DateTime<chrono::Utc>`
+/// - `DateTimeLocal` -> `chrono::DateTime<chrono::Local>`
+/// - `DateTime` (SeaORM) -> `chrono::NaiveDateTime`
+/// - `Date` (SeaORM) -> `chrono::NaiveDate`
+/// - `Time` (SeaORM) -> `chrono::NaiveTime`
+///
+/// Returns the original type as TokenStream if not a SeaORM datetime type.
+pub fn convert_seaorm_type_to_chrono(ty: &Type, source_module_path: &[String]) -> TokenStream {
+    let type_path = match ty {
+        Type::Path(tp) => tp,
+        _ => return quote! { #ty },
+    };
+
+    let segment = match type_path.path.segments.last() {
+        Some(s) => s,
+        None => return quote! { #ty },
+    };
+
+    let ident_str = segment.ident.to_string();
+
+    match ident_str.as_str() {
+        // Use vespera::chrono to avoid requiring users to add chrono dependency
+        "DateTimeWithTimeZone" => {
+            quote! { vespera::chrono::DateTime<vespera::chrono::FixedOffset> }
+        }
+        "DateTimeUtc" => quote! { vespera::chrono::DateTime<vespera::chrono::Utc> },
+        "DateTimeLocal" => quote! { vespera::chrono::DateTime<vespera::chrono::Local> },
+        // Not a SeaORM datetime type - resolve to absolute path if needed
+        _ => resolve_type_to_absolute_path(ty, source_module_path),
+    }
+}
+
+/// Convert a type to chrono equivalent, handling Option<T> wrapper.
+///
+/// If the type is `Option<SeaOrmType>`, converts to `Option<ChronoType>`.
+/// If the type is just `SeaOrmType`, converts to `ChronoType`.
+///
+/// Also resolves local types (like `MemoStatus`) to absolute paths
+/// (like `crate::models::memo::MemoStatus`) using source_module_path.
+pub fn convert_type_with_chrono(ty: &Type, source_module_path: &[String]) -> TokenStream {
+    // Check if it's Option<T>
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.first()
+        && segment.ident == "Option"
+    {
+        // Extract the inner type from Option<T>
+        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+        {
+            let converted_inner = convert_seaorm_type_to_chrono(inner_ty, source_module_path);
+            return quote! { Option<#converted_inner> };
+        }
+    }
+
+    // Check if it's Vec<T>
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.first()
+        && segment.ident == "Vec"
+    {
+        // Extract the inner type from Vec<T>
+        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+        {
+            let converted_inner = convert_seaorm_type_to_chrono(inner_ty, source_module_path);
+            return quote! { Vec<#converted_inner> };
+        }
+    }
+
+    // Not Option or Vec, convert directly
+    convert_seaorm_type_to_chrono(ty, source_module_path)
+}
+
+/// Extract the "from" field name from a sea_orm belongs_to attribute.
+/// e.g., `#[sea_orm(belongs_to, from = "user_id", to = "id")]` -> Some("user_id")
+pub fn extract_belongs_to_from_field(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("sea_orm") {
+            let mut from_field = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("from")
+                    && let Ok(value) = meta.value()
+                    && let Ok(lit) = value.parse::<syn::LitStr>()
+                {
+                    from_field = Some(lit.value());
+                }
+                Ok(())
+            });
+            if from_field.is_some() {
+                return from_field;
+            }
+        }
+    }
+    None
+}
+
+/// Check if a field in the struct is optional (Option<T>).
+pub fn is_field_optional_in_struct(struct_item: &syn::ItemStruct, field_name: &str) -> bool {
+    if let syn::Fields::Named(fields_named) = &struct_item.fields {
+        for field in &fields_named.named {
+            if let Some(ident) = &field.ident
+                && ident == field_name
+            {
+                return is_option_type(&field.ty);
+            }
+        }
+    }
+    false
+}
+
+/// Convert a SeaORM relation type to a Schema type AND return relation info.
+///
+/// - `#[sea_orm(has_one)]` -> Always `Option<Box<Schema>>`
+/// - `#[sea_orm(has_many)]` -> Always `Vec<Schema>`
+/// - `#[sea_orm(belongs_to, from = "field")]`:
+///   - If `from` field is `Option<T>` -> `Option<Box<Schema>>`
+///   - If `from` field is required -> `Box<Schema>`
+///
+/// The `source_module_path` is used to resolve relative paths like `super::`.
+/// e.g., if source is `crate::models::memo::Model`, module path is `crate::models::memo`
+///
+/// Returns None if the type is not a relation type or conversion fails.
+/// Returns (TokenStream, RelationFieldInfo) on success for use in from_model generation.
+pub fn convert_relation_type_to_schema_with_info(
+    ty: &Type,
+    field_attrs: &[syn::Attribute],
+    parsed_struct: &syn::ItemStruct,
+    source_module_path: &[String],
+    field_name: syn::Ident,
+) -> Option<(TokenStream, RelationFieldInfo)> {
+    let type_path = match ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    let segment = type_path.path.segments.last()?;
+    let ident_str = segment.ident.to_string();
+
+    // Check if this is a relation type with generic argument
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => args,
+        _ => return None,
+    };
+
+    // Get the inner Entity type
+    let inner_ty = match args.args.first()? {
+        syn::GenericArgument::Type(ty) => ty,
+        _ => return None,
+    };
+
+    // Extract the path and convert to absolute Schema path
+    let inner_path = match inner_ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    // Collect segments as strings
+    let segments: Vec<String> = inner_path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+
+    // Convert path to absolute, resolving `super::` relative to source module
+    let absolute_segments: Vec<String> = if !segments.is_empty() && segments[0] == "super" {
+        let super_count = segments.iter().take_while(|s| *s == "super").count();
+        let parent_path_len = source_module_path.len().saturating_sub(super_count);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in segments.iter().skip(super_count) {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    } else if !segments.is_empty() && segments[0] == "crate" {
+        segments
+            .iter()
+            .map(|s| {
+                if s == "Entity" {
+                    "Schema".to_string()
+                } else {
+                    s.clone()
+                }
+            })
+            .collect()
+    } else {
+        let parent_path_len = source_module_path.len().saturating_sub(1);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in &segments {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    };
+
+    // Build the absolute path as tokens
+    let path_idents: Vec<syn::Ident> = absolute_segments
+        .iter()
+        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+        .collect();
+    let schema_path = quote! { #(#path_idents)::* };
+
+    // Convert based on relation type
+    match ident_str.as_str() {
+        "HasOne" => {
+            // HasOne -> Check FK field to determine optionality
+            // If FK is Option<T> -> relation is optional: Option<Box<Schema>>
+            // If FK is required -> relation is required: Box<Schema>
+            let fk_field = extract_belongs_to_from_field(field_attrs);
+            let is_optional = fk_field
+                .as_ref()
+                .map(|f| is_field_optional_in_struct(parsed_struct, f))
+                .unwrap_or(true); // Default to optional if we can't determine
+
+            let converted = if is_optional {
+                quote! { Option<Box<#schema_path>> }
+            } else {
+                quote! { Box<#schema_path> }
+            };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "HasOne".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional,
+                inline_type_info: None, // Will be populated later if circular
+            };
+            Some((converted, info))
+        }
+        "HasMany" => {
+            let converted = quote! { Vec<#schema_path> };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "HasMany".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional: false,
+                inline_type_info: None, // Will be populated later if circular
+            };
+            Some((converted, info))
+        }
+        "BelongsTo" => {
+            // BelongsTo -> Check FK field to determine optionality
+            // If FK is Option<T> -> relation is optional: Option<Box<Schema>>
+            // If FK is required -> relation is required: Box<Schema>
+            let fk_field = extract_belongs_to_from_field(field_attrs);
+            let is_optional = fk_field
+                .as_ref()
+                .map(|f| is_field_optional_in_struct(parsed_struct, f))
+                .unwrap_or(true); // Default to optional if we can't determine
+
+            let converted = if is_optional {
+                quote! { Option<Box<#schema_path>> }
+            } else {
+                quote! { Box<#schema_path> }
+            };
+            let info = RelationFieldInfo {
+                field_name,
+                relation_type: "BelongsTo".to_string(),
+                schema_path: schema_path.clone(),
+                is_optional,
+                inline_type_info: None, // Will be populated later if circular
+            };
+            Some((converted, info))
+        }
+        _ => None,
+    }
+}
+
+/// Convert a SeaORM relation type to a Schema type.
+///
+/// - `#[sea_orm(has_one)]` -> Always `Option<Box<Schema>>`
+/// - `#[sea_orm(has_many)]` -> Always `Vec<Schema>`
+/// - `#[sea_orm(belongs_to, from = "field")]`:
+///   - If `from` field is `Option<T>` -> `Option<Box<Schema>>`
+///   - If `from` field is required -> `Box<Schema>`
+///
+/// The `source_module_path` is used to resolve relative paths like `super::`.
+/// e.g., if source is `crate::models::memo::Model`, module path is `crate::models::memo`
+///
+/// Returns None if the type is not a relation type or conversion fails.
+#[allow(dead_code)]
+pub fn convert_relation_type_to_schema(
+    ty: &Type,
+    field_attrs: &[syn::Attribute],
+    parsed_struct: &syn::ItemStruct,
+    source_module_path: &[String],
+) -> Option<TokenStream> {
+    let type_path = match ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    let segment = type_path.path.segments.last()?;
+    let ident_str = segment.ident.to_string();
+
+    // Check if this is a relation type with generic argument
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => args,
+        _ => return None,
+    };
+
+    // Get the inner Entity type
+    let inner_ty = match args.args.first()? {
+        syn::GenericArgument::Type(ty) => ty,
+        _ => return None,
+    };
+
+    // Extract the path and convert to absolute Schema path
+    let inner_path = match inner_ty {
+        Type::Path(tp) => tp,
+        _ => return None,
+    };
+
+    // Collect segments as strings
+    let segments: Vec<String> = inner_path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+
+    // Convert path to absolute, resolving `super::` relative to source module
+    // e.g., super::user::Entity with source_module_path = [crate, models, memo]
+    //       -> [crate, models, user, Schema]
+    let absolute_segments: Vec<String> = if !segments.is_empty() && segments[0] == "super" {
+        // Count how many `super` segments
+        let super_count = segments.iter().take_while(|s| *s == "super").count();
+
+        // Go up `super_count` levels from source module path
+        let parent_path_len = source_module_path.len().saturating_sub(super_count);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+
+        // Append remaining segments (after super::), replacing Entity with Schema
+        for seg in segments.iter().skip(super_count) {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    } else if !segments.is_empty() && segments[0] == "crate" {
+        // Already absolute path, just replace Entity with Schema
+        segments
+            .iter()
+            .map(|s| {
+                if s == "Entity" {
+                    "Schema".to_string()
+                } else {
+                    s.clone()
+                }
+            })
+            .collect()
+    } else {
+        // Relative path without super, assume same module level
+        // Prepend source module's parent path
+        let parent_path_len = source_module_path.len().saturating_sub(1);
+        let mut abs = source_module_path[..parent_path_len].to_vec();
+        for seg in &segments {
+            if seg == "Entity" {
+                abs.push("Schema".to_string());
+            } else {
+                abs.push(seg.clone());
+            }
+        }
+        abs
+    };
+
+    // Build the absolute path as tokens
+    let path_idents: Vec<syn::Ident> = absolute_segments
+        .iter()
+        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
+        .collect();
+    let schema_path = quote! { #(#path_idents)::* };
+
+    // Convert based on relation type
+    match ident_str.as_str() {
+        "HasOne" => {
+            // HasOne -> Always Option<Box<Schema>>
+            Some(quote! { Option<Box<#schema_path>> })
+        }
+        "HasMany" => {
+            // HasMany -> Vec<Schema>
+            Some(quote! { Vec<#schema_path> })
+        }
+        "BelongsTo" => {
+            // BelongsTo -> Check if "from" field is optional
+            if let Some(from_field) = extract_belongs_to_from_field(field_attrs) {
+                if is_field_optional_in_struct(parsed_struct, &from_field) {
+                    // from field is Option -> relation is optional
+                    Some(quote! { Option<Box<#schema_path>> })
+                } else {
+                    // from field is required -> relation is required
+                    Some(quote! { Box<#schema_path> })
+                }
+            } else {
+                // Fallback: treat as optional if we can't determine
+                Some(quote! { Option<Box<#schema_path>> })
+            }
+        }
+        _ => None,
+    }
+}
