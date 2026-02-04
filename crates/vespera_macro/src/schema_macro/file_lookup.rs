@@ -186,13 +186,40 @@ pub fn find_struct_by_name_in_all_files(
                     .or_else(|| hint_lower.strip_suffix("request"))
                     .unwrap_or(&hint_lower);
 
-                // Find files whose name contains the prefix
+                // Normalize prefix: remove underscores for comparison
+                // This allows "AdminUserSchema" (prefix "adminuser") to match "admin_user.rs"
+                let prefix_normalized = prefix.replace('_', "");
+
+                // First, try exact filename match (normalized)
+                // e.g., "admin_user.rs" normalized to "adminuser" matches prefix "adminuser"
+                let exact_match: Vec<_> = found_structs
+                    .iter()
+                    .filter(|(path, _)| {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .is_some_and(|name| {
+                                name.to_lowercase().replace('_', "") == prefix_normalized
+                            })
+                    })
+                    .collect();
+
+                if exact_match.len() == 1 {
+                    let (path, metadata) = exact_match[0];
+                    let module_path = file_path_to_module_path(path, src_dir);
+                    return Some((metadata.clone(), module_path));
+                }
+
+                // Fallback: Find files whose normalized name contains the prefix
                 let matching: Vec<_> = found_structs
                     .into_iter()
                     .filter(|(path, _)| {
                         path.file_stem()
                             .and_then(|s| s.to_str())
-                            .is_some_and(|name| name.to_lowercase().contains(prefix))
+                            .is_some_and(|name| {
+                                name.to_lowercase()
+                                    .replace('_', "")
+                                    .contains(&prefix_normalized)
+                            })
                     })
                     .collect();
 
@@ -760,6 +787,59 @@ pub struct Target { pub id: i32 }
         assert!(
             result.is_none(),
             "Multiple files matching hint should still be ambiguous"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_find_struct_disambiguation_snake_case_filename() {
+        // Tests: CamelCase schema name matches snake_case filename
+        // e.g., "AdminUserSchema" should match "admin_user.rs"
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::create_dir(src_dir.join("models")).unwrap();
+        // Create admin_user.rs with Model
+        std::fs::write(
+            src_dir.join("models").join("admin_user.rs"),
+            "pub struct Model { pub id: i32, pub role: String }",
+        )
+        .unwrap();
+        // Create regular_user.rs with Model
+        std::fs::write(
+            src_dir.join("models").join("regular_user.rs"),
+            "pub struct Model { pub id: i32, pub name: String }",
+        )
+        .unwrap();
+
+        // With hint "AdminUserSchema" - should find admin_user.rs
+        // "AdminUserSchema" -> prefix "adminuser" -> matches "admin_user.rs" (normalized: "adminuser")
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("AdminUserSchema"));
+        assert!(
+            result.is_some(),
+            "AdminUserSchema hint should match admin_user.rs"
+        );
+        let (metadata, module_path) = result.unwrap();
+        assert!(
+            metadata.definition.contains("role"),
+            "Should be admin_user Model with role field"
+        );
+        assert!(
+            module_path.contains(&"admin_user".to_string()),
+            "Module path should contain 'admin_user'"
+        );
+
+        // With hint "RegularUserSchema" - should find regular_user.rs
+        let result_regular =
+            find_struct_by_name_in_all_files(src_dir, "Model", Some("RegularUserSchema"));
+        assert!(
+            result_regular.is_some(),
+            "RegularUserSchema hint should match regular_user.rs"
+        );
+        let (metadata_regular, _) = result_regular.unwrap();
+        assert!(
+            metadata_regular.definition.contains("name"),
+            "Should be regular_user Model with name field"
         );
     }
 
