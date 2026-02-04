@@ -24,26 +24,27 @@ pub fn detect_circular_fields(
     source_module_path: &[String],
     related_schema_def: &str,
 ) -> Vec<String> {
-    let mut circular_fields = Vec::new();
-
     // Parse the related schema definition
     let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_schema_def) else {
-        return circular_fields;
+        return Vec::new();
     };
 
     // Get the source module name (e.g., "memo" from ["crate", "models", "memo"])
     let source_module = source_module_path.last().map(|s| s.as_str()).unwrap_or("");
 
-    if let syn::Fields::Named(fields_named) = &parsed.fields {
-        for field in &fields_named.named {
-            let Some(field_ident) = &field.ident else {
-                continue;
-            };
+    let syn::Fields::Named(fields_named) = &parsed.fields else {
+        return Vec::new();
+    };
+
+    fields_named
+        .named
+        .iter()
+        .filter_map(|field| {
+            let field_ident = field.ident.as_ref()?;
             let field_name = field_ident.to_string();
 
             // Check if this field's type references the source schema
-            let field_ty = &field.ty;
-            let ty_str = quote!(#field_ty).to_string();
+            let ty_str = quote!(#field.ty).to_string();
 
             // Normalize whitespace: quote!() produces "foo :: bar" instead of "foo::bar"
             // Remove all whitespace to make pattern matching reliable
@@ -52,7 +53,7 @@ pub fn detect_circular_fields(
             // SKIP HasMany relations - they are excluded by default from schemas,
             // so they don't create actual circular references in the output
             if ty_str_normalized.contains("HasMany<") {
-                continue;
+                return None;
             }
 
             // Check for BelongsTo/HasOne patterns that reference the source:
@@ -68,13 +69,9 @@ pub fn detect_circular_fields(
                     || ty_str_normalized
                         .contains(&format!("{}Schema", capitalize_first(source_module))));
 
-            if is_circular {
-                circular_fields.push(field_name);
-            }
-        }
-    }
-
-    circular_fields
+            is_circular.then_some(field_name)
+        })
+        .collect()
 }
 
 /// Check if a Model has any BelongsTo or HasOne relations (FK-based relations).
@@ -112,32 +109,38 @@ pub fn is_circular_relation_required(related_model_def: &str, circular_field_nam
         return false;
     };
 
-    if let syn::Fields::Named(fields_named) = &parsed.fields {
-        for field in &fields_named.named {
-            let Some(field_ident) = &field.ident else {
-                continue;
-            };
-            if *field_ident != circular_field_name {
-                continue;
-            }
+    let syn::Fields::Named(fields_named) = &parsed.fields else {
+        return false;
+    };
 
-            // Check if this is a HasOne/BelongsTo with required FK
-            let ty_str = quote!(#field.ty).to_string().replace(' ', "");
-            if ty_str.contains("HasOne<") || ty_str.contains("BelongsTo<") {
-                // Check FK field optionality
-                let fk_field = extract_belongs_to_from_field(&field.attrs);
-                if let Some(fk) = fk_field {
-                    // Find FK field and check if it's Option
-                    for f in &fields_named.named {
-                        if f.ident.as_ref().map(|i| i.to_string()) == Some(fk.clone()) {
-                            return !is_option_type(&f.ty);
-                        }
-                    }
-                }
-            }
-        }
+    // Find the circular field by name
+    let Some(field) = fields_named.named.iter().find(|f| {
+        f.ident
+            .as_ref()
+            .map(|i| i == circular_field_name)
+            .unwrap_or(false)
+    }) else {
+        return false;
+    };
+
+    // Check if this is a HasOne/BelongsTo with required FK
+    let ty_str = quote!(#field.ty).to_string().replace(' ', "");
+    if !ty_str.contains("HasOne<") && !ty_str.contains("BelongsTo<") {
+        return false;
     }
-    false
+
+    // Check FK field optionality
+    let Some(fk) = extract_belongs_to_from_field(&field.attrs) else {
+        return false;
+    };
+
+    // Find FK field and check if it's Option
+    fields_named
+        .named
+        .iter()
+        .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(fk.clone()))
+        .map(|f| !is_option_type(&f.ty))
+        .unwrap_or(false)
 }
 
 /// Generate a default value for a SeaORM relation field in inline construction.
