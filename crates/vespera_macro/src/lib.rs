@@ -906,7 +906,6 @@ fn generate_router_code(
 }
 
 /// Input for export_app! macro
-#[derive(Debug)]
 struct ExportAppInput {
     /// App name (struct name to generate)
     name: syn::Ident,
@@ -2418,8 +2417,8 @@ pub fn get_users() -> String {
         let tokens = quote::quote!(MyApp, unknown = "value");
         let result: syn::Result<ExportAppInput> = syn::parse2(tokens);
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unknown field"));
+        let err = result.err().unwrap();
+        assert!(err.to_compile_error().to_string().contains("unknown field"));
     }
 
     #[test]
