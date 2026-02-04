@@ -211,6 +211,15 @@ pub fn capitalize_first(s: &str) -> String {
 mod tests {
     use super::*;
     use rstest::rstest;
+    fn empty_type_path() -> syn::Type {
+        syn::Type::Path(syn::TypePath {
+            qself: None,
+            path: syn::Path {
+                leading_colon: None,
+                segments: syn::punctuated::Punctuated::new(),
+            },
+        })
+    }
 
     #[rstest]
     #[case("hello", "Hello")]
@@ -297,6 +306,18 @@ mod tests {
     }
 
     #[test]
+    fn test_is_option_type_non_path() {
+        let ty: syn::Type = syn::parse_str("&str").unwrap();
+        assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn test_is_option_type_empty_path() {
+        let ty = empty_type_path();
+        assert!(!is_option_type(&ty));
+    }
+
+    #[test]
     fn test_is_seaorm_relation_type_has_one() {
         let ty: syn::Type = syn::parse_str("HasOne<User>").unwrap();
         assert!(is_seaorm_relation_type(&ty));
@@ -323,6 +344,12 @@ mod tests {
     #[test]
     fn test_is_seaorm_relation_type_non_path() {
         let ty: syn::Type = syn::parse_str("&str").unwrap();
+        assert!(!is_seaorm_relation_type(&ty));
+    }
+
+    #[test]
+    fn test_is_seaorm_relation_type_empty_path() {
+        let ty = empty_type_path();
         assert!(!is_seaorm_relation_type(&ty));
     }
 
@@ -445,5 +472,14 @@ mod tests {
         let tokens = resolve_type_to_absolute_path(&ty, &module_path);
         let output = tokens.to_string();
         assert!(output.contains("crate :: models :: CustomType < T >"));
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_empty_segments() {
+        let ty = empty_type_path();
+        let module_path = vec!["crate".to_string()];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.trim().is_empty());
     }
 }
