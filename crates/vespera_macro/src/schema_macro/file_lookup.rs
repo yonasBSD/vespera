@@ -570,17 +570,33 @@ pub struct Target { pub id: i32 }
 
     #[test]
     #[serial]
-    fn test_find_struct_by_name_with_valid_files() {
-        // Line 122 (Err(_) => continue) is defensive error handling
-        // Hard to trigger reliably cross-platform - just verify function works
+    fn test_find_struct_by_name_unreadable_file() {
+        // Coverage for line 122: Err(_) => continue
+        // Create broken symlink that exists but can't be read
         let temp_dir = TempDir::new().unwrap();
         let src_dir = temp_dir.path();
 
-        std::fs::write(src_dir.join("valid.rs"), "pub struct Target { pub id: i32 }").unwrap();
+        // Valid file
+        std::fs::write(
+            src_dir.join("valid.rs"),
+            "pub struct Target { pub id: i32 }",
+        )
+        .unwrap();
+
+        // Broken symlink -> read_to_string fails -> line 122
+        let broken = src_dir.join("broken.rs");
+        let nonexistent = src_dir.join("nonexistent");
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&nonexistent, &broken);
+        #[cfg(windows)]
+        let _ = std::os::windows::fs::symlink_file(&nonexistent, &broken);
 
         let result = find_struct_by_name_in_all_files(src_dir, "Target", None);
 
-        assert!(result.is_some(), "Should find Target in valid file");
+        assert!(
+            result.is_some(),
+            "Should find Target, skipping broken symlink"
+        );
     }
 
     #[test]
