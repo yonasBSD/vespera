@@ -65,10 +65,11 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+type SchemaStorage = LazyLock<Mutex<Vec<StructMetadata>>>;
+
 // Schema Storage global variable
 #[cfg(not(tarpaulin_include))]
-static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
+static SCHEMA_STORAGE: SchemaStorage = LazyLock::new(|| Mutex::new(Vec::<StructMetadata>::new()));
 
 /// Extract custom schema name from #[schema(name = "...")] attribute
 fn extract_schema_name_attr(attrs: &[syn::Attribute]) -> Option<String> {
