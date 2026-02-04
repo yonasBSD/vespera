@@ -1448,4 +1448,422 @@ mod tests {
         // Check that we don't have "impl From < Model > for MemoSchema"
         // (Relations disable the automatic From impl)
     }
+
+    #[test]
+    fn test_generate_schema_type_code_qualified_path_file_lookup_success() {
+        // Coverage for lines 76, 78-79, 81
+        // Tests: qualified path found via file lookup, module_path used when source is empty
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create user.rs with Model struct
+        let user_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Use qualified path - file lookup should succeed (lines 75-81)
+        let tokens = quote!(UserSchema from crate::models::user::Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![]; // Empty storage - force file lookup
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("UserSchema"));
+        assert!(output.contains("id"));
+        assert!(output.contains("name"));
+        assert!(output.contains("email"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_simple_name_file_lookup_fallback() {
+        // Coverage for lines 100, 103-104
+        // Tests: simple name (not in storage) found via file lookup with schema_name hint
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create user.rs with Model struct
+        let user_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub username: String,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Use simple name with schema_name hint - file lookup should find it via hint
+        // name = "UserSchema" provides hint to look in user.rs
+        let tokens = quote!(Schema from Model, name = "UserSchema");
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![]; // Empty storage - force file lookup
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("Schema"));
+        assert!(output.contains("id"));
+        assert!(output.contains("username"));
+        // Metadata should be returned for custom name
+        assert!(metadata.is_some());
+        assert_eq!(metadata.unwrap().name, "UserSchema");
+    }
+
+    // ============================================================
+    // Coverage tests for HasMany explicit pick with inline type (lines 258-270)
+    // ============================================================
+
+    #[test]
+    fn test_generate_schema_type_code_has_many_explicit_pick_inline_type() {
+        // Coverage for lines 258-260, 262-263, 265, 267-268
+        // Tests: HasMany is explicitly picked, inline type is generated
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create memo.rs with Model struct (the target of HasMany)
+        let memo_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub title: String,
+    pub content: String,
+}
+"#;
+        std::fs::write(models_dir.join("memo.rs"), memo_model).unwrap();
+
+        // Create user.rs with Model struct that has HasMany relation
+        let user_model = r#"
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub memos: HasMany<super::memo::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Explicitly pick HasMany field - should generate inline type
+        let tokens =
+            quote!(UserSchema from crate::models::user::Model, pick = ["id", "name", "memos"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![];
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Should have inline type definition for memos
+        assert!(output.contains("UserSchema"));
+        assert!(output.contains("memos"));
+        // Inline type should be Vec<InlineType>
+        assert!(output.contains("Vec <"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_has_many_explicit_pick_file_not_found() {
+        // Coverage for line 270
+        // Tests: HasMany is explicitly picked but target file not found - should skip field
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create user.rs with Model struct that has HasMany to nonexistent model
+        let user_model = r#"
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub items: HasMany<super::nonexistent::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Explicitly pick HasMany field - file not found, should skip
+        let tokens =
+            quote!(UserSchema from crate::models::user::Model, pick = ["id", "name", "items"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![];
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // items field should be skipped (file not found for inline type)
+        assert!(!output.contains("items"));
+        // But other fields should exist
+        assert!(output.contains("id"));
+        assert!(output.contains("name"));
+    }
+
+    // ============================================================
+    // Coverage tests for BelongsTo/HasOne circular reference inline types (lines 277-294)
+    // ============================================================
+
+    #[test]
+    fn test_generate_schema_type_code_belongs_to_circular_inline_optional() {
+        // Coverage for lines 277-278, 281-282, 285, 288-289, 294
+        // Tests: BelongsTo with circular reference, optional field (is_optional = true)
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create user.rs with Model that references memo (circular)
+        let user_model = r#"
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub memo: BelongsTo<super::memo::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Create memo.rs with Model that references user (completing the circle)
+        let memo_model = r#"
+#[sea_orm(table_name = "memos")]
+pub struct Model {
+    pub id: i32,
+    pub title: String,
+    pub user_id: i32,
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("memo.rs"), memo_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Generate schema from memo - has BelongsTo user which has circular ref back
+        let tokens = quote!(MemoSchema from crate::models::memo::Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![];
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Should have inline type definition for circular relation
+        assert!(output.contains("MemoSchema"));
+        assert!(output.contains("user"));
+        // BelongsTo is optional by default, so should have Option<Box<...>>
+        assert!(output.contains("Option < Box <"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_has_one_circular_inline_required() {
+        // Coverage for lines 277-278, 281-282, 285, 291, 294
+        // Tests: HasOne with circular reference, required field (is_optional = false)
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create profile.rs with Model that references user (circular)
+        let profile_model = r#"
+#[sea_orm(table_name = "profiles")]
+pub struct Model {
+    pub id: i32,
+    pub bio: String,
+    pub user: BelongsTo<super::user::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("profile.rs"), profile_model).unwrap();
+
+        // Create user.rs with Model that has HasOne profile
+        // HasOne with required FK becomes required (non-optional)
+        let user_model = r#"
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+    pub profile_id: i32,
+    #[sea_orm(has_one = "super::profile::Entity", from = "profile_id")]
+    pub profile: HasOne<super::profile::Entity>,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // Generate schema from user - has HasOne profile which has circular ref back
+        let tokens = quote!(UserSchema from crate::models::user::Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![];
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        // Should have inline type definition for circular relation
+        assert!(output.contains("UserSchema"));
+        assert!(output.contains("profile"));
+        // HasOne with required FK should have Box<...> (not Option<Box<...>>)
+        assert!(output.contains("Box <"));
+    }
+
+    #[test]
+    fn test_generate_schema_type_code_qualified_path_with_nonempty_module_path() {
+        // Coverage for line 78 (the else branch where source_module_path is NOT empty)
+        // Tests: qualified path with explicit module segments that are not empty
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create user.rs
+        let user_model = r#"
+pub struct Model {
+    pub id: i32,
+    pub name: String,
+}
+"#;
+        std::fs::write(models_dir.join("user.rs"), user_model).unwrap();
+
+        // Save original CARGO_MANIFEST_DIR
+        let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        // SAFETY: This is a test that runs single-threaded
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // crate::models::user::Model - this is a qualified path
+        // extract_module_path should return ["crate", "models", "user"]
+        // So the if source_module_path.is_empty() check should be false
+        let tokens = quote!(UserSchema from crate::models::user::Model);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        let storage: Vec<StructMetadata> = vec![];
+
+        let result = generate_schema_type_code(&input, &storage);
+
+        // Restore CARGO_MANIFEST_DIR
+        // SAFETY: This is a test that runs single-threaded
+        unsafe {
+            if let Some(dir) = original_manifest_dir {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(result.is_ok());
+        let (tokens, _metadata) = result.unwrap();
+        let output = tokens.to_string();
+        assert!(output.contains("UserSchema"));
+    }
 }
