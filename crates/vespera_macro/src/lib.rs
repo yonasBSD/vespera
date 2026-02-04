@@ -65,6 +65,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 fn init_schema_storage() -> Mutex<Vec<StructMetadata>> {
     Mutex::new(Vec::new())
 }
