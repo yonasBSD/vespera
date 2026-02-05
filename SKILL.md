@@ -173,6 +173,25 @@ npx @apidevtools/swagger-cli validate openapi.json
 > - SeaORM relation support (HasOne, BelongsTo, HasMany)
 > - No manual field synchronization
 
+### Best Practices
+
+| DO | DON'T |
+|----|-------|
+| Use `pick` to select only needed fields | Define manual structs that duplicate Model fields |
+| Use `omit` to exclude sensitive fields | Use `name` parameter unnecessarily |
+| Use full `crate::models::...` paths | Rely on implicit module resolution |
+| Define schema near route handlers | Scatter schemas across unrelated files |
+
+**Primary Parameters (USE THESE):**
+- `pick = [...]` - Allowlist: include ONLY these fields
+- `omit = [...]` - Denylist: exclude these fields
+
+**Advanced Parameters (USE SPARINGLY):**
+- `partial` - For PATCH endpoints only
+- `rename` - Only when API naming differs from model
+- `add` - Only when truly new fields needed (breaks `From` impl)
+- `name` - **AVOID** unless same-file Model reference (see below)
+
 ### Why Not Manual Structs?
 
 ```rust
@@ -223,9 +242,12 @@ schema_type!(InternalDTO from Model, ignore);
 schema_type!(LargeResponse from SomeType, clone = false);
 ```
 
-### Same-File Model Reference
+### Same-File Model Reference (When to Use `name`)
 
-When the model is in the same file, use simple name with `name` parameter:
+> **The `name` parameter is ONLY needed for same-file Model references.**
+> For cross-file references, use full paths and descriptive struct names instead.
+
+When defining Schema in the same file as Model (common for SeaORM entities):
 
 ```rust
 // In src/models/user.rs
@@ -237,9 +259,19 @@ pub struct Model {
 
 pub enum UserStatus { Active, Inactive }
 
-// Simple `Model` path works - module path inferred from file location
+// ✅ CORRECT: Same-file reference - use `name` for OpenAPI schema name
 vespera::schema_type!(Schema from Model, name = "UserSchema");
+
+// ❌ WRONG: Using `name` for cross-file reference
+// schema_type!(Schema from crate::models::user::Model, name = "UserResponse");
+// ✅ CORRECT: Use descriptive struct name instead
+// schema_type!(UserResponse from crate::models::user::Model, omit = ["password"]);
 ```
+
+**Why avoid `name` for cross-file references?**
+- The struct name itself becomes the OpenAPI schema name
+- `UserResponse` is clearer than `Schema` with `name = "UserResponse"`
+- Less parameters = less complexity
 
 ### Cross-File References
 
@@ -281,17 +313,29 @@ Json(model.into())  // Easy conversion!
 
 ### Parameters
 
+**Recommended (Primary):**
+
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `pick` | Include only these fields | `pick = ["name", "email"]` |
 | `omit` | Exclude these fields | `omit = ["password"]` |
-| `rename` | Rename fields | `rename = [("id", "user_id")]` |
-| `add` | Add new fields (disables From impl) | `add = [("extra": String)]` |
-| `partial` | Make fields optional for PATCH | `partial` or `partial = ["name"]` |
-| `name` | Custom OpenAPI schema name | `name = "UserSchema"` |
-| `rename_all` | Serde rename strategy | `rename_all = "camelCase"` |
-| `ignore` | Skip Schema derive | bare keyword |
-| `clone` | Control Clone derive (default: true) | `clone = false` |
+
+**Situational (Use When Needed):**
+
+| Parameter | Description | When to Use |
+|-----------|-------------|-------------|
+| `partial` | Make fields optional | PATCH endpoints only |
+| `rename` | Rename fields | API naming differs from model |
+| `rename_all` | Serde rename strategy | Different casing needed |
+| `add` | Add new fields | New fields not in model (breaks `From` impl) |
+
+**Avoid (Special Cases Only):**
+
+| Parameter | Description | When to Use |
+|-----------|-------------|-------------|
+| `name` | Custom OpenAPI schema name | **Same-file Model reference only** |
+| `ignore` | Skip Schema derive | Internal DTOs not for OpenAPI |
+| `clone` | Control Clone derive | Large structs where Clone is expensive |
 
 ### SeaORM Integration (RECOMMENDED)
 
@@ -334,7 +378,9 @@ vespera::schema_type!(Schema from Model, name = "MemoSchema");
 ### Complete Example
 
 ```rust
-// src/models/user.rs (Sea-ORM entity)
+// ============================================
+// src/models/user.rs (SeaORM entity)
+// ============================================
 #[derive(Clone, Debug, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "users")]
 pub struct Model {
@@ -347,10 +393,16 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
 }
 
-// Generate Schema in same file - simple Model path
+// ✅ Same-file: use `name` parameter for OpenAPI schema name
 vespera::schema_type!(Schema from Model, name = "UserSchema");
 
-// src/routes/users.rs - use full path for cross-file reference
+// ============================================
+// src/routes/users.rs (Route handlers)
+// ============================================
+use vespera::schema_type;
+
+// ✅ Cross-file: use descriptive struct names + pick/omit
+// NO `name` parameter needed - struct name = OpenAPI schema name
 schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
 schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
 schema_type!(UserPatch from crate::models::user::Model, omit = ["password_hash", "id"], partial);
@@ -368,6 +420,22 @@ pub async fn patch_user(
 ) -> Json<UserResponse> {
     // Apply partial update...
 }
+```
+
+### Quick Reference
+
+```rust
+// ✅ RECOMMENDED PATTERNS
+schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
+schema_type!(UserListItem from crate::models::user::Model, pick = ["id", "name"]);
+
+// ⚠️ USE SPARINGLY
+schema_type!(UserPatch from crate::models::user::Model, partial);  // PATCH only
+schema_type!(Schema from Model, name = "UserSchema");              // Same-file only
+
+// ❌ AVOID
+schema_type!(Schema from crate::models::user::Model, name = "UserResponse");  // Use struct name!
 ```
 
 ---
