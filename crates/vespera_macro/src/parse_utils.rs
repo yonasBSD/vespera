@@ -353,4 +353,71 @@ mod tests {
         let result = parser.parse2(tokens);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_bracketed_list_empty() {
+        // Test parse_bracketed_list with empty brackets
+        let parser = |input: ParseStream| {
+            parse_bracketed_list(input, |input| {
+                input.parse::<LitStr>().map(|lit| lit.value())
+            })
+        };
+
+        let tokens = quote::quote!([]);
+        let result = parser.parse2(tokens);
+        assert!(result.is_ok());
+        let items: Vec<String> = result.unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bracketed_list_single_item() {
+        // Test parse_bracketed_list with single item
+        let parser = |input: ParseStream| {
+            parse_bracketed_list(input, |input| {
+                input.parse::<LitStr>().map(|lit| lit.value())
+            })
+        };
+
+        let tokens = quote::quote!(["single"]);
+        let result = parser.parse2(tokens);
+        assert!(result.is_ok());
+        let items: Vec<String> = result.unwrap();
+        assert_eq!(items, vec!["single"]);
+    }
+
+    #[test]
+    fn test_parse_bracketed_list_with_trailing_comma() {
+        // Test parse_bracketed_list with trailing comma
+        let parser = |input: ParseStream| {
+            parse_bracketed_list(input, |input| {
+                input.parse::<LitStr>().map(|lit| lit.value())
+            })
+        };
+
+        let tokens = quote::quote!(["a", "b",]);
+        let result = parser.parse2(tokens);
+        assert!(result.is_ok());
+        let items: Vec<String> = result.unwrap();
+        assert_eq!(items, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_parse_bracketed_list_integers() {
+        // Test parse_bracketed_list with integer literals
+        use syn::LitInt;
+        let parser = |input: ParseStream| {
+            parse_bracketed_list(input, |input| {
+                input
+                    .parse::<LitInt>()
+                    .and_then(|lit| lit.base10_parse::<i32>())
+            })
+        };
+
+        let tokens = quote::quote!([1, 2, 3]);
+        let result = parser.parse2(tokens);
+        assert!(result.is_ok());
+        let items: Vec<i32> = result.unwrap();
+        assert_eq!(items, vec![1, 2, 3]);
+    }
 }

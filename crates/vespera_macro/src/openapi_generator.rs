@@ -1281,4 +1281,22 @@ pub fn get_user() -> User {
         let value = utils_get_type_default(&ty);
         assert!(value.is_none());
     }
+
+    #[test]
+    fn test_generate_openapi_with_unparseable_definition() {
+        // Test line 42: syn::parse_str fails with invalid Rust syntax
+        // This triggers the `continue` branch when parsing fails
+        let mut metadata = CollectedMetadata::new();
+        metadata.structs.push(StructMetadata {
+            name: "Invalid".to_string(),
+            // Invalid Rust syntax - cannot be parsed by syn
+            definition: "struct { invalid syntax {{{{".to_string(),
+            include_in_openapi: true,
+        });
+
+        // Should gracefully skip unparseable definitions
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        // The unparseable definition should be skipped
+        assert!(doc.components.is_none() || doc.components.as_ref().unwrap().schemas.is_none());
+    }
 }
