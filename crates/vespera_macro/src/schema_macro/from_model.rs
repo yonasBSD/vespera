@@ -184,9 +184,8 @@ pub fn generate_from_model_with_relations(
                                 let #field_name: Vec<_> = vec![];
                             }
                         }
-                    } else if rel.relation_enum.is_some() {
+                    } else if let Some(via_rel_value) = &rel.relation_enum {
                         // Has relation_enum but no via_rel - try using relation_enum as via_rel
-                        let via_rel_value = rel.relation_enum.as_ref().unwrap();
                         let schema_path_str = rel.schema_path.to_string().replace(' ', "");
                         if let Some(fk_col_name) =
                             find_fk_column_from_target_entity(&schema_path_str, via_rel_value)
