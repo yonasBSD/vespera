@@ -41,6 +41,7 @@ Schema {
     any_of: None,
     one_of: None,
     not: None,
+    discriminator: None,
     nullable: None,
     read_only: None,
     write_only: None,

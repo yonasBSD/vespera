@@ -10,8 +10,9 @@ use vespera_core::schema::{Schema, SchemaRef, SchemaType};
 
 use super::{
     serde_attrs::{
-        extract_default, extract_doc_comment, extract_field_rename, extract_rename_all,
-        extract_skip, extract_skip_serializing_if, rename_field, strip_raw_prefix,
+        extract_default, extract_doc_comment, extract_field_rename, extract_flatten,
+        extract_rename_all, extract_skip, extract_skip_serializing_if, rename_field,
+        strip_raw_prefix,
     },
     type_schema::parse_type_to_schema_ref,
 };
@@ -35,6 +36,7 @@ pub fn parse_struct_to_schema(
 ) -> Schema {
     let mut properties = BTreeMap::new();
     let mut required = Vec::new();
+    let mut flattened_refs: Vec<SchemaRef> = Vec::new();
 
     // Extract struct-level doc comment for schema description
     let struct_description = extract_doc_comment(&struct_item.attrs);
@@ -47,6 +49,18 @@ pub fn parse_struct_to_schema(
             for field in &fields_named.named {
                 // Check if field should be skipped
                 if extract_skip(&field.attrs) {
+                    continue;
+                }
+
+                // Check if field should be flattened
+                if extract_flatten(&field.attrs) {
+                    // Get the schema ref for the flattened field type
+                    let field_type = &field.ty;
+                    let schema_ref =
+                        parse_type_to_schema_ref(field_type, known_schemas, struct_definitions);
+
+                    // Add to flattened refs for allOf composition
+                    flattened_refs.push(schema_ref);
                     continue;
                 }
 
@@ -138,20 +152,50 @@ pub fn parse_struct_to_schema(
         }
     }
 
-    Schema {
-        schema_type: Some(SchemaType::Object),
-        description: struct_description,
-        properties: if properties.is_empty() {
-            None
-        } else {
-            Some(properties)
-        },
-        required: if required.is_empty() {
-            None
-        } else {
-            Some(required)
-        },
-        ..Schema::object()
+    // If there are flattened fields, use allOf composition
+    if !flattened_refs.is_empty() {
+        // Create the inline schema for non-flattened properties
+        let inline_schema = Schema {
+            schema_type: Some(SchemaType::Object),
+            properties: if properties.is_empty() {
+                None
+            } else {
+                Some(properties)
+            },
+            required: if required.is_empty() {
+                None
+            } else {
+                Some(required)
+            },
+            ..Schema::object()
+        };
+
+        // Build allOf: [inline_schema, ...flattened_refs]
+        let mut all_of = vec![SchemaRef::Inline(Box::new(inline_schema))];
+        all_of.extend(flattened_refs);
+
+        Schema {
+            description: struct_description,
+            all_of: Some(all_of),
+            ..Default::default()
+        }
+    } else {
+        // No flattened fields - return normal schema
+        Schema {
+            schema_type: Some(SchemaType::Object),
+            description: struct_description,
+            properties: if properties.is_empty() {
+                None
+            } else {
+                Some(properties)
+            },
+            required: if required.is_empty() {
+                None
+            } else {
+                Some(required)
+            },
+            ..Schema::object()
+        }
     }
 }
 
@@ -324,5 +368,105 @@ mod tests {
             );
             assert!(user_schema.all_of.is_some());
         }
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_with_flatten() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct UserListRequest {
+                filter: String,
+                #[serde(flatten)]
+                pagination: Pagination,
+            }
+        "#,
+        )
+        .unwrap();
+
+        let mut known = HashMap::new();
+        known.insert(
+            "Pagination".to_string(),
+            "struct Pagination { page: i32 }".to_string(),
+        );
+
+        let schema = parse_struct_to_schema(&struct_item, &known, &HashMap::new());
+
+        // Should have allOf
+        assert!(
+            schema.all_of.is_some(),
+            "Schema should have allOf for flatten"
+        );
+        let all_of = schema.all_of.as_ref().unwrap();
+        assert_eq!(all_of.len(), 2, "allOf should have 2 elements");
+
+        // First element should be the object with non-flattened properties
+        if let SchemaRef::Inline(obj_schema) = &all_of[0] {
+            let props = obj_schema.properties.as_ref().unwrap();
+            assert!(props.contains_key("filter"), "Should have filter property");
+            assert!(
+                !props.contains_key("pagination"),
+                "Should NOT have pagination property"
+            );
+        } else {
+            panic!("First allOf element should be inline schema");
+        }
+
+        // Second element should be $ref to Pagination
+        if let SchemaRef::Ref(reference) = &all_of[1] {
+            assert_eq!(reference.ref_path, "#/components/schemas/Pagination");
+        } else {
+            panic!("Second allOf element should be $ref");
+        }
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_with_multiple_flatten() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct Combined {
+                name: String,
+                #[serde(flatten)]
+                pagination: Pagination,
+                #[serde(flatten)]
+                metadata: Metadata,
+            }
+        "#,
+        )
+        .unwrap();
+
+        let mut known = HashMap::new();
+        known.insert("Pagination".to_string(), "struct Pagination {}".to_string());
+        known.insert("Metadata".to_string(), "struct Metadata {}".to_string());
+
+        let schema = parse_struct_to_schema(&struct_item, &known, &HashMap::new());
+
+        assert!(schema.all_of.is_some());
+        let all_of = schema.all_of.as_ref().unwrap();
+        assert_eq!(
+            all_of.len(),
+            3,
+            "allOf should have 3 elements (1 inline + 2 refs)"
+        );
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_no_flatten() {
+        // Existing struct without flatten should NOT use allOf
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            struct Simple {
+                name: String,
+                age: i32,
+            }
+        "#,
+        )
+        .unwrap();
+
+        let schema = parse_struct_to_schema(&struct_item, &HashMap::new(), &HashMap::new());
+        assert!(
+            schema.all_of.is_none(),
+            "Simple struct should not have allOf"
+        );
+        assert!(schema.properties.is_some());
     }
 }
