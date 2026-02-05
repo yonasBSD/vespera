@@ -903,4 +903,74 @@ mod tests {
         assert!(output.contains("user"));
         assert!(output.contains("Schema"));
     }
+
+    // =========================================================================
+    // Tests for extract_via_rel (coverage for lines 172-186)
+    // =========================================================================
+
+    #[test]
+    fn test_extract_via_rel_with_value() {
+        // Tests line 178-179: via_rel = "..." found
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(has_many, via_rel = "TargetUser")]
+        )];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, Some("TargetUser".to_string()));
+    }
+
+    #[test]
+    fn test_extract_via_rel_with_relation_enum() {
+        // Tests line 178-179: via_rel alongside other attributes
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(has_many, relation_enum = "TargetUserNotifications", via_rel = "TargetUser")]
+        )];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, Some("TargetUser".to_string()));
+    }
+
+    #[test]
+    fn test_extract_via_rel_without_via_rel() {
+        // Tests: No via_rel attribute present
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(has_many, relation_enum = "Memos")]
+        )];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_via_rel_non_sea_orm_attr() {
+        // Tests line 172-173: Non-sea_orm attribute returns None
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(skip)])];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_via_rel_empty_attrs() {
+        // Tests: Empty attributes
+        let result = extract_via_rel(&[]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_via_rel_with_other_key_value_pairs() {
+        // Tests line 180-182: Other key=value pairs are consumed without error
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(
+            #[sea_orm(belongs_to = "super::user::Entity", from = "user_id", to = "id", via_rel = "Author")]
+        )];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, Some("Author".to_string()));
+    }
+
+    #[test]
+    fn test_extract_via_rel_multiple_sea_orm_attrs() {
+        // Tests: Multiple sea_orm attributes, via_rel in second one
+        let attrs: Vec<syn::Attribute> = vec![
+            syn::parse_quote!(#[sea_orm(has_many)]),
+            syn::parse_quote!(#[sea_orm(via_rel = "Comments")]),
+        ];
+        let result = extract_via_rel(&attrs);
+        assert_eq!(result, Some("Comments".to_string()));
+    }
 }
