@@ -121,6 +121,8 @@ pub fn is_primitive_or_known_type(name: &str) -> bool {
             | "DateTimeWithTimeZone"
             | "DateTimeUtc"
             | "DateTimeLocal"
+            | "Date"  // SeaORM re-export of chrono::NaiveDate
+            | "Time"  // SeaORM re-export of chrono::NaiveTime
             // UUID
             | "Uuid"
             // Serde JSON
@@ -173,6 +175,30 @@ pub fn resolve_type_to_absolute_path(ty: &Type, source_module_path: &[String]) -
     let args = &segment.arguments;
 
     quote! { #(#path_idents)::* :: #type_ident #args }
+}
+
+/// Extract module path from a schema path TokenStream.
+///
+/// The schema_path is something like `crate::models::user::Schema`.
+/// This returns `["crate", "models", "user"]` (excluding the final type name).
+pub fn extract_module_path_from_schema_path(schema_path: &proc_macro2::TokenStream) -> Vec<String> {
+    let path_str = schema_path.to_string();
+    // Parse segments: "crate :: models :: user :: Schema" -> ["crate", "models", "user", "Schema"]
+    let segments: Vec<&str> = path_str
+        .split("::")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Return all but the last segment (which is "Schema" or "Entity")
+    if segments.len() > 1 {
+        segments[..segments.len() - 1]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        vec![]
+    }
 }
 
 /// Extract the module path from a type (excluding the type name itself).
@@ -678,5 +704,45 @@ mod tests {
     fn test_is_primitive_like_vec_of_datetime() {
         let ty: syn::Type = syn::parse_str("Vec<DateTime<Utc>>").unwrap();
         assert!(is_primitive_like(&ty));
+    }
+
+    // Tests for extract_module_path_from_schema_path
+
+    #[rstest]
+    #[case("crate :: models :: user :: Schema", vec!["crate", "models", "user"])]
+    #[case("crate :: models :: nested :: deep :: Model", vec!["crate", "models", "nested", "deep"])]
+    #[case("super :: user :: Entity", vec!["super", "user"])]
+    #[case("super :: Model", vec!["super"])]
+    #[case("Schema", vec![])]
+    #[case("Model", vec![])]
+    fn test_extract_module_path_from_schema_path(
+        #[case] path_str: &str,
+        #[case] expected: Vec<&str>,
+    ) {
+        let tokens: proc_macro2::TokenStream = path_str.parse().unwrap();
+        let result = extract_module_path_from_schema_path(&tokens);
+        let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_extract_module_path_from_schema_path_empty() {
+        let tokens = proc_macro2::TokenStream::new();
+        let result = extract_module_path_from_schema_path(&tokens);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_module_path_from_schema_path_with_generics() {
+        // Even with generics, should extract module path correctly
+        let tokens: proc_macro2::TokenStream =
+            "crate :: models :: user :: Schema < T >".parse().unwrap();
+        let result = extract_module_path_from_schema_path(&tokens);
+        // Note: The current implementation splits by "::" which may include generics in last segment
+        // This test documents current behavior
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "crate");
+        assert_eq!(result[1], "models");
+        assert_eq!(result[2], "user");
     }
 }
