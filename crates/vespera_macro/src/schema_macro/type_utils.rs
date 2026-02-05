@@ -219,24 +219,12 @@ pub fn is_map_type(ty: &Type) -> bool {
     false
 }
 
-/// Check if a type is a primitive type OR a known well-behaved container with primitive contents
+/// Check if a type is a primitive type OR a known well-behaved container.
+///
+/// This checks the outer type name against a list of known types (primitives, std containers, etc.).
+/// Types like `Vec`, `Option`, `HashMap` are considered primitive-like regardless of their contents.
 pub fn is_primitive_like(ty: &Type) -> bool {
-    if is_primitive_or_known_type(&extract_type_name(ty).unwrap_or_default()) {
-        return true;
-    }
-    if let Type::Path(type_path) = ty
-        && let Some(seg) = type_path.path.segments.last()
-    {
-        let ident = seg.ident.to_string();
-        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments
-            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
-            && (ident == "Vec" || ident == "Option")
-            && is_primitive_like(inner_ty)
-        {
-            return true;
-        }
-    }
-    false
+    is_primitive_or_known_type(&extract_type_name(ty).unwrap_or_default())
 }
 
 /// Get type-specific default value for simple #[serde(default)]
