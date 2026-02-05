@@ -705,4 +705,44 @@ mod tests {
         let ty: syn::Type = syn::parse_str("Vec<DateTime<Utc>>").unwrap();
         assert!(is_primitive_like(&ty));
     }
+
+    // Tests for extract_module_path_from_schema_path
+
+    #[rstest]
+    #[case("crate :: models :: user :: Schema", vec!["crate", "models", "user"])]
+    #[case("crate :: models :: nested :: deep :: Model", vec!["crate", "models", "nested", "deep"])]
+    #[case("super :: user :: Entity", vec!["super", "user"])]
+    #[case("super :: Model", vec!["super"])]
+    #[case("Schema", vec![])]
+    #[case("Model", vec![])]
+    fn test_extract_module_path_from_schema_path(
+        #[case] path_str: &str,
+        #[case] expected: Vec<&str>,
+    ) {
+        let tokens: proc_macro2::TokenStream = path_str.parse().unwrap();
+        let result = extract_module_path_from_schema_path(&tokens);
+        let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_extract_module_path_from_schema_path_empty() {
+        let tokens = proc_macro2::TokenStream::new();
+        let result = extract_module_path_from_schema_path(&tokens);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_module_path_from_schema_path_with_generics() {
+        // Even with generics, should extract module path correctly
+        let tokens: proc_macro2::TokenStream =
+            "crate :: models :: user :: Schema < T >".parse().unwrap();
+        let result = extract_module_path_from_schema_path(&tokens);
+        // Note: The current implementation splits by "::" which may include generics in last segment
+        // This test documents current behavior
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "crate");
+        assert_eq!(result[1], "models");
+        assert_eq!(result[2], "user");
+    }
 }
