@@ -4,3 +4,4 @@ coverage
 build_rs_cov.profraw
 .sisyphus/
 /docs
+.claude
