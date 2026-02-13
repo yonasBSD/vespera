@@ -32,8 +32,9 @@ use seaorm::{
 };
 use transformation::{
     build_omit_set, build_partial_config, build_pick_set, build_rename_map, determine_rename_all,
-    extract_doc_attrs, extract_field_serde_attrs, extract_serde_attrs_without_rename_all,
-    filter_out_serde_rename, should_skip_field, should_wrap_in_option,
+    extract_doc_attrs, extract_field_serde_attrs, extract_form_data_attrs,
+    extract_serde_attrs_without_rename_all, filter_out_serde_rename, should_skip_field,
+    should_wrap_in_option,
 };
 use type_utils::{
     extract_module_path, extract_type_name, is_option_type, is_qualified_path, is_seaorm_model,
@@ -245,6 +246,11 @@ pub fn generate_schema_type_code(
             // Check if this is a SeaORM relation type
             let is_relation = is_seaorm_relation_type(&field.ty);
 
+            // In multipart mode, skip ALL relation fields (multipart forms can't represent nested objects)
+            if input.multipart && is_relation {
+                continue;
+            }
+
             // Get field components, applying partial wrapping if needed
             let original_ty = &field.ty;
             let should_wrap_option = should_wrap_in_option(
@@ -360,58 +366,98 @@ pub fn generate_schema_type_code(
             let vis = &field.vis;
             let source_field_ident = field.ident.clone().unwrap();
 
-            // Filter field attributes: keep serde and doc attributes, remove sea_orm and others
-            // This is important when using schema_type! with models from other files
-            // that may have ORM-specific attributes we don't want in the generated struct
-            let serde_field_attrs = extract_field_serde_attrs(&field.attrs);
-
             // Extract doc attributes to carry over comments to the generated struct
             let doc_attrs = extract_doc_attrs(&field.attrs);
 
-            // Check if field should be renamed
-            if let Some(new_name) = rename_map.get(&rust_field_name) {
-                // Create new identifier for the field
-                let new_field_ident =
-                    syn::Ident::new(new_name, field.ident.as_ref().unwrap().span());
+            if input.multipart {
+                // Multipart mode: emit form_data attrs, suppress serde attrs
+                let form_data_attrs = extract_form_data_attrs(&field.attrs);
 
-                // Filter out serde(rename) attributes from the serde attrs
-                let filtered_attrs = filter_out_serde_rename(&serde_field_attrs);
+                // Check if field should be renamed (rename still applies to Rust field names)
+                if let Some(new_name) = rename_map.get(&rust_field_name) {
+                    let new_field_ident =
+                        syn::Ident::new(new_name, field.ident.as_ref().unwrap().span());
 
-                // Determine the JSON name: use existing serde(rename) if present, otherwise rust field name
-                let json_name =
-                    extract_field_rename(&field.attrs).unwrap_or_else(|| rust_field_name.clone());
+                    field_tokens.push(quote! {
+                        #(#doc_attrs)*
+                        #(#form_data_attrs)*
+                        #vis #new_field_ident: #field_ty
+                    });
 
-                field_tokens.push(quote! {
-                    #(#doc_attrs)*
-                    #(#filtered_attrs)*
-                    #[serde(rename = #json_name)]
-                    #vis #new_field_ident: #field_ty
-                });
+                    field_mappings.push((
+                        new_field_ident,
+                        source_field_ident,
+                        should_wrap_option,
+                        is_relation,
+                    ));
+                } else {
+                    let field_ident = field.ident.clone().unwrap();
 
-                // Track mapping: new field name <- source field name
-                field_mappings.push((
-                    new_field_ident,
-                    source_field_ident,
-                    should_wrap_option,
-                    is_relation,
-                ));
+                    field_tokens.push(quote! {
+                        #(#doc_attrs)*
+                        #(#form_data_attrs)*
+                        #vis #field_ident: #field_ty
+                    });
+
+                    field_mappings.push((
+                        field_ident.clone(),
+                        field_ident,
+                        should_wrap_option,
+                        is_relation,
+                    ));
+                }
             } else {
-                // No rename, keep field with serde and doc attrs
-                let field_ident = field.ident.clone().unwrap();
+                // Normal (serde) mode: emit serde attrs
+                // Filter field attributes: keep serde and doc attributes, remove sea_orm and others
+                // This is important when using schema_type! with models from other files
+                // that may have ORM-specific attributes we don't want in the generated struct
+                let serde_field_attrs = extract_field_serde_attrs(&field.attrs);
 
-                field_tokens.push(quote! {
-                    #(#doc_attrs)*
-                    #(#serde_field_attrs)*
-                    #vis #field_ident: #field_ty
-                });
+                // Check if field should be renamed
+                if let Some(new_name) = rename_map.get(&rust_field_name) {
+                    // Create new identifier for the field
+                    let new_field_ident =
+                        syn::Ident::new(new_name, field.ident.as_ref().unwrap().span());
 
-                // Track mapping: same name
-                field_mappings.push((
-                    field_ident.clone(),
-                    field_ident,
-                    should_wrap_option,
-                    is_relation,
-                ));
+                    // Filter out serde(rename) attributes from the serde attrs
+                    let filtered_attrs = filter_out_serde_rename(&serde_field_attrs);
+
+                    // Determine the JSON name: use existing serde(rename) if present, otherwise rust field name
+                    let json_name = extract_field_rename(&field.attrs)
+                        .unwrap_or_else(|| rust_field_name.clone());
+
+                    field_tokens.push(quote! {
+                        #(#doc_attrs)*
+                        #(#filtered_attrs)*
+                        #[serde(rename = #json_name)]
+                        #vis #new_field_ident: #field_ty
+                    });
+
+                    // Track mapping: new field name <- source field name
+                    field_mappings.push((
+                        new_field_ident,
+                        source_field_ident,
+                        should_wrap_option,
+                        is_relation,
+                    ));
+                } else {
+                    // No rename, keep field with serde and doc attrs
+                    let field_ident = field.ident.clone().unwrap();
+
+                    field_tokens.push(quote! {
+                        #(#doc_attrs)*
+                        #(#serde_field_attrs)*
+                        #vis #field_ident: #field_ty
+                    });
+
+                    // Track mapping: same name
+                    field_mappings.push((
+                        field_ident.clone(),
+                        field_ident,
+                        should_wrap_option,
+                        is_relation,
+                    ));
+                }
             }
         }
     }
@@ -427,7 +473,13 @@ pub fn generate_schema_type_code(
     }
 
     // Build derive list
-    let clone_derive = if input.derive_clone {
+    // In multipart mode, force clone = false (FieldData<NamedTempFile> doesn't implement Clone)
+    let derive_clone = if input.multipart {
+        false
+    } else {
+        input.derive_clone
+    };
+    let clone_derive = if derive_clone {
         quote! { Clone, }
     } else {
         quote! {}
@@ -449,67 +501,93 @@ pub fn generate_schema_type_code(
     // Check if there are any relation fields
     let has_relation_fields = field_mappings.iter().any(|(_, _, _, is_rel)| *is_rel);
 
-    // Generate From impl only if:
-    // 1. `add` is not used (can't auto-populate added fields)
-    // 2. There are no relation fields (relation fields don't exist on source Model)
+    // In multipart mode, skip From and from_model impls entirely
     let source_type = &input.source_type;
-    let from_impl = if input.add.is_none() && !has_relation_fields {
-        let field_assignments: Vec<_> = field_mappings
-            .iter()
-            .map(|(new_ident, source_ident, wrapped, _is_relation)| {
-                if *wrapped {
-                    quote! { #new_ident: Some(source.#source_ident) }
-                } else {
-                    quote! { #new_ident: source.#source_ident }
-                }
-            })
-            .collect();
+    let (from_impl, from_model_impl) = if input.multipart {
+        (quote! {}, quote! {})
+    } else {
+        // Generate From impl only if:
+        // 1. `add` is not used (can't auto-populate added fields)
+        // 2. There are no relation fields (relation fields don't exist on source Model)
+        let from_impl = if input.add.is_none() && !has_relation_fields {
+            let field_assignments: Vec<_> = field_mappings
+                .iter()
+                .map(|(new_ident, source_ident, wrapped, _is_relation)| {
+                    if *wrapped {
+                        quote! { #new_ident: Some(source.#source_ident) }
+                    } else {
+                        quote! { #new_ident: source.#source_ident }
+                    }
+                })
+                .collect();
 
-        quote! {
-            impl From<#source_type> for #new_type_name {
-                fn from(source: #source_type) -> Self {
-                    Self {
-                        #(#field_assignments),*
+            quote! {
+                impl From<#source_type> for #new_type_name {
+                    fn from(source: #source_type) -> Self {
+                        Self {
+                            #(#field_assignments),*
+                        }
                     }
                 }
             }
-        }
-    } else {
-        quote! {}
-    };
+        } else {
+            quote! {}
+        };
 
-    // Generate from_model impl for SeaORM Models WITH relations
-    // - No relations: Use `From` trait (generated above)
-    // - Has relations: async fn from_model(model: Model, db: &DatabaseConnection) -> Result<Self, DbErr>
-    let from_model_impl = if is_source_seaorm_model && input.add.is_none() && has_relation_fields {
-        generate_from_model_with_relations(
-            new_type_name,
-            source_type,
-            &field_mappings,
-            &relation_fields,
-            &source_module_path,
-            schema_storage,
-        )
-    } else {
-        quote! {}
+        // Generate from_model impl for SeaORM Models WITH relations
+        // - No relations: Use `From` trait (generated above)
+        // - Has relations: async fn from_model(model: Model, db: &DatabaseConnection) -> Result<Self, DbErr>
+        let from_model_impl =
+            if is_source_seaorm_model && input.add.is_none() && has_relation_fields {
+                generate_from_model_with_relations(
+                    new_type_name,
+                    source_type,
+                    &field_mappings,
+                    &relation_fields,
+                    &source_module_path,
+                    schema_storage,
+                )
+            } else {
+                quote! {}
+            };
+
+        (from_impl, from_model_impl)
     };
 
     // Generate the new struct (with inline types for circular relations first)
-    let generated_tokens = quote! {
-        // Inline types for circular relation references
-        #(#inline_type_definitions)*
+    let generated_tokens = if input.multipart {
+        // Multipart mode: derive TryFromMultipart instead of serde
+        // Still emit #[serde(rename_all = ...)] so Schema derive can read it for OpenAPI field naming
+        // (Schema derive registers `serde` as a helper attribute, so this is valid without Serialize/Deserialize)
+        quote! {
+            #(#inline_type_definitions)*
 
-        #(#struct_doc_attrs)*
-        #[derive(serde::Serialize, serde::Deserialize, #clone_derive #schema_derive)]
-        #schema_name_attr
-        #[serde(rename_all = #effective_rename_all)]
-        #(#serde_attrs_without_rename_all)*
-        pub struct #new_type_name {
-            #(#field_tokens),*
+            #(#struct_doc_attrs)*
+            #[derive(vespera::axum_typed_multipart::TryFromMultipart, #clone_derive #schema_derive)]
+            #schema_name_attr
+            #[serde(rename_all = #effective_rename_all)]
+            pub struct #new_type_name {
+                #(#field_tokens),*
+            }
         }
+    } else {
+        // Normal serde mode
+        quote! {
+            // Inline types for circular relation references
+            #(#inline_type_definitions)*
 
-        #from_impl
-        #from_model_impl
+            #(#struct_doc_attrs)*
+            #[derive(serde::Serialize, serde::Deserialize, #clone_derive #schema_derive)]
+            #schema_name_attr
+            #[serde(rename_all = #effective_rename_all)]
+            #(#serde_attrs_without_rename_all)*
+            pub struct #new_type_name {
+                #(#field_tokens),*
+            }
+
+            #from_impl
+            #from_model_impl
+        }
     };
 
     // If custom name is provided, create metadata for direct registration

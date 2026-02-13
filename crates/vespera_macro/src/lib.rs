@@ -79,7 +79,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Supports `#[schema(name = "CustomName")]` attribute to set custom OpenAPI schema name.
 #[cfg(not(tarpaulin_include))]
-#[proc_macro_derive(Schema, attributes(schema))]
+#[proc_macro_derive(Schema, attributes(schema, serde))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let (metadata, expanded) = schema_impl::process_derive_schema(&input);

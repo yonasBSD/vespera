@@ -12,10 +12,12 @@ pub mod enums;
 pub mod error;
 pub mod flatten;
 pub mod foo;
+pub mod form;
 pub mod generic;
 pub mod health;
 pub mod memos;
 pub mod path;
+pub mod typed_form;
 pub mod typed_header;
 pub mod users;
 

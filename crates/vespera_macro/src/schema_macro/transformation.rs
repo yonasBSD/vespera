@@ -122,6 +122,17 @@ pub fn extract_field_serde_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribut
         .collect()
 }
 
+/// Extracts `#[form_data(...)]` attributes from a field.
+///
+/// Used in multipart mode to preserve form_data attributes from the source struct
+/// on generated fields (e.g., `#[form_data(limit = "10MiB")]`).
+pub fn extract_form_data_attrs(attrs: &[syn::Attribute]) -> Vec<&syn::Attribute> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("form_data"))
+        .collect()
+}
+
 /// Filters out serde(rename) attributes from a list of serde attributes.
 ///
 /// Used when applying a custom rename to avoid conflicts.
@@ -382,6 +393,30 @@ mod tests {
             false,
             true
         )); // relation
+    }
+
+    #[test]
+    fn test_extract_form_data_attrs() {
+        let attrs: Vec<syn::Attribute> = vec![
+            syn::parse_quote!(#[form_data(limit = "10MiB")]),
+            syn::parse_quote!(#[serde(default)]),
+            syn::parse_quote!(#[doc = "Some doc"]),
+            syn::parse_quote!(#[form_data(field_name = "my_file")]),
+        ];
+
+        let form_data = extract_form_data_attrs(&attrs);
+        assert_eq!(form_data.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_form_data_attrs_empty() {
+        let attrs: Vec<syn::Attribute> = vec![
+            syn::parse_quote!(#[serde(default)]),
+            syn::parse_quote!(#[doc = "Some doc"]),
+        ];
+
+        let form_data = extract_form_data_attrs(&attrs);
+        assert!(form_data.is_empty());
     }
 
     #[test]

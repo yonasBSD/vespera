@@ -29,6 +29,13 @@ pub use serde_json;
 // This allows generated types to use chrono::DateTime without users adding chrono dependency
 pub use chrono;
 
+// Re-export axum_typed_multipart for schema_type! multipart mode
+// This allows generated types to use FieldData/TryFromMultipart without users adding the dependency
+pub use axum_typed_multipart;
+
+// Re-export tempfile for schema_type! multipart mode (NamedTempFile)
+pub use tempfile;
+
 // Re-export axum for convenience
 pub mod axum {
     pub use axum::*;

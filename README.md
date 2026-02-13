@@ -158,9 +158,58 @@ pub struct CreateUserRequest {
 | `Path<T>` | Path parameters |
 | `Query<T>` | Query parameters |
 | `Json<T>` | Request body (application/json) |
-| `Form<T>` | Request body (form-urlencoded) |
+| `Form<T>` | Request body (application/x-www-form-urlencoded) |
+| `TypedMultipart<T>` | Request body (multipart/form-data) — typed with schema |
+| `Multipart` | Request body (multipart/form-data) — untyped, generic object |
 | `TypedHeader<T>` | Header parameters |
 | `State<T>` | Ignored (internal) |
+
+### Multipart Form Data
+
+#### Typed Multipart (Recommended)
+
+Upload files using `TypedMultipart` from [`axum_typed_multipart`](https://crates.io/crates/axum_typed_multipart):
+
+```rust
+use axum_typed_multipart::{FieldData, TryFromMultipart, TypedMultipart};
+use tempfile::NamedTempFile;
+
+#[derive(TryFromMultipart, vespera::Schema)]
+pub struct CreateUploadRequest {
+    pub name: String,
+    #[form_data(limit = "10MiB")]
+    pub file: Option<FieldData<NamedTempFile>>,
+}
+
+#[vespera::route(post, tags = ["uploads"])]
+pub async fn create_upload(
+    TypedMultipart(req): TypedMultipart<CreateUploadRequest>,
+) -> Json<UploadResponse> { ... }
+```
+
+Vespera automatically generates `multipart/form-data` content type in OpenAPI, and maps `FieldData<NamedTempFile>` to `{ "type": "string", "format": "binary" }`.
+
+> **Note:** `axum` must be a direct dependency of your project (not just via vespera) because `TryFromMultipart` internally references `axum::extract::multipart::Multipart`.
+
+#### Raw Multipart (Untyped)
+
+For dynamic multipart handling where the fields aren't known at compile time, use axum's built-in `Multipart` extractor:
+
+```rust
+use axum::extract::Multipart;
+
+#[vespera::route(post, tags = ["uploads"])]
+pub async fn upload(mut multipart: Multipart) -> Json<UploadResponse> {
+    while let Some(field) = multipart.next_field().await.unwrap() {
+        let name = field.name().unwrap_or("unknown").to_string();
+        let data = field.bytes().await.unwrap();
+        // Process each field dynamically...
+    }
+    Json(UploadResponse { success: true })
+}
+```
+
+This generates a `multipart/form-data` request body with a generic `{ "type": "object" }` schema in OpenAPI, since the fields are not statically known.
 
 ### Error Handling
 
@@ -347,6 +396,30 @@ vespera::schema_type!(Schema from Model, name = "MemoSchema");
 
 **Circular Reference Handling:** When schemas reference each other (e.g., User ↔ Memo), the macro automatically detects and handles circular references by inlining fields to prevent infinite recursion.
 
+### Multipart Mode
+
+Generate `TryFromMultipart` structs from existing types using the `multipart` keyword:
+
+```rust
+#[derive(TryFromMultipart, vespera::Schema)]
+pub struct CreateUploadRequest {
+    pub name: String,
+    #[form_data(limit = "10MiB")]
+    pub file: Option<FieldData<NamedTempFile>>,
+    pub description: Option<String>,
+}
+
+// Generates a TryFromMultipart struct (no serde derives), all fields Optional
+schema_type!(PatchUploadRequest from CreateUploadRequest, multipart, partial, omit = ["file"]);
+```
+
+When `multipart` is enabled:
+- Derives `TryFromMultipart` instead of `Serialize`/`Deserialize`
+- Suppresses `#[serde(...)]` attributes (multipart parsing is not serde-based)
+- Preserves `#[form_data(...)]` attributes from source struct
+- Skips SeaORM relation fields (nested objects can't be represented in multipart forms)
+- Does not generate `From` impl
+
 ### Parameters
 
 | Parameter | Description |
@@ -360,6 +433,7 @@ vespera::schema_type!(Schema from Model, name = "MemoSchema");
 | `name` | Custom OpenAPI schema name: `name = "UserSchema"` |
 | `rename_all` | Serde rename strategy: `rename_all = "camelCase"` |
 | `ignore` | Skip Schema derive (bare keyword, no value) |
+| `multipart` | Derive `TryFromMultipart` instead of serde (bare keyword) |
 
 ---
 
@@ -473,6 +547,7 @@ This automatically:
 | `Vec<T>` | `array` with items |
 | `Option<T>` | nullable T |
 | `HashMap<K, V>` | `object` with additionalProperties |
+| `FieldData<NamedTempFile>` | `string` with `format: binary` |
 | Custom struct | `$ref` to components/schemas |
 
 ---

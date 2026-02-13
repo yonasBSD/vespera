@@ -122,6 +122,9 @@ pub struct SchemaTypeInput {
     /// Serde rename_all strategy (e.g., "camelCase", "snake_case", "PascalCase")
     /// If not specified, defaults to "camelCase" when source has no rename_all
     pub rename_all: Option<String>,
+    /// Whether to generate a multipart/form-data struct (derives TryFromMultipart instead of serde)
+    /// Use `multipart` bare keyword to set this to true.
+    pub multipart: bool,
 }
 
 /// Mode for the `partial` keyword in schema_type!
@@ -202,6 +205,7 @@ impl Parse for SchemaTypeInput {
         let mut ignore_schema = false;
         let mut schema_name = None;
         let mut rename_all = None;
+        let mut multipart = false;
 
         // Parse optional parameters
         while input.peek(Token![,]) {
@@ -285,11 +289,15 @@ impl Parse for SchemaTypeInput {
                     let rename_all_lit: LitStr = input.parse()?;
                     rename_all = Some(rename_all_lit.value());
                 }
+                "multipart" => {
+                    // bare `multipart` - derive TryFromMultipart instead of serde
+                    multipart = true;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "unknown parameter: `{}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, `partial`, `ignore`, `name`, or `rename_all`",
+                            "unknown parameter: `{}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, `partial`, `ignore`, `name`, `rename_all`, or `multipart`",
                             ident_str
                         ),
                     ));
@@ -317,6 +325,7 @@ impl Parse for SchemaTypeInput {
             ignore_schema,
             schema_name,
             rename_all,
+            multipart,
         })
     }
 }
@@ -668,5 +677,30 @@ mod tests {
             ),
             Ok(_) => panic!("Expected error"),
         }
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_multipart() {
+        let tokens = quote::quote!(UploadReq from CreateUploadRequest, multipart);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert_eq!(input.new_type.to_string(), "UploadReq");
+        assert!(input.multipart);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_multipart_and_pick() {
+        let tokens =
+            quote::quote!(UploadReq from CreateUploadRequest, multipart, pick = ["name", "file"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.multipart);
+        assert_eq!(input.pick.unwrap(), vec!["name", "file"]);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_multipart_and_partial() {
+        let tokens = quote::quote!(PatchUpload from CreateUploadRequest, multipart, partial);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.multipart);
+        assert!(matches!(input.partial, Some(PartialMode::All)));
     }
 }
