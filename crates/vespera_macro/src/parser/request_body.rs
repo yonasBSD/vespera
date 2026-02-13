@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use syn::{FnArg, PatType, Type};
 use vespera_core::route::{MediaType, RequestBody};
+use vespera_core::schema::{Schema, SchemaRef, SchemaType};
 
 use super::schema::parse_type_to_schema_ref_with_schemas;
 
@@ -48,6 +49,80 @@ pub fn parse_request_body(
                         "application/json".to_string(),
                         MediaType {
                             schema: Some(schema),
+                            example: None,
+                            examples: None,
+                        },
+                    );
+                    return Some(RequestBody {
+                        description: None,
+                        required: Some(true),
+                        content,
+                    });
+                }
+
+                // Form<T> extractor → application/x-www-form-urlencoded request body
+                if ident_str == "Form"
+                    && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+                {
+                    let schema = parse_type_to_schema_ref_with_schemas(
+                        inner_ty,
+                        known_schemas,
+                        struct_definitions,
+                    );
+                    let mut content = BTreeMap::new();
+                    content.insert(
+                        "application/x-www-form-urlencoded".to_string(),
+                        MediaType {
+                            schema: Some(schema),
+                            example: None,
+                            examples: None,
+                        },
+                    );
+                    return Some(RequestBody {
+                        description: None,
+                        required: Some(true),
+                        content,
+                    });
+                }
+
+                // TypedMultipart<T> extractor → multipart/form-data request body
+                if ident_str == "TypedMultipart"
+                    && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+                {
+                    let schema = parse_type_to_schema_ref_with_schemas(
+                        inner_ty,
+                        known_schemas,
+                        struct_definitions,
+                    );
+                    let mut content = BTreeMap::new();
+                    content.insert(
+                        "multipart/form-data".to_string(),
+                        MediaType {
+                            schema: Some(schema),
+                            example: None,
+                            examples: None,
+                        },
+                    );
+                    return Some(RequestBody {
+                        description: None,
+                        required: Some(true),
+                        content,
+                    });
+                }
+
+                // Raw Multipart extractor (untyped) → multipart/form-data with generic object schema
+                if ident_str == "Multipart"
+                    && matches!(segment.arguments, syn::PathArguments::None)
+                {
+                    let mut content = BTreeMap::new();
+                    content.insert(
+                        "multipart/form-data".to_string(),
+                        MediaType {
+                            schema: Some(SchemaRef::Inline(Box::new(
+                                Schema::new(SchemaType::Object),
+                            ))),
                             example: None,
                             examples: None,
                         },
@@ -108,10 +183,12 @@ mod tests {
 
     #[rstest]
     #[case::json("fn test(Json(payload): Json<User>) {}", true, "json")]
+    #[case::form("fn test(Form(input): Form<User>) {}", true, "form")]
     #[case::string("fn test(just_string: String) {}", true, "string")]
     #[case::str("fn test(just_str: &str) {}", true, "str")]
     #[case::i32("fn test(just_i32: i32) {}", false, "i32")]
     #[case::vec_string("fn test(just_vec_string: Vec<String>) {}", false, "vec_string")]
+    #[case::multipart_raw("fn test(multipart: Multipart) {}", true, "multipart_raw")]
     #[case::self_ref("fn test(&self) {}", false, "self_ref")]
     fn test_parse_request_body_cases(
         #[case] func_src: &str,

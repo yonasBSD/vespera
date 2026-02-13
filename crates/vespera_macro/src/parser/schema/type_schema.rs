@@ -232,9 +232,15 @@ pub(crate) fn parse_type_to_schema_ref_with_schemas(
                     format: Some("duration".to_string()),
                     ..Schema::string()
                 })),
-                // Standard library types that should not be referenced
-                // Note: HashMap and BTreeMap are handled above in generic types
-                "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
+                    // File upload types (axum_typed_multipart / tempfile)
+                    // FieldData<NamedTempFile> → string with binary format
+                    "FieldData" | "NamedTempFile" => SchemaRef::Inline(Box::new(Schema {
+                        format: Some("binary".to_string()),
+                        ..Schema::string()
+                    })),
+                    // Standard library types that should not be referenced
+                    // Note: HashMap and BTreeMap are handled above in generic types
+                    "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
                     // These are not schema types, return object schema
                     SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
                 }

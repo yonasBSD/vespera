@@ -507,6 +507,99 @@
         }
       }
     },
+    "/form": {
+      "post": {
+        "operationId": "subscribe",
+        "tags": [
+          "form"
+        ],
+        "description": "Subscribe to newsletter via form submission",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscribeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/form/contact": {
+      "post": {
+        "operationId": "contact",
+        "tags": [
+          "form"
+        ],
+        "description": "Submit a contact form",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactFormRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactFormResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/form/upload": {
+      "post": {
+        "operationId": "upload",
+        "tags": [
+          "form"
+        ],
+        "description": "Upload a file via raw multipart form data",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactFormResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/generic/generic/{value}": {
       "get": {
         "operationId": "generic_endpoint",
@@ -1267,6 +1360,169 @@
         }
       }
     },
+    "/typed-form": {
+      "get": {
+        "operationId": "list_file_uploads",
+        "tags": [
+          "typed-form"
+        ],
+        "description": "List all file uploads",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FileUploadResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_file_upload",
+        "tags": [
+          "typed-form"
+        ],
+        "description": "Create a new file upload with multipart form data",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFileUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/typed-form/{id}": {
+      "put": {
+        "operationId": "update_file_upload",
+        "tags": [
+          "typed-form"
+        ],
+        "description": "Update a file upload with multipart form data",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFileUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patch_file_upload",
+        "tags": [
+          "typed-form"
+        ],
+        "description": "Patch a file upload (partial update via schema_type! multipart)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchFileUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/typed-header": {
       "get": {
         "operationId": "typed_header_jwt",
@@ -1785,6 +2041,44 @@
           "nestedStructMapArray"
         ]
       },
+      "ContactFormRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "message"
+        ]
+      },
+      "ContactFormResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "ticketId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "success",
+          "ticketId"
+        ]
+      },
       "ContactResponse": {
         "type": "object",
         "properties": {
@@ -1826,6 +2120,31 @@
           "title",
           "content",
           "createdAt"
+        ]
+      },
+      "CreateFileUploadRequest": {
+        "type": "object",
+        "properties": {
+          "document": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "string",
+            "nullable": true
+          },
+          "thumbnail": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "CreateMemoRequest": {
@@ -2198,6 +2517,44 @@
               "Deleted"
             ]
           }
+        ]
+      },
+      "FileUploadResponse": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "documentUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "id": {
+            "type": "integer"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "thumbnailUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tags",
+          "isActive",
+          "createdAt"
         ]
       },
       "GenericStruct": {
@@ -2600,6 +2957,28 @@
           }
         }
       },
+      "PatchFileUploadRequest": {
+        "type": "object",
+        "properties": {
+          "isActive": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tags": {
+            "type": "string",
+            "nullable": true
+          },
+          "thumbnail": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          }
+        }
+      },
       "ResponseMeta": {
         "type": "object",
         "description": "Common metadata for responses",
@@ -2818,6 +3197,44 @@
           "age"
         ]
       },
+      "SubscribeRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email"
+        ]
+      },
+      "SubscribeResponse": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "isSubscribed": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "isSubscribed"
+        ]
+      },
       "TestStruct": {
         "type": "object",
         "properties": {
@@ -2884,6 +3301,33 @@
             ]
           }
         ]
+      },
+      "UpdateFileUploadRequest": {
+        "type": "object",
+        "properties": {
+          "document": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tags": {
+            "type": "string",
+            "nullable": true
+          },
+          "thumbnail": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          }
+        }
       },
       "UpdateMemoRequest": {
         "type": "object",
@@ -3088,7 +3532,13 @@
       "name": "flatten"
     },
     {
+      "name": "form"
+    },
+    {
       "name": "hello"
+    },
+    {
+      "name": "typed-form"
     },
     {
       "name": "third"

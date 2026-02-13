@@ -250,6 +250,18 @@ pub fn parse_function_parameter(
                             // Json<T> extractor - this will be handled as RequestBody
                             return None;
                         }
+                        "Form" => {
+                            // Form<T> extractor - handled as RequestBody
+                            return None;
+                        }
+                        "TypedMultipart" => {
+                            // TypedMultipart<T> extractor - handled as RequestBody
+                            return None;
+                        }
+                        "Multipart" => {
+                            // Raw Multipart extractor - handled as RequestBody
+                            return None;
+                        }
                         _ => {}
                     }
                 }

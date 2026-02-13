@@ -41,6 +41,7 @@ pub struct User { id: u32, name: String }
 | `Vec<T>` | `array` + items | |
 | `Option<T>` | T (nullable context) | Parent marks as optional |
 | `HashMap<K,V>` | `object` + additionalProperties | |
+| `FieldData<NamedTempFile>` | `string` + `format: binary` | File upload field |
 | `()` | empty response | 204 No Content |
 | Custom struct | `$ref` | Must derive Schema |
 
@@ -52,6 +53,7 @@ pub struct User { id: u32, name: String }
 | `Query<T>` | query parameters | Struct fields become params |
 | `Json<T>` | requestBody | application/json |
 | `Form<T>` | requestBody | application/x-www-form-urlencoded |
+| `TypedMultipart<T>` | requestBody | multipart/form-data (file uploads) |
 | `State<T>` | **ignored** | Internal, not API |
 | `Extension<T>` | **ignored** | Internal, not API |
 | `TypedHeader<T>` | header parameter | |
@@ -328,6 +330,7 @@ Json(model.into())  // Easy conversion!
 | `rename` | Rename fields | API naming differs from model |
 | `rename_all` | Serde rename strategy | Different casing needed |
 | `add` | Add new fields | New fields not in model (breaks `From` impl) |
+| `multipart` | Derive `TryFromMultipart` | Multipart form-data endpoints |
 
 **Avoid (Special Cases Only):**
 
@@ -422,6 +425,52 @@ pub async fn patch_user(
 }
 ```
 
+### Multipart Mode (`multipart`)
+
+Generate `TryFromMultipart` structs from existing multipart request types:
+
+```rust
+use axum_typed_multipart::{FieldData, TryFromMultipart, TypedMultipart};
+use tempfile::NamedTempFile;
+
+// Base multipart struct (manually defined)
+#[derive(TryFromMultipart, vespera::Schema)]
+pub struct CreateUploadRequest {
+    pub name: String,
+    #[form_data(limit = "10MiB")]
+    pub thumbnail: Option<FieldData<NamedTempFile>>,
+    #[form_data(limit = "50MiB")]
+    pub document: Option<FieldData<NamedTempFile>>,
+    pub tags: Option<String>,
+}
+
+// Derive a partial update struct via schema_type!
+// - Derives TryFromMultipart (not serde)
+// - All fields become Option<T> (partial)
+// - "document" field excluded
+// - #[form_data(limit = "10MiB")] preserved from source
+schema_type!(PatchUploadRequest from CreateUploadRequest, multipart, partial, omit = ["document"]);
+```
+
+**What `multipart` mode changes:**
+
+| Aspect | Normal Mode | Multipart Mode |
+|--------|------------|----------------|
+| Derives | `Serialize`, `Deserialize` | `TryFromMultipart` |
+| Struct attrs | `#[serde(rename_all=...)]` | None |
+| Field attrs | `#[serde(...)]` preserved | `#[form_data(...)]` preserved |
+| Relation fields | Included (BelongsTo/HasOne) | **Skipped** (can't represent in forms) |
+| `From` impl | Auto-generated | **Not generated** |
+
+**OpenAPI rename alignment:** The schema parser reads `#[form_data(field_name = "...")]` and `#[try_from_multipart(rename_all = "...")]` as fallbacks when serde attrs are absent, ensuring OpenAPI field names match runtime multipart parsing.
+
+**Dependencies required in your Cargo.toml:**
+```toml
+axum = "0.8"                   # Required: TryFromMultipart references axum internals
+axum_typed_multipart = "0.16"  # The multipart crate
+tempfile = "3"                 # For NamedTempFile file uploads
+```
+
 ### Quick Reference
 
 ```rust
@@ -429,6 +478,10 @@ pub async fn patch_user(
 schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
 schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
 schema_type!(UserListItem from crate::models::user::Model, pick = ["id", "name"]);
+
+// ✅ MULTIPART PATTERNS
+schema_type!(PatchUpload from CreateUploadRequest, multipart, partial);
+schema_type!(SmallUpload from CreateUploadRequest, multipart, omit = ["document"]);
 
 // ⚠️ USE SPARINGLY
 schema_type!(UserPatch from crate::models::user::Model, partial);  // PATCH only

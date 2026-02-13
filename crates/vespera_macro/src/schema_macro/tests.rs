@@ -325,6 +325,7 @@ fn test_generate_schema_type_code_preserves_struct_doc() {
         schema_name: None,
         ignore_schema: false,
         rename_all: None,
+        multipart: false,
     };
     let struct_def = StructMetadata {
         name: "User".to_string(),

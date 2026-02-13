@@ -86,6 +86,7 @@ pub(crate) fn extract_schema_name_from_entity(ty: &syn::Type) -> Option<String> 
 }
 
 pub fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
+    // First check serde attrs (higher priority)
     for attr in attrs {
         if attr.path().is_ident("serde") {
             // Try using parse_nested_meta for robust parsing
@@ -130,10 +131,34 @@ pub fn extract_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
             }
         }
     }
+
+    // Fallback: check for #[try_from_multipart(rename_all = "...")]
+    for attr in attrs {
+        if attr.path().is_ident("try_from_multipart") {
+            let mut found_rename_all = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("rename_all")
+                    && let Ok(value) = meta.value()
+                    && let Ok(syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    })) = value.parse::<syn::Expr>()
+                {
+                    found_rename_all = Some(s.value());
+                }
+                Ok(())
+            });
+            if found_rename_all.is_some() {
+                return found_rename_all;
+            }
+        }
+    }
+
     None
 }
 
 pub fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
+    // First check serde attrs (higher priority)
     for attr in attrs {
         if attr.path().is_ident("serde")
             && let syn::Meta::List(meta_list) = &attr.meta
@@ -196,6 +221,29 @@ pub fn extract_field_rename(attrs: &[syn::Attribute]) -> Option<String> {
             }
         }
     }
+
+    // Fallback: check for #[form_data(field_name = "...")]
+    for attr in attrs {
+        if attr.path().is_ident("form_data") {
+            let mut found_field_name = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("field_name")
+                    && let Ok(value) = meta.value()
+                    && let Ok(syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    })) = value.parse::<syn::Expr>()
+                {
+                    found_field_name = Some(s.value());
+                }
+                Ok(())
+            });
+            if found_field_name.is_some() {
+                return found_field_name;
+            }
+        }
+    }
+
     None
 }
 
@@ -1638,6 +1686,79 @@ mod tests {
             let attr = create_attr_with_raw_tokens(tokens);
             let result = extract_flatten(&[attr]);
             assert!(!result, "Should not match 'flattened' as 'flatten'");
+        }
+        // =================================================================
+        // MULTIPART FALLBACK TESTS (form_data / try_from_multipart)
+        // =================================================================
+
+        /// Test extract_field_rename falls back to #[form_data(field_name = "...")]
+        #[test]
+        fn test_extract_field_rename_form_data_fallback() {
+            let struct_src = r#"struct Foo { #[form_data(field_name = "my_file")] field: i32 }"#;
+            let item: syn::ItemStruct = syn::parse_str(struct_src).unwrap();
+            if let syn::Fields::Named(fields) = &item.fields {
+                let field = fields.named.first().unwrap();
+                let result = extract_field_rename(&field.attrs);
+                assert_eq!(result.as_deref(), Some("my_file"));
+            }
+        }
+
+        /// Test serde rename takes priority over form_data field_name
+        #[test]
+        fn test_extract_field_rename_serde_over_form_data() {
+            let struct_src = r#"struct Foo { #[serde(rename = "serde_name")] #[form_data(field_name = "form_name")] field: i32 }"#;
+            let item: syn::ItemStruct = syn::parse_str(struct_src).unwrap();
+            if let syn::Fields::Named(fields) = &item.fields {
+                let field = fields.named.first().unwrap();
+                let result = extract_field_rename(&field.attrs);
+                assert_eq!(result.as_deref(), Some("serde_name"));
+            }
+        }
+
+        /// Test extract_field_rename with form_data but no field_name key
+        #[test]
+        fn test_extract_field_rename_form_data_no_field_name() {
+            let struct_src =
+                r#"struct Foo { #[form_data(limit = "10MiB")] field: i32 }"#;
+            let item: syn::ItemStruct = syn::parse_str(struct_src).unwrap();
+            if let syn::Fields::Named(fields) = &item.fields {
+                let field = fields.named.first().unwrap();
+                let result = extract_field_rename(&field.attrs);
+                assert_eq!(result, None);
+            }
+        }
+
+        /// Test extract_rename_all falls back to #[try_from_multipart(rename_all = "...")]
+        #[test]
+        fn test_extract_rename_all_try_from_multipart_fallback() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"#[try_from_multipart(rename_all = "camelCase")] struct Foo;"#,
+            )
+            .unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result.as_deref(), Some("camelCase"));
+        }
+
+        /// Test serde rename_all takes priority over try_from_multipart rename_all
+        #[test]
+        fn test_extract_rename_all_serde_over_try_from_multipart() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"#[serde(rename_all = "snake_case")] #[try_from_multipart(rename_all = "camelCase")] struct Foo;"#,
+            )
+            .unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result.as_deref(), Some("snake_case"));
+        }
+
+        /// Test extract_rename_all with try_from_multipart but no rename_all key
+        #[test]
+        fn test_extract_rename_all_try_from_multipart_no_rename_all() {
+            let item: syn::ItemStruct = syn::parse_str(
+                r#"#[try_from_multipart(strict)] struct Foo;"#,
+            )
+            .unwrap();
+            let result = extract_rename_all(&item.attrs);
+            assert_eq!(result, None);
         }
     }
 

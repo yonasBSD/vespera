@@ -67,6 +67,29 @@ pub fn convert_seaorm_type_to_chrono(ty: &Type, source_module_path: &[String]) -
         }
         "DateTimeUtc" => quote! { vespera::chrono::DateTime<vespera::chrono::Utc> },
         "DateTimeLocal" => quote! { vespera::chrono::DateTime<vespera::chrono::Local> },
+        // axum_typed_multipart types - resolve via vespera re-exports
+        "FieldData" => {
+            // Preserve inner generic: FieldData<T> → vespera::axum_typed_multipart::FieldData<T>
+            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                let inner_args: Vec<_> = args
+                    .args
+                    .iter()
+                    .map(|arg| {
+                        if let syn::GenericArgument::Type(inner_ty) = arg {
+                            let converted =
+                                convert_seaorm_type_to_chrono(inner_ty, source_module_path);
+                            quote! { #converted }
+                        } else {
+                            quote! { #arg }
+                        }
+                    })
+                    .collect();
+                quote! { vespera::axum_typed_multipart::FieldData<#(#inner_args),*> }
+            } else {
+                quote! { vespera::axum_typed_multipart::FieldData }
+            }
+        }
+        "NamedTempFile" => quote! { vespera::tempfile::NamedTempFile },
         // Not a SeaORM datetime type - resolve to absolute path if needed
         _ => resolve_type_to_absolute_path(ty, source_module_path),
     }

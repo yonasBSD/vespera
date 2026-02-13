@@ -16,6 +16,8 @@ vespera_macro = { workspace = true }
 axum = "0.8"
 axum-extra = { version = "0.12", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
+axum_typed_multipart = "0.16"
+tempfile = "3"
 serde_json = "1"
 tower-layer = "0.3"
 tower-service = "0.3"
