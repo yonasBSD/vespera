@@ -21,6 +21,7 @@ pub struct SubscribeResponse {
     pub is_subscribed: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Schema)]
 pub struct ContactFormRequest {
     pub name: String,
