@@ -21,8 +21,8 @@ use vespera_core::schema::{Discriminator, Schema, SchemaRef, SchemaType};
 
 use super::{
     serde_attrs::{
-        extract_doc_comment, extract_enum_repr, extract_field_rename, extract_rename_all,
-        rename_field, strip_raw_prefix, SerdeEnumRepr,
+        SerdeEnumRepr, extract_doc_comment, extract_enum_repr, extract_field_rename,
+        extract_rename_all, rename_field, strip_raw_prefix,
     },
     type_schema::parse_type_to_schema_ref,
 };
@@ -775,11 +775,13 @@ mod tests {
                             let inner_props = inner_obj.properties.as_ref().unwrap();
                             assert!(inner_props.contains_key("id"));
                             assert!(inner_props.contains_key("note"));
-                            assert!(inner_obj
-                                .required
-                                .as_ref()
-                                .unwrap()
-                                .contains(&"id".to_string()));
+                            assert!(
+                                inner_obj
+                                    .required
+                                    .as_ref()
+                                    .unwrap()
+                                    .contains(&"id".to_string())
+                            );
                         } else {
                             panic!("Expected inline object schema");
                         }

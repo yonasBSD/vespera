@@ -714,7 +714,7 @@ mod tests {
         known.insert("UserSchema".to_string());
         let ty: Type = syn::parse_str("crate::models::user::Schema").unwrap();
         let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
-         match schema_ref {
+        match schema_ref {
             SchemaRef::Ref(reference) => {
                 assert_eq!(reference.ref_path, "#/components/schemas/UserSchema");
             }
