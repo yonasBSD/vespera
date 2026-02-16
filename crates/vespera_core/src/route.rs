@@ -19,6 +19,21 @@ pub enum HttpMethod {
     Trace,
 }
 
+impl std::fmt::Display for HttpMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Get => write!(f, "GET"),
+            Self::Post => write!(f, "POST"),
+            Self::Put => write!(f, "PUT"),
+            Self::Patch => write!(f, "PATCH"),
+            Self::Delete => write!(f, "DELETE"),
+            Self::Head => write!(f, "HEAD"),
+            Self::Options => write!(f, "OPTIONS"),
+            Self::Trace => write!(f, "TRACE"),
+        }
+    }
+}
+
 impl TryFrom<&str> for HttpMethod {
     type Error = String;
 
@@ -523,6 +538,19 @@ mod tests {
             path_item.get.as_ref().unwrap().operation_id,
             Some("second".to_string())
         );
+    }
+
+    #[rstest]
+    #[case(HttpMethod::Get, "GET")]
+    #[case(HttpMethod::Post, "POST")]
+    #[case(HttpMethod::Put, "PUT")]
+    #[case(HttpMethod::Patch, "PATCH")]
+    #[case(HttpMethod::Delete, "DELETE")]
+    #[case(HttpMethod::Head, "HEAD")]
+    #[case(HttpMethod::Options, "OPTIONS")]
+    #[case(HttpMethod::Trace, "TRACE")]
+    fn test_http_method_display(#[case] method: HttpMethod, #[case] expected: &str) {
+        assert_eq!(method.to_string(), expected);
     }
 
     #[test]
