@@ -1,4 +1,4 @@
-//! OpenAPI document generator
+//! `OpenAPI` document generator
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,7 +18,8 @@ use crate::{
     schema_macro::type_utils::get_type_default as utils_get_type_default,
 };
 
-/// Generate OpenAPI document from collected metadata
+/// Generate `OpenAPI` document from collected metadata
+#[allow(clippy::too_many_lines)]
 pub fn generate_openapi_doc_with_metadata(
     title: Option<String>,
     version: Option<String>,
@@ -105,7 +106,8 @@ pub fn generate_openapi_doc_with_metadata(
             if let syn::Item::Fn(fn_item) = item
                 && fn_item.sig.ident == route_meta.function_name
             {
-                let method = HttpMethod::from(route_meta.method.as_str());
+                let method = HttpMethod::try_from(route_meta.method.as_str())
+                    .expect("route method must be a valid HTTP method");
 
                 // Collect tags for global tags list
                 if let Some(tags) = &route_meta.tags {
@@ -123,7 +125,7 @@ pub fn generate_openapi_doc_with_metadata(
                     route_meta.error_status.as_deref(),
                     route_meta.tags.as_deref(),
                 );
-                operation.description = route_meta.description.clone();
+                operation.description.clone_from(&route_meta.description);
 
                 // Get or create PathItem
                 let path_item = paths
@@ -202,7 +204,7 @@ pub fn generate_openapi_doc_with_metadata(
 }
 
 /// Process default functions for struct fields
-/// This function extracts default values from functions specified in #[serde(default = "function_name")]
+/// This function extracts default values from functions specified in #[serde(default = "`function_name`")]
 fn process_default_functions(
     struct_item: &syn::ItemStruct,
     file_ast: &syn::File,
@@ -215,9 +217,8 @@ fn process_default_functions(
     let struct_rename_all = extract_rename_all(&struct_item.attrs);
 
     // Get properties from schema
-    let properties = match &mut schema.properties {
-        Some(props) => props,
-        None => return, // No properties to process
+    let Some(properties) = &mut schema.properties else {
+        return;
     };
 
     // Process each field in the struct
@@ -230,15 +231,9 @@ fn process_default_functions(
                     // Simple default (no function) - we can set type-specific defaults
                     let rust_field_name = field
                         .ident
-                        .as_ref()
-                        .map(|i| strip_raw_prefix(&i.to_string()).to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
+                        .as_ref().map_or_else(|| "unknown".to_string(), |i| strip_raw_prefix(&i.to_string()).to_string());
 
-                    let field_name = if let Some(renamed) = extract_field_rename(&field.attrs) {
-                        renamed
-                    } else {
-                        rename_field(&rust_field_name, struct_rename_all.as_deref())
-                    };
+                    let field_name = extract_field_rename(&field.attrs).unwrap_or_else(|| rename_field(&rust_field_name, struct_rename_all.as_deref()));
 
                     // Set type-specific default for simple default
                     if let Some(prop_schema_ref) = properties.get_mut(&field_name)
@@ -261,15 +256,9 @@ fn process_default_functions(
                     // Get the field name (with rename applied)
                     let rust_field_name = field
                         .ident
-                        .as_ref()
-                        .map(|i| strip_raw_prefix(&i.to_string()).to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
+                        .as_ref().map_or_else(|| "unknown".to_string(), |i| strip_raw_prefix(&i.to_string()).to_string());
 
-                    let field_name = if let Some(renamed) = extract_field_rename(&field.attrs) {
-                        renamed
-                    } else {
-                        rename_field(&rust_field_name, struct_rename_all.as_deref())
-                    };
+                    let field_name = extract_field_rename(&field.attrs).unwrap_or_else(|| rename_field(&rust_field_name, struct_rename_all.as_deref()));
 
                     // Set default value in schema
                     if let Some(prop_schema_ref) = properties.get_mut(&field_name)
@@ -300,7 +289,7 @@ fn find_function_in_file<'a>(
 
 /// Extract default value from function body
 /// This tries to extract literal values from common patterns like:
-/// - "value".to_string() -> "value"
+/// - "`value".to_string()` -> "value"
 /// - 42 -> 42
 /// - true -> true
 /// - vec![] -> []
