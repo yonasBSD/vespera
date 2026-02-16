@@ -54,17 +54,19 @@ pub fn collect_metadata(folder_path: &Path, folder_name: &str) -> MacroResult<Co
 
         let file_path = file.display().to_string();
 
+        // Pre-compute base path once per file (avoids repeated segments.join per route)
+        let base_path = format!("/{}", segments.join("/"));
+
         // Collect routes
         for item in &file_ast.items {
             if let Item::Fn(fn_item) = item
                 && let Some(route_info) = extract_route_info(&fn_item.attrs)
             {
                 let route_path = if let Some(custom_path) = &route_info.path {
-                    let base = format!("/{}", segments.join("/"));
-                    let trimmed_base = base.trim_end_matches('/');
-                    format!("{}/{}", trimmed_base, custom_path.trim_start_matches('/'))
+                    let trimmed_base = base_path.trim_end_matches('/');
+                    format!("{trimmed_base}/{}", custom_path.trim_start_matches('/'))
                 } else {
-                    format!("/{}", segments.join("/"))
+                    base_path.clone()
                 };
                 let route_path = route_path.replace('_', "-");
 
