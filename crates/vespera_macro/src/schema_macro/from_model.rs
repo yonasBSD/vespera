@@ -2,6 +2,8 @@
 //!
 //! Generates async `from_model` implementations for `SeaORM` models with relations.
 
+use std::collections::HashMap;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Type;
@@ -80,7 +82,7 @@ pub fn generate_from_model_with_relations(
     field_mappings: &[(syn::Ident, syn::Ident, bool, bool)],
     relation_fields: &[RelationFieldInfo],
     source_module_path: &[String],
-    _schema_storage: &[StructMetadata],
+    _schema_storage: &HashMap<String, StructMetadata>,
 ) -> TokenStream {
     // Build relation loading statements
     let relation_loads: Vec<TokenStream> = relation_fields
@@ -583,7 +585,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -612,7 +614,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -655,7 +657,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -704,7 +706,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -749,7 +751,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -785,7 +787,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -832,7 +834,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -873,7 +875,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -914,7 +916,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -960,7 +962,7 @@ mod tests {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -1058,7 +1060,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1145,7 +1147,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1231,7 +1233,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1301,7 +1303,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         let output = tokens.to_string();
@@ -1379,7 +1381,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1466,7 +1468,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1562,7 +1564,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1659,7 +1661,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1757,7 +1759,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -1911,7 +1913,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         // Restore CARGO_MANIFEST_DIR
@@ -2022,7 +2024,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -2089,7 +2091,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -2146,7 +2148,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -2203,7 +2205,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
         let output = tokens.to_string();
 
@@ -2287,7 +2289,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         unsafe {
@@ -2387,7 +2389,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         unsafe {
@@ -2475,7 +2477,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         unsafe {
@@ -2570,7 +2572,7 @@ pub struct Model {
             &field_mappings,
             &relation_fields,
             &source_module_path,
-            &[],
+            &HashMap::new(),
         );
 
         unsafe {

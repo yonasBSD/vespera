@@ -25,7 +25,7 @@
 //! - [`process_export_app`] - Main `export_app`! macro implementation
 //! - [`generate_and_write_openapi`] - `OpenAPI` generation and file I/O
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use proc_macro2::Span;
 use quote::quote;
@@ -150,7 +150,7 @@ pub fn find_target_dir(manifest_path: &Path) -> std::path::PathBuf {
 /// Process vespera macro - extracted for testability
 pub fn process_vespera_macro(
     processed: &ProcessedVesperaInput,
-    schema_storage: &[StructMetadata],
+    schema_storage: &HashMap<String, StructMetadata>,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let folder_path = find_folder_path(&processed.folder_name);
     if !folder_path.exists() {
@@ -164,7 +164,7 @@ pub fn process_vespera_macro(
     }
 
     let mut metadata = collect_metadata(&folder_path, &processed.folder_name).map_err(|e| syn::Error::new(Span::call_site(), format!("vespera! macro: failed to scan route folder '{}'. Error: {}. Check that all .rs files have valid Rust syntax.", processed.folder_name, e)))?;
-    metadata.structs.extend(schema_storage.iter().cloned());
+    metadata.structs.extend(schema_storage.values().cloned());
 
     let (docs_info, redoc_info) = generate_and_write_openapi(processed, &metadata)?;
 
@@ -180,7 +180,7 @@ pub fn process_vespera_macro(
 pub fn process_export_app(
     name: &syn::Ident,
     folder_name: &str,
-    schema_storage: &[StructMetadata],
+    schema_storage: &HashMap<String, StructMetadata>,
     manifest_dir: &str,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let folder_path = find_folder_path(folder_name);
@@ -194,7 +194,7 @@ pub fn process_export_app(
     }
 
     let mut metadata = collect_metadata(&folder_path, folder_name).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to scan route folder '{folder_name}'. Error: {e}. Check that all .rs files have valid Rust syntax.")))?;
-    metadata.structs.extend(schema_storage.iter().cloned());
+    metadata.structs.extend(schema_storage.values().cloned());
 
     // Generate OpenAPI spec JSON string
     let openapi_doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
@@ -504,7 +504,7 @@ mod tests {
             servers: None,
             merge: vec![],
         };
-        let result = process_vespera_macro(&processed, &[]);
+        let result = process_vespera_macro(&processed, &HashMap::new());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("route folder") && err.contains("not found"));
@@ -529,7 +529,7 @@ mod tests {
         };
 
         // This exercises the collect_metadata path (which handles parse errors gracefully)
-        let result = process_vespera_macro(&processed, &[]);
+        let result = process_vespera_macro(&processed, &HashMap::new());
         // Result may succeed or fail depending on how collect_metadata handles invalid files
         let _ = result;
     }
@@ -541,10 +541,13 @@ mod tests {
         // Create an empty file (valid but no routes)
         create_temp_file(&temp_dir, "empty.rs", "// empty file\n");
 
-        let schema_storage = vec![StructMetadata::new(
+        let schema_storage = HashMap::from([(
             "TestSchema".to_string(),
-            "struct TestSchema { id: i32 }".to_string(),
-        )];
+            StructMetadata::new(
+                "TestSchema".to_string(),
+                "struct TestSchema { id: i32 }".to_string(),
+            ),
+        )]);
 
         let processed = ProcessedVesperaInput {
             folder_name: temp_dir.path().to_string_lossy().to_string(),
@@ -572,7 +575,7 @@ mod tests {
         let result = process_export_app(
             &name,
             "nonexistent_folder_xyz",
-            &[],
+            &HashMap::new(),
             &temp_dir.path().to_string_lossy(),
         );
         assert!(result.is_err());
@@ -592,7 +595,7 @@ mod tests {
 
         // This exercises collect_metadata and other paths
         let result =
-            process_export_app(&name, &folder_path, &[], &temp_dir.path().to_string_lossy());
+            process_export_app(&name, &folder_path, &HashMap::new(), &temp_dir.path().to_string_lossy());
         // We only care about exercising the code path
         let _ = result;
     }
@@ -604,10 +607,13 @@ mod tests {
         // Create an empty but valid Rust file
         create_temp_file(&temp_dir, "mod.rs", "// module file\n");
 
-        let schema_storage = vec![StructMetadata::new(
+        let schema_storage = HashMap::from([(
             "AppSchema".to_string(),
-            "struct AppSchema { name: String }".to_string(),
-        )];
+            StructMetadata::new(
+                "AppSchema".to_string(),
+                "struct AppSchema { name: String }".to_string(),
+            ),
+        )]);
 
         let name: syn::Ident = syn::parse_quote!(MyExportedApp);
         let folder_path = temp_dir.path().to_string_lossy().to_string();
@@ -769,7 +775,7 @@ mod tests {
         let folder_path = temp_dir.path().to_string_lossy().to_string();
 
         let result =
-            process_export_app(&name, &folder_path, &[], &temp_dir.path().to_string_lossy());
+            process_export_app(&name, &folder_path, &HashMap::new(), &temp_dir.path().to_string_lossy());
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -793,7 +799,7 @@ mod tests {
         let folder_path = temp_dir.path().to_string_lossy().to_string();
 
         let result =
-            process_export_app(&name, &folder_path, &[], &temp_dir.path().to_string_lossy());
+            process_export_app(&name, &folder_path, &HashMap::new(), &temp_dir.path().to_string_lossy());
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -819,7 +825,7 @@ mod tests {
         let folder_path = temp_dir.path().to_string_lossy().to_string();
 
         let result =
-            process_export_app(&name, &folder_path, &[], &temp_dir.path().to_string_lossy());
+            process_export_app(&name, &folder_path, &HashMap::new(), &temp_dir.path().to_string_lossy());
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

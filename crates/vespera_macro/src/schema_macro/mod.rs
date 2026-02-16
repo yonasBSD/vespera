@@ -15,7 +15,7 @@ mod transformation;
 pub mod type_utils;
 mod validation;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use codegen::generate_filtered_schema;
 use file_lookup::find_struct_from_path;
@@ -53,13 +53,13 @@ use crate::{
 /// Generate schema code from a struct with optional field filtering
 pub fn generate_schema_code(
     input: &SchemaInput,
-    schema_storage: &[StructMetadata],
+    schema_storage: &HashMap<String, StructMetadata>,
 ) -> Result<TokenStream, syn::Error> {
     // Extract type name from the Type
     let type_name = extract_type_name(&input.ty)?;
 
-    // Find struct definition in storage
-    let struct_def = schema_storage.iter().find(|s| s.name == type_name).ok_or_else(|| syn::Error::new_spanned(&input.ty, format!("type `{type_name}` not found. Make sure it has #[derive(Schema)] before this macro invocation")))?;
+    // Find struct definition in storage (O(1) HashMap lookup)
+    let struct_def = schema_storage.get(&type_name).ok_or_else(|| syn::Error::new_spanned(&input.ty, format!("type `{type_name}` not found. Make sure it has #[derive(Schema)] before this macro invocation")))?;
 
     // Parse the struct definition
     let parsed_struct: syn::ItemStruct = syn::parse_str(&struct_def.definition).map_err(|e| {
@@ -91,7 +91,7 @@ pub fn generate_schema_code(
 #[allow(clippy::too_many_lines)]
 pub fn generate_schema_type_code(
     input: &SchemaTypeInput,
-    schema_storage: &[StructMetadata],
+    schema_storage: &HashMap<String, StructMetadata>,
 ) -> Result<(TokenStream, Option<StructMetadata>), syn::Error> {
     // Extract type name from the source Type
     let source_type_name = extract_type_name(&input.source_type)?;
@@ -116,7 +116,7 @@ pub fn generate_schema_type_code(
             // for resolving relative paths like `super::user::Entity`
             source_module_path = module_path;
             &struct_def_owned
-        } else if let Some(found) = schema_storage.iter().find(|s| s.name == source_type_name) {
+        } else if let Some(found) = schema_storage.get(&source_type_name) {
             found
         } else {
             return Err(syn::Error::new_spanned(
@@ -130,7 +130,7 @@ pub fn generate_schema_type_code(
         }
     } else {
         // Simple name: try storage first (for same-file structs), then file lookup with schema name hint
-        if let Some(found) = schema_storage.iter().find(|s| s.name == source_type_name) {
+        if let Some(found) = schema_storage.get(&source_type_name) {
             found
         } else if let Some((found, module_path)) =
             find_struct_from_path(&input.source_type, schema_name_hint)

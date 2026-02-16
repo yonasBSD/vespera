@@ -23,14 +23,14 @@ pub fn generate_filtered_schema(
     struct_item: &syn::ItemStruct,
     omit_set: &HashSet<String>,
     pick_set: &HashSet<String>,
-    schema_storage: &[StructMetadata],
+    schema_storage: &std::collections::HashMap<String, StructMetadata>,
 ) -> TokenStream {
     let rename_all = extract_rename_all(&struct_item.attrs);
 
     // Build known_schemas and struct_definitions for type resolution
-    let known_schemas: HashSet<String> = schema_storage.iter().map(|s| s.name.clone()).collect();
+    let known_schemas: HashSet<String> = schema_storage.keys().cloned().collect();
     let struct_definitions: std::collections::HashMap<String, String> = schema_storage
-        .iter()
+        .values()
         .map(|s| (s.name.clone(), s.definition.clone()))
         .collect();
 
@@ -213,7 +213,7 @@ pub fn schema_to_tokens(schema: &Schema) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use vespera_core::schema::{Reference, Schema, SchemaRef, SchemaType};
 
@@ -224,7 +224,8 @@ mod tests {
         let struct_item: syn::ItemStruct = syn::parse_str("pub struct Empty {}").unwrap();
         let omit_set = HashSet::new();
         let pick_set = HashSet::new();
-        let output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]).to_string();
+        let output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &HashMap::new())
+            .to_string();
         assert!(output.contains("properties"));
     }
 
@@ -241,7 +242,8 @@ mod tests {
         .unwrap();
         let omit_set = HashSet::new();
         let pick_set = HashSet::new();
-        let output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]).to_string();
+        let output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &HashMap::new())
+            .to_string();
         assert!(output.contains("None"));
     }
 
@@ -258,7 +260,7 @@ mod tests {
         .unwrap();
         let omit_set = HashSet::new();
         let pick_set = HashSet::new();
-        let _output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        let _output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &HashMap::new());
     }
 
     #[test]
@@ -267,7 +269,7 @@ mod tests {
             syn::parse_str("pub struct Tuple(i32, String);").unwrap();
         let omit_set = HashSet::new();
         let pick_set = HashSet::new();
-        let _output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &[]);
+        let _output = generate_filtered_schema(&struct_item, &omit_set, &pick_set, &HashMap::new());
     }
 
     #[test]

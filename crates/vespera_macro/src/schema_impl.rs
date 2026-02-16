@@ -30,17 +30,15 @@
 //! - [`extract_schema_name_attr`] - Extract custom name from `#[schema]` attribute
 //! - [`process_derive_schema`] - Process the derive macro input and register the type
 
-use std::sync::{LazyLock, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 use crate::metadata::StructMetadata;
 
-#[cfg(not(tarpaulin_include))]
-pub const fn init_schema_storage() -> Mutex<Vec<StructMetadata>> {
-    Mutex::new(Vec::new())
-}
-
-pub static SCHEMA_STORAGE: LazyLock<Mutex<Vec<StructMetadata>>> =
-    LazyLock::new(init_schema_storage);
+pub static SCHEMA_STORAGE: LazyLock<Mutex<HashMap<String, StructMetadata>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Extract custom schema name from #[schema(name = "...")] attribute
 pub fn extract_schema_name_attr(attrs: &[syn::Attribute]) -> Option<String> {

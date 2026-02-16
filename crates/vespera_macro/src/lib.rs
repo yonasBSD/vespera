@@ -84,7 +84,8 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let (metadata, expanded) = schema_impl::process_derive_schema(&input);
-    SCHEMA_STORAGE.lock().unwrap().push(metadata);
+    let name = metadata.name.clone();
+    SCHEMA_STORAGE.lock().unwrap().insert(name, metadata);
     TokenStream::from(expanded)
 }
 
@@ -220,7 +221,8 @@ pub fn schema_type(input: TokenStream) -> TokenStream {
     // If custom name is provided, register the schema directly
     // This ensures it appears in OpenAPI even when `ignore` is set
     if let Some(metadata) = generated_metadata {
-        SCHEMA_STORAGE.lock().unwrap().push(metadata);
+        let name = metadata.name.clone();
+        SCHEMA_STORAGE.lock().unwrap().insert(name, metadata);
     }
     TokenStream::from(tokens)
 }
