@@ -3,10 +3,18 @@
 //! This module handles the conversion of Rust types (as parsed by syn)
 //! into OpenAPI-compatible JSON Schema references and inline schemas.
 
-use std::collections::HashMap;
+use std::{cell::Cell, collections::HashMap};
 
 use syn::Type;
 use vespera_core::schema::{Reference, Schema, SchemaRef, SchemaType};
+
+/// Maximum recursion depth for type-to-schema conversion.
+/// Prevents stack overflow from deeply nested or circular type references.
+const MAX_SCHEMA_RECURSION_DEPTH: usize = 32;
+
+thread_local! {
+    static SCHEMA_RECURSION_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 use super::{
     generics::substitute_type,
@@ -55,7 +63,7 @@ pub fn parse_type_to_schema_ref(
     parse_type_to_schema_ref_with_schemas(ty, known_schemas, struct_definitions)
 }
 
-/// Internal implementation of type-to-schema conversion.
+/// Type-to-schema conversion with depth-guarded recursion.
 ///
 /// Handles:
 /// - Primitive types (i32, String, bool, etc.)
@@ -65,8 +73,26 @@ pub fn parse_type_to_schema_ref(
 /// - Date/time types (`DateTime`, `NaiveDate`, etc.)
 /// - Known schema references
 /// - Generic type instantiation
-#[allow(clippy::too_many_lines)]
 pub fn parse_type_to_schema_ref_with_schemas(
+    ty: &Type,
+    known_schemas: &HashMap<String, String>,
+    struct_definitions: &HashMap<String, String>,
+) -> SchemaRef {
+    SCHEMA_RECURSION_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current >= MAX_SCHEMA_RECURSION_DEPTH {
+            return SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)));
+        }
+        depth.set(current + 1);
+        let result = parse_type_impl(ty, known_schemas, struct_definitions);
+        depth.set(current);
+        result
+    })
+}
+
+/// Core type-to-schema logic (called within depth guard).
+#[allow(clippy::too_many_lines)]
+fn parse_type_impl(
     ty: &Type,
     known_schemas: &HashMap<String, String>,
     struct_definitions: &HashMap<String, String>,
@@ -335,8 +361,8 @@ pub fn parse_type_to_schema_ref_with_schemas(
             }
         }
         Type::Reference(type_ref) => {
-            // Handle &T, &mut T, etc.
-            parse_type_to_schema_ref_with_schemas(&type_ref.elem, known_schemas, struct_definitions)
+            // Handle &T, &mut T, etc. — goes through depth guard via public entry point
+            parse_type_to_schema_ref(&type_ref.elem, known_schemas, struct_definitions)
         }
         _ => SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object))),
     }
