@@ -1009,4 +1009,317 @@ mod tests {
             panic!("Expected inline schema for TimeRange");
         }
     }
+
+    #[rstest]
+    #[case("i8")]
+    #[case("i16")]
+    #[case("i32")]
+    #[case("i64")]
+    #[case("u8")]
+    #[case("u16")]
+    #[case("u32")]
+    #[case("u64")]
+    #[case("f32")]
+    #[case("f64")]
+    #[case("bool")]
+    #[case("String")]
+    #[case("str")]
+    fn test_is_primitive_type_positive(#[case] ty_src: &str) {
+        let ty: Type = syn::parse_str(ty_src).unwrap();
+        assert!(is_primitive_type(&ty), "{ty_src} should be primitive");
+    }
+
+    #[rstest]
+    #[case("Vec")]
+    #[case("Option")]
+    #[case("HashMap")]
+    #[case("MyStruct")]
+    fn test_is_primitive_type_negative_single_segment(#[case] ty_src: &str) {
+        let ty: Type = syn::parse_str(ty_src).unwrap();
+        assert!(!is_primitive_type(&ty), "{ty_src} should NOT be primitive");
+    }
+
+    #[test]
+    fn test_is_primitive_type_tuple_type() {
+        let ty: Type = syn::parse_str("(i32, bool)").unwrap();
+        assert!(!is_primitive_type(&ty));
+    }
+
+    // ========== Coverage: FieldData / NamedTempFile binary format ==========
+
+    #[test]
+    fn test_parse_type_field_data_binary_format() {
+        let ty: Type = syn::parse_str("FieldData").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::String));
+            assert_eq!(schema.format, Some("binary".to_string()));
+        } else {
+            panic!("Expected inline schema for FieldData");
+        }
+    }
+
+    #[test]
+    fn test_parse_type_named_temp_file_binary_format() {
+        let ty: Type = syn::parse_str("NamedTempFile").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::String));
+            assert_eq!(schema.format, Some("binary".to_string()));
+        } else {
+            panic!("Expected inline schema for NamedTempFile");
+        }
+    }
+
+    // ========== Coverage: non-generic wrapper types without angle brackets ==========
+
+    #[rstest]
+    #[case("Option")]
+    #[case("Result")]
+    #[case("Json")]
+    #[case("Path")]
+    #[case("Query")]
+    #[case("Header")]
+    fn test_parse_type_non_generic_wrappers_return_object(#[case] ty_src: &str) {
+        let ty: Type = syn::parse_str(ty_src).unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = schema_ref {
+            assert_eq!(
+                schema.schema_type,
+                Some(SchemaType::Object),
+                "{ty_src} without generics should be object"
+            );
+        } else {
+            panic!("Expected inline schema for {ty_src}");
+        }
+    }
+
+    // ========== Coverage: recursion depth limit ==========
+
+    #[test]
+    fn test_recursion_depth_limit_returns_object() {
+        SCHEMA_RECURSION_DEPTH.with(|depth| {
+            let previous = depth.get();
+            depth.set(MAX_SCHEMA_RECURSION_DEPTH);
+            let ty: Type = syn::parse_str("String").unwrap();
+            let schema_ref =
+                parse_type_to_schema_ref_with_schemas(&ty, &HashSet::new(), &HashMap::new());
+            // Should return object fallback, NOT string
+            if let SchemaRef::Inline(schema) = &schema_ref {
+                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            } else {
+                panic!("Expected inline object schema at max recursion depth");
+            }
+            // Restore
+            depth.set(previous);
+        });
+    }
+
+    #[test]
+    fn test_recursion_depth_resets_after_call() {
+        SCHEMA_RECURSION_DEPTH.with(|depth| {
+            assert_eq!(depth.get(), 0, "Depth should start at 0");
+        });
+        let ty: Type = syn::parse_str("Vec<Option<String>>").unwrap();
+        let _ = parse_type_to_schema_ref_with_schemas(&ty, &HashSet::new(), &HashMap::new());
+        SCHEMA_RECURSION_DEPTH.with(|depth| {
+            assert_eq!(depth.get(), 0, "Depth should reset to 0 after call");
+        });
+    }
+
+    // ========== Coverage: generic known schema edge cases ==========
+
+    #[test]
+    fn test_generic_known_schema_no_struct_definition() {
+        // Known schema with angle brackets but NO struct_definitions entry → falls through to Ref
+        let mut known = HashSet::new();
+        known.insert("Wrapper".to_string());
+        // Do NOT insert into struct_definitions
+        let ty: Type = syn::parse_str("Wrapper<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
+        // Should fall through to non-generic ref path
+        assert!(
+            matches!(schema_ref, SchemaRef::Ref(_)),
+            "Should be a $ref when no struct definition found"
+        );
+    }
+
+    #[test]
+    fn test_generic_known_schema_param_count_mismatch() {
+        // Struct has 1 generic param but 2 concrete types provided → falls through to Ref
+        let mut known = HashSet::new();
+        known.insert("Single".to_string());
+        let mut defs = HashMap::new();
+        defs.insert(
+            "Single".to_string(),
+            "struct Single<T> { value: T }".to_string(),
+        );
+
+        let ty: Type = syn::parse_str("Single<String, i32>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &defs);
+        assert!(
+            matches!(schema_ref, SchemaRef::Ref(_)),
+            "Mismatched param count should fall through to $ref"
+        );
+    }
+
+    #[test]
+    fn test_generic_known_schema_invalid_definition() {
+        // struct_definitions has invalid Rust code → parse fails → falls through to Ref
+        let mut known = HashSet::new();
+        known.insert("Bad".to_string());
+        let mut defs = HashMap::new();
+        defs.insert("Bad".to_string(), "not valid rust code!!!".to_string());
+
+        let ty: Type = syn::parse_str("Bad<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &defs);
+        assert!(
+            matches!(schema_ref, SchemaRef::Ref(_)),
+            "Invalid definition should fall through to $ref"
+        );
+    }
+
+    #[test]
+    fn test_generic_known_schema_tuple_struct() {
+        // Tuple struct fields are NOT Named → skips field substitution but still inlines
+        let mut known = HashSet::new();
+        known.insert("Pair".to_string());
+        let mut defs = HashMap::new();
+        defs.insert("Pair".to_string(), "struct Pair<T>(T, T);".to_string());
+
+        let ty: Type = syn::parse_str("Pair<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &defs);
+        // Tuple struct still gets inlined (generics cleared, parse_struct_to_schema called)
+        // but field types are NOT substituted (no Named fields to iterate)
+        assert!(
+            matches!(schema_ref, SchemaRef::Inline(_)),
+            "Tuple struct should still inline"
+        );
+    }
+
+    #[test]
+    fn test_generic_known_schema_no_generic_params_in_def() {
+        // Struct definition has no generics but concrete type has angle brackets → mismatch
+        let mut known = HashSet::new();
+        known.insert("Plain".to_string());
+        let mut defs = HashMap::new();
+        defs.insert("Plain".to_string(), "struct Plain { x: i32 }".to_string());
+
+        let ty: Type = syn::parse_str("Plain<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &defs);
+        // 0 generic params != 1 concrete type → falls through to Ref
+        assert!(matches!(schema_ref, SchemaRef::Ref(_)));
+    }
+
+    // ========== Coverage: nested generic types ==========
+
+    #[test]
+    fn test_nested_vec_vec_string() {
+        let ty: Type = syn::parse_str("Vec<Vec<String>>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            if let Some(SchemaRef::Inline(inner)) = schema.items.as_deref() {
+                assert_eq!(inner.schema_type, Some(SchemaType::Array));
+                if let Some(SchemaRef::Inline(innermost)) = inner.items.as_deref() {
+                    assert_eq!(innermost.schema_type, Some(SchemaType::String));
+                } else {
+                    panic!("Expected innermost inline schema");
+                }
+            } else {
+                panic!("Expected inner inline schema");
+            }
+        } else {
+            panic!("Expected inline schema for nested Vec");
+        }
+    }
+
+    #[test]
+    fn test_option_vec_i32() {
+        let ty: Type = syn::parse_str("Option<Vec<i32>>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            assert_eq!(schema.nullable, Some(true));
+            if let Some(SchemaRef::Inline(items)) = schema.items.as_deref() {
+                assert_eq!(items.schema_type, Some(SchemaType::Integer));
+            } else {
+                panic!("Expected inline items");
+            }
+        } else {
+            panic!("Expected inline schema for Option<Vec<i32>>");
+        }
+    }
+
+    #[test]
+    fn test_box_box_i32() {
+        // Box<Box<i32>> → transparent twice → integer
+        let ty: Type = syn::parse_str("Box<Box<i32>>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Integer));
+        } else {
+            panic!("Expected inline integer schema for Box<Box<i32>>");
+        }
+    }
+
+    // ========== Coverage: HashMap/BTreeMap with known ref value ==========
+
+    #[test]
+    fn test_hashmap_with_known_ref_value() {
+        let mut known = HashSet::new();
+        known.insert("User".to_string());
+        let ty: Type = syn::parse_str("HashMap<String, User>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            let additional = schema.additional_properties.as_ref().unwrap();
+            assert_eq!(additional.get("$ref").unwrap(), "#/components/schemas/User");
+        } else {
+            panic!("Expected inline schema for HashMap<String, User>");
+        }
+    }
+
+    #[test]
+    fn test_btreemap_with_inline_value() {
+        let ty: Type = syn::parse_str("BTreeMap<String, Vec<i32>>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            let additional = schema.additional_properties.as_ref().unwrap();
+            // Value should be an array schema serialized
+            assert_eq!(additional.get("type").unwrap(), "array");
+        } else {
+            panic!("Expected inline schema for BTreeMap with Vec value");
+        }
+    }
+
+    // ========== Coverage: HashMap/BTreeMap with insufficient args ==========
+
+    #[test]
+    fn test_hashmap_single_arg_falls_through() {
+        // HashMap<String> — only 1 type arg, need 2 → falls through to unknown type
+        let ty: Type = syn::parse_str("HashMap<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            // Should NOT have additional_properties since it fell through
+            assert!(schema.additional_properties.is_none());
+        } else {
+            panic!("Expected inline schema");
+        }
+    }
+
+    // ========== Coverage: &mut T reference ==========
+
+    #[test]
+    fn test_mutable_reference_delegates_to_inner() {
+        let ty: Type = syn::parse_str("&mut String").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::String));
+        } else {
+            panic!("Expected inline string schema for &mut String");
+        }
+    }
 }
