@@ -79,13 +79,15 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Supports `#[schema(name = "CustomName")]` attribute to set custom `OpenAPI` schema name.
 #[cfg(not(tarpaulin_include))]
-#[allow(clippy::missing_panics_doc)]
 #[proc_macro_derive(Schema, attributes(schema, serde))]
 pub fn derive_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let (metadata, expanded) = schema_impl::process_derive_schema(&input);
     let name = metadata.name.clone();
-    SCHEMA_STORAGE.lock().unwrap().insert(name, metadata);
+    SCHEMA_STORAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(name, metadata);
     TokenStream::from(expanded)
 }
 
@@ -135,13 +137,14 @@ pub fn derive_schema(input: TokenStream) -> TokenStream {
 /// let list_schema = schema!(User, pick = ["id", "name"]);
 /// ```
 #[cfg(not(tarpaulin_include))]
-#[allow(clippy::missing_panics_doc)]
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaInput);
 
     // Get stored schemas
-    let storage = SCHEMA_STORAGE.lock().unwrap();
+    let storage = SCHEMA_STORAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     match schema_macro::generate_schema_code(&input, &storage) {
         Ok(tokens) => TokenStream::from(tokens),
@@ -204,14 +207,15 @@ pub fn schema(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 #[cfg(not(tarpaulin_include))]
-#[allow(clippy::missing_panics_doc)]
 #[proc_macro]
 pub fn schema_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as schema_macro::SchemaTypeInput);
 
     // Get stored schemas and generate code
     let (tokens, generated_metadata) = {
-        let storage = SCHEMA_STORAGE.lock().unwrap();
+        let storage = SCHEMA_STORAGE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match schema_macro::generate_schema_type_code(&input, &storage) {
             Ok(result) => result,
             Err(e) => return e.to_compile_error().into(),
@@ -222,18 +226,22 @@ pub fn schema_type(input: TokenStream) -> TokenStream {
     // This ensures it appears in OpenAPI even when `ignore` is set
     if let Some(metadata) = generated_metadata {
         let name = metadata.name.clone();
-        SCHEMA_STORAGE.lock().unwrap().insert(name, metadata);
+        SCHEMA_STORAGE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name, metadata);
     }
     TokenStream::from(tokens)
 }
 
 #[cfg(not(tarpaulin_include))]
-#[allow(clippy::missing_panics_doc)]
 #[proc_macro]
 pub fn vespera(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AutoRouterInput);
     let processed = process_vespera_input(input);
-    let schema_storage = SCHEMA_STORAGE.lock().unwrap();
+    let schema_storage = SCHEMA_STORAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     match process_vespera_macro(&processed, &schema_storage) {
         Ok(tokens) => tokens.into(),
@@ -264,7 +272,6 @@ pub fn vespera(input: TokenStream) -> TokenStream {
 /// ```
 ///
 #[cfg(not(tarpaulin_include))]
-#[allow(clippy::missing_panics_doc)]
 #[proc_macro]
 pub fn export_app(input: TokenStream) -> TokenStream {
     let ExportAppInput { name, dir } = syn::parse_macro_input!(input as ExportAppInput);
@@ -272,8 +279,17 @@ pub fn export_app(input: TokenStream) -> TokenStream {
         .map(|d| d.value())
         .or_else(|| std::env::var("VESPERA_DIR").ok())
         .unwrap_or_else(|| "routes".to_string());
-    let schema_storage = SCHEMA_STORAGE.lock().unwrap();
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let schema_storage = SCHEMA_STORAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") else {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "export_app! macro: CARGO_MANIFEST_DIR is not set. This macro must be used within a cargo build.",
+        )
+        .to_compile_error()
+        .into();
+    };
 
     match process_export_app(&name, &folder_name, &schema_storage, &manifest_dir) {
         Ok(tokens) => tokens.into(),

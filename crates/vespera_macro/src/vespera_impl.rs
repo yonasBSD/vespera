@@ -102,16 +102,19 @@ pub fn generate_and_write_openapi(
 }
 
 /// Find the folder path for route scanning
-pub fn find_folder_path(folder_name: &str) -> std::path::PathBuf {
-    let root = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set by cargo during compilation");
+pub fn find_folder_path(folder_name: &str) -> MacroResult<std::path::PathBuf> {
+    let root = std::env::var("CARGO_MANIFEST_DIR").map_err(|_| {
+        err_call_site(
+            "CARGO_MANIFEST_DIR is not set. vespera macros must be used within a cargo build.",
+        )
+    })?;
     let path = format!("{root}/src/{folder_name}");
     let path = Path::new(&path);
     if path.exists() && path.is_dir() {
-        return path.to_path_buf();
+        return Ok(path.to_path_buf());
     }
 
-    Path::new(folder_name).to_path_buf()
+    Ok(Path::new(folder_name).to_path_buf())
 }
 
 /// Find the workspace root's target directory
@@ -152,7 +155,7 @@ pub fn process_vespera_macro(
     processed: &ProcessedVesperaInput,
     schema_storage: &HashMap<String, StructMetadata>,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let folder_path = find_folder_path(&processed.folder_name);
+    let folder_path = find_folder_path(&processed.folder_name)?;
     if !folder_path.exists() {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -183,7 +186,7 @@ pub fn process_export_app(
     schema_storage: &HashMap<String, StructMetadata>,
     manifest_dir: &str,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let folder_path = find_folder_path(folder_name);
+    let folder_path = find_folder_path(folder_name)?;
     if !folder_path.exists() {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -390,7 +393,7 @@ mod tests {
     #[test]
     fn test_find_folder_path_nonexistent_returns_path() {
         // When the constructed path doesn't exist, it falls back to using folder_name directly
-        let result = find_folder_path("nonexistent_folder_xyz");
+        let result = find_folder_path("nonexistent_folder_xyz").unwrap();
         // It should return a PathBuf (either from src/nonexistent... or just the folder name)
         assert!(result.to_string_lossy().contains("nonexistent_folder_xyz"));
     }
@@ -703,7 +706,7 @@ mod tests {
         let absolute_path = temp_dir.path().to_string_lossy().to_string();
 
         // When given an absolute path that exists, it should return it
-        let result = find_folder_path(&absolute_path);
+        let result = find_folder_path(&absolute_path).unwrap();
         // The function tries src/{folder_name} first, then falls back to the folder_name directly
         assert!(
             result.to_string_lossy().contains(&absolute_path)
@@ -724,7 +727,7 @@ mod tests {
         // SAFETY: We're in a single-threaded test context
         unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
 
-        let result = find_folder_path("routes");
+        let result = find_folder_path("routes").unwrap();
 
         // Restore CARGO_MANIFEST_DIR
         if let Some(old_value) = old_manifest_dir {

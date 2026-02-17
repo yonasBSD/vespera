@@ -224,8 +224,13 @@ fn build_path_items(
             if let syn::Item::Fn(fn_item) = item
                 && fn_item.sig.ident == route_meta.function_name
             {
-                let method = HttpMethod::try_from(route_meta.method.as_str())
-                    .expect("route method must be a valid HTTP method");
+                let Ok(method) = HttpMethod::try_from(route_meta.method.as_str()) else {
+                    eprintln!(
+                        "vespera: skipping route '{}' — unknown HTTP method '{}'",
+                        route_meta.path, route_meta.method
+                    );
+                    continue;
+                };
 
                 if let Some(tags) = &route_meta.tags {
                     for tag in tags {

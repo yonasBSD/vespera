@@ -36,9 +36,10 @@
 use proc_macro2::Span;
 use quote::quote;
 use syn::{
-    LitStr, bracketed,
+    bracketed,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
+    LitStr,
 };
 use vespera_core::{openapi::Server, route::HttpMethod};
 
@@ -439,8 +440,13 @@ pub fn generate_router_code(
     let mut router_nests = Vec::new();
 
     for route in &metadata.routes {
-        let http_method = HttpMethod::try_from(route.method.as_str())
-            .expect("route method must be a valid HTTP method");
+        let Ok(http_method) = HttpMethod::try_from(route.method.as_str()) else {
+            eprintln!(
+                "vespera: skipping route '{}' — unknown HTTP method '{}'",
+                route.path, route.method
+            );
+            continue;
+        };
         let method_path = http_method_to_token_stream(http_method);
         let path = &route.path;
         let module_path = &route.module_path;
