@@ -62,9 +62,8 @@ pub fn analyze_circular_refs(source_module_path: &[String], definition: &str) ->
     let mut circular_field_required = HashMap::new();
 
     for field in &fields_named.named {
-        let Some(field_ident) = field.ident.as_ref() else {
-            continue;
-        };
+        // FieldsNamed guarantees all fields have identifiers
+        let field_ident = field.ident.as_ref().expect("named field has ident");
         let field_name = field_ident.to_string();
         let ty_str = quote!(#field.ty).to_string().replace(' ', "");
 

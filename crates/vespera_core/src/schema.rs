@@ -438,6 +438,14 @@ mod tests {
     }
 
     #[test]
+    fn serialize_number_constraint_none_serializes_null() {
+        // Direct call bypasses skip_serializing_if to cover the None branch
+        let result =
+            super::serialize_number_constraint(&None, serde_json::value::Serializer).unwrap();
+        assert_eq!(result, serde_json::Value::Null);
+    }
+
+    #[test]
     fn serialize_minimum_whole_number_as_integer() {
         let schema = Schema {
             minimum: Some(0.0),
