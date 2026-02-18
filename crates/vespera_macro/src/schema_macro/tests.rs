@@ -311,7 +311,7 @@ fn test_sea_orm_default_attrs_no_default_value() {
 }
 
 #[test]
-fn test_sea_orm_default_attrs_sql_function_supported_type() {
+fn test_sea_orm_default_attrs_sql_function_skips() {
     let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
     let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
     let ty: syn::Type = syn::parse_str("String").unwrap();
@@ -325,42 +325,8 @@ fn test_sea_orm_default_attrs_sql_function_supported_type() {
         false,
         &mut fns,
     );
-    // Supported type with SQL function → generates serde(default) to mark field not-required
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde default attr: {serde_str}"
-    );
-    assert!(
-        serde_str.contains("default_Test_created_at"),
-        "should reference generated default fn: {serde_str}"
-    );
-    // No JSON default for SQL functions (value is DB-side only)
-    assert!(schema.is_empty());
-    // Default function was generated
-    assert_eq!(fns.len(), 1, "should generate one default function");
-}
-
-#[test]
-fn test_sea_orm_default_attrs_sql_function_unsupported_type_skips() {
-    let attrs: Vec<syn::Attribute> =
-        vec![syn::parse_quote!(#[sea_orm(default_value = "MY_FUNC()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("MyCustomType").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) = generate_sea_orm_default_attrs(
-        &attrs,
-        &struct_name,
-        "custom_field",
-        &ty,
-        &ty,
-        false,
-        &mut fns,
-    );
-    // Unsupported type with SQL function → still skips entirely
     assert!(serde.is_empty());
     assert!(schema.is_empty());
-    assert!(fns.is_empty());
 }
 
 #[test]
@@ -474,156 +440,6 @@ fn test_generate_schema_type_code_with_partial_fields() {
     assert!(
         output.contains("UpdateUser"),
         "should contain generated struct name: {output}"
-    );
-}
-
-// --- Coverage: sql_function_default_body branches ---
-
-#[test]
-fn test_sql_function_default_non_path_type_skips() {
-    // Reference type (&str) is Type::Reference, not Type::Path → sql_function_default_body returns None
-    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "GEN()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("&str").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "val", &ty, &ty, false, &mut fns);
-    assert!(serde.is_empty());
-    assert!(schema.is_empty());
-    assert!(fns.is_empty());
-}
-
-#[test]
-fn test_sql_function_default_datetime_with_timezone() {
-    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("DateTimeWithTimeZone").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "ts", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("UNIX_EPOCH"),
-        "should use epoch default: {fn_str}"
-    );
-}
-
-#[test]
-fn test_sql_function_default_datetime_utc() {
-    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("DateTimeUtc").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "ts", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("UNIX_EPOCH"),
-        "should use epoch default: {fn_str}"
-    );
-}
-
-#[test]
-fn test_sql_function_default_datetime_local() {
-    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("DateTimeLocal").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "ts", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("UNIX_EPOCH"),
-        "should use epoch default: {fn_str}"
-    );
-}
-
-#[test]
-fn test_sql_function_default_naive_datetime() {
-    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("NaiveDateTime").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "ts", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("UNIX_EPOCH"),
-        "should use epoch default: {fn_str}"
-    );
-}
-
-#[test]
-fn test_sql_function_default_naive_date() {
-    let attrs: Vec<syn::Attribute> =
-        vec![syn::parse_quote!(#[sea_orm(default_value = "CURDATE()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("NaiveDate").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "d", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("from_ymd_opt"),
-        "should use ymd default: {fn_str}"
-    );
-}
-
-#[test]
-fn test_sql_function_default_naive_time() {
-    let attrs: Vec<syn::Attribute> =
-        vec![syn::parse_quote!(#[sea_orm(default_value = "CURTIME()")])];
-    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("NaiveTime").unwrap();
-    let mut fns = Vec::new();
-    let (serde, schema) =
-        generate_sea_orm_default_attrs(&attrs, &struct_name, "t", &ty, &ty, false, &mut fns);
-    let serde_str = serde.to_string();
-    assert!(
-        serde_str.contains("serde"),
-        "should have serde attr: {serde_str}"
-    );
-    assert!(schema.is_empty());
-    assert_eq!(fns.len(), 1);
-    let fn_str = fns[0].to_string();
-    assert!(
-        fn_str.contains("from_hms_opt"),
-        "should use hms default: {fn_str}"
     );
 }
 

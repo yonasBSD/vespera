@@ -3045,6 +3045,8 @@
           "userId",
           "memoId",
           "content",
+          "createdAt",
+          "updatedAt",
           "user",
           "memo"
         ]
@@ -3079,7 +3081,8 @@
           "userId",
           "title",
           "content",
-          "status"
+          "status",
+          "createdAt"
         ]
       },
       "MemoResponseComments": {
@@ -3166,6 +3169,7 @@
           "title",
           "content",
           "status",
+          "createdAt",
           "user"
         ]
       },
@@ -3207,6 +3211,8 @@
           "title",
           "content",
           "status",
+          "createdAt",
+          "updatedAt",
           "user"
         ]
       },
@@ -3228,7 +3234,8 @@
         },
         "required": [
           "id",
-          "user_id"
+          "user_id",
+          "created_at"
         ]
       },
       "MemoStatus": {
@@ -3919,7 +3926,9 @@
         "required": [
           "id",
           "email",
-          "name"
+          "name",
+          "createdAt",
+          "updatedAt"
         ]
       },
       "UserSummary": {
@@ -3986,7 +3995,9 @@
           }
         },
         "required": [
-          "name"
+          "id",
+          "name",
+          "createdAt"
         ]
       }
     }

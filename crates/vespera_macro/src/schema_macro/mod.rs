@@ -656,24 +656,8 @@ fn generate_sea_orm_default_attrs(
     };
 
     // SQL functions like NOW(), CURRENT_TIMESTAMP(), gen_random_uuid()
-    // can't be expressed as concrete JSON defaults, but we can make the field
-    // not-required by generating serde(default) with a dummy default value.
+    // can't be expressed as concrete JSON defaults — skip entirely.
     if is_sql_function_default(&default_value) {
-        let has_existing_serde_default = extract_default(original_attrs).is_some();
-        if !has_existing_serde_default
-            && let Some(default_body) = sql_function_default_body(original_ty)
-        {
-            let fn_name = format!("default_{struct_name}_{field_name}");
-            let fn_ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
-            default_functions.push(quote! {
-                #[allow(non_snake_case)]
-                fn #fn_ident() -> #field_ty {
-                    #default_body
-                }
-            });
-            let serde_default_attr = quote! { #[serde(default = #fn_name)] };
-            return (serde_default_attr, quote! {});
-        }
         return (quote! {}, quote! {});
     }
 
@@ -706,52 +690,6 @@ fn generate_sea_orm_default_attrs(
     let serde_default_attr = quote! { #[serde(default = #fn_name)] };
 
     (serde_default_attr, schema_default_attr)
-}
-
-/// Generate a dummy default expression for types with SQL function defaults
-/// (e.g., `gen_random_uuid()`, `NOW()`).
-///
-/// Returns `Some(TokenStream)` with the default expression for supported types,
-/// `None` for types where a dummy default cannot be generated.
-///
-/// These defaults exist solely to satisfy `serde(default)` so the field becomes
-/// not-required in OpenAPI. The actual value is irrelevant since the database
-/// provides the real default.
-fn sql_function_default_body(original_ty: &syn::Type) -> Option<TokenStream> {
-    let syn::Type::Path(type_path) = original_ty else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    let type_name = segment.ident.to_string();
-
-    match type_name.as_str() {
-        // Types implementing Default (returns zero/empty values)
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
-        | "usize" | "f32" | "f64" | "bool" | "String" | "Decimal" | "Uuid" => {
-            Some(quote! { Default::default() })
-        }
-        // SeaORM datetime types → chrono epoch
-        "DateTimeWithTimeZone" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH.fixed_offset()
-        }),
-        "DateTimeUtc" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH
-        }),
-        "DateTimeLocal" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH
-                .with_timezone(&vespera::chrono::Local)
-        }),
-        "DateTime" | "NaiveDateTime" => Some(quote! {
-            vespera::chrono::NaiveDateTime::UNIX_EPOCH
-        }),
-        "NaiveDate" | "Date" => Some(quote! {
-            vespera::chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
-        }),
-        "NaiveTime" | "Time" => Some(quote! {
-            vespera::chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-        }),
-        _ => None,
-    }
 }
 
 /// Check if a type is known to implement `FromStr` and can use `.parse().unwrap()`.
