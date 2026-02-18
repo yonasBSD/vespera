@@ -726,8 +726,8 @@ fn sql_function_default_body(original_ty: &syn::Type) -> Option<TokenStream> {
 
     match type_name.as_str() {
         // Types implementing Default (returns zero/empty values)
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-        | "u128" | "usize" | "f32" | "f64" | "bool" | "String" | "Decimal" | "Uuid" => {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" | "f32" | "f64" | "bool" | "String" | "Decimal" | "Uuid" => {
             Some(quote! { Default::default() })
         }
         // SeaORM datetime types → chrono epoch

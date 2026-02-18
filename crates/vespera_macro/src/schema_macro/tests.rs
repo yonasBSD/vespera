@@ -311,7 +311,7 @@ fn test_sea_orm_default_attrs_no_default_value() {
 }
 
 #[test]
-fn test_sea_orm_default_attrs_sql_function_skips() {
+fn test_sea_orm_default_attrs_sql_function_supported_type() {
     let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
     let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
     let ty: syn::Type = syn::parse_str("String").unwrap();
@@ -325,8 +325,42 @@ fn test_sea_orm_default_attrs_sql_function_skips() {
         false,
         &mut fns,
     );
+    // Supported type with SQL function → generates serde(default) to mark field not-required
+    let serde_str = serde.to_string();
+    assert!(
+        serde_str.contains("serde"),
+        "should have serde default attr: {serde_str}"
+    );
+    assert!(
+        serde_str.contains("default_Test_created_at"),
+        "should reference generated default fn: {serde_str}"
+    );
+    // No JSON default for SQL functions (value is DB-side only)
+    assert!(schema.is_empty());
+    // Default function was generated
+    assert_eq!(fns.len(), 1, "should generate one default function");
+}
+
+#[test]
+fn test_sea_orm_default_attrs_sql_function_unsupported_type_skips() {
+    let attrs: Vec<syn::Attribute> =
+        vec![syn::parse_quote!(#[sea_orm(default_value = "MY_FUNC()")])];
+    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
+    let ty: syn::Type = syn::parse_str("MyCustomType").unwrap();
+    let mut fns = Vec::new();
+    let (serde, schema) = generate_sea_orm_default_attrs(
+        &attrs,
+        &struct_name,
+        "custom_field",
+        &ty,
+        &ty,
+        false,
+        &mut fns,
+    );
+    // Unsupported type with SQL function → still skips entirely
     assert!(serde.is_empty());
     assert!(schema.is_empty());
+    assert!(fns.is_empty());
 }
 
 #[test]

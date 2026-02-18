@@ -412,11 +412,13 @@ mod tests {
 
     #[test]
     fn test_is_circular_relation_required_invalid_struct() {
-        assert!(!analyze_circular_refs(&[], "not valid rust")
-            .circular_field_required
-            .get("user")
-            .copied()
-            .unwrap_or(false));
+        assert!(
+            !analyze_circular_refs(&[], "not valid rust")
+                .circular_field_required
+                .get("user")
+                .copied()
+                .unwrap_or(false)
+        );
     }
 
     #[test]
@@ -436,11 +438,13 @@ mod tests {
             pub id: i32,
             pub name: String,
         }";
-        assert!(!analyze_circular_refs(&[], model_def)
-            .circular_field_required
-            .get("nonexistent")
-            .copied()
-            .unwrap_or(false));
+        assert!(
+            !analyze_circular_refs(&[], model_def)
+                .circular_field_required
+                .get("nonexistent")
+                .copied()
+                .unwrap_or(false)
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use quote::quote;
 use super::{
     circular::analyze_circular_refs,
     file_lookup::find_model_from_schema_path,
-    seaorm::{convert_type_with_chrono, RelationFieldInfo},
+    seaorm::{RelationFieldInfo, convert_type_with_chrono},
     type_utils::{
         extract_module_path_from_schema_path, is_seaorm_relation_type, snake_to_pascal_case,
     },
