@@ -272,6 +272,18 @@ pub fn get_type_default(ty: &Type) -> Option<serde_json::Value> {
                         .unwrap_or_else(|| serde_json::Number::from(0)),
                 )),
                 "bool" => Some(serde_json::Value::Bool(false)),
+                "Uuid" => Some(serde_json::Value::String(
+                    "00000000-0000-0000-0000-000000000000".to_string(),
+                )),
+                "DateTime" | "DateTimeWithTimeZone" | "DateTimeUtc" => Some(
+                    serde_json::Value::String("1970-01-01T00:00:00+00:00".to_string()),
+                ),
+                "NaiveDateTime" => {
+                    Some(serde_json::Value::String("1970-01-01T00:00:00".to_string()))
+                }
+                "NaiveDate" => Some(serde_json::Value::String("1970-01-01".to_string())),
+                "NaiveTime" | "Time" => Some(serde_json::Value::String("00:00:00".to_string())),
+                "Decimal" => Some(serde_json::Value::Number(serde_json::Number::from(0))),
                 _ => None,
             }
         }),
@@ -628,12 +640,10 @@ mod tests {
         let ty = empty_type_path();
         let result = extract_type_name(&ty);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("type path has no segments")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("type path has no segments"));
     }
 
     #[test]

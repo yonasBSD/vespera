@@ -299,22 +299,44 @@ fn test_sea_orm_default_attrs_optional_field_skips() {
 }
 
 #[test]
-fn test_sea_orm_default_attrs_no_default_value() {
+fn test_sea_orm_default_attrs_no_default_and_no_pk() {
+    let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(unique)])];
+    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
+    let ty: syn::Type = syn::parse_str("String").unwrap();
+    let mut fns = Vec::new();
+    let (serde, schema) =
+        generate_sea_orm_default_attrs(&attrs, &struct_name, "email", &ty, &ty, false, &mut fns);
+    assert!(serde.is_empty());
+    assert!(schema.is_empty());
+    assert!(fns.is_empty());
+}
+
+#[test]
+fn test_sea_orm_default_attrs_primary_key_generates_defaults() {
     let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(primary_key)])];
     let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
     let ty: syn::Type = syn::parse_str("i32").unwrap();
     let mut fns = Vec::new();
     let (serde, schema) =
         generate_sea_orm_default_attrs(&attrs, &struct_name, "id", &ty, &ty, false, &mut fns);
-    assert!(serde.is_empty());
-    assert!(schema.is_empty());
+    let serde_str = serde.to_string();
+    assert!(
+        serde_str.contains("serde"),
+        "primary_key should generate serde default: {serde_str}"
+    );
+    let schema_str = schema.to_string();
+    assert!(
+        schema_str.contains('0'),
+        "primary_key i32 should have schema default 0: {schema_str}"
+    );
+    assert_eq!(fns.len(), 1, "should generate a default function");
 }
 
 #[test]
-fn test_sea_orm_default_attrs_sql_function_skips() {
+fn test_sea_orm_default_attrs_sql_function_generates_defaults() {
     let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
     let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
-    let ty: syn::Type = syn::parse_str("String").unwrap();
+    let ty: syn::Type = syn::parse_str("DateTimeWithTimeZone").unwrap();
     let mut fns = Vec::new();
     let (serde, schema) = generate_sea_orm_default_attrs(
         &attrs,
@@ -325,8 +347,53 @@ fn test_sea_orm_default_attrs_sql_function_skips() {
         false,
         &mut fns,
     );
-    assert!(serde.is_empty());
-    assert!(schema.is_empty());
+    let serde_str = serde.to_string();
+    assert!(
+        serde_str.contains("serde"),
+        "SQL function default should generate serde default: {serde_str}"
+    );
+    let schema_str = schema.to_string();
+    assert!(
+        schema_str.contains("1970-01-01"),
+        "DateTimeWithTimeZone should have epoch default: {schema_str}"
+    );
+    assert_eq!(fns.len(), 1, "should generate a default function");
+}
+
+#[test]
+fn test_sea_orm_default_attrs_sql_function_uuid() {
+    let attrs: Vec<syn::Attribute> =
+        vec![syn::parse_quote!(#[sea_orm(primary_key, default_value = "gen_random_uuid()")])];
+    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
+    let ty: syn::Type = syn::parse_str("Uuid").unwrap();
+    let mut fns = Vec::new();
+    let (serde, schema) =
+        generate_sea_orm_default_attrs(&attrs, &struct_name, "id", &ty, &ty, false, &mut fns);
+    let serde_str = serde.to_string();
+    assert!(
+        serde_str.contains("serde"),
+        "UUID SQL default should generate serde default: {serde_str}"
+    );
+    let schema_str = schema.to_string();
+    assert!(
+        schema_str.contains("00000000-0000-0000-0000-000000000000"),
+        "Uuid should have nil UUID default: {schema_str}"
+    );
+    assert_eq!(fns.len(), 1);
+}
+
+#[test]
+fn test_sea_orm_default_attrs_sql_function_unknown_type_skips() {
+    let attrs: Vec<syn::Attribute> =
+        vec![syn::parse_quote!(#[sea_orm(default_value = "SOME_FUNC()")])];
+    let struct_name = syn::Ident::new("Test", proc_macro2::Span::call_site());
+    let ty: syn::Type = syn::parse_str("MyCustomType").unwrap();
+    let mut fns = Vec::new();
+    let (serde, schema) =
+        generate_sea_orm_default_attrs(&attrs, &struct_name, "field", &ty, &ty, false, &mut fns);
+    assert!(serde.is_empty(), "unknown type should skip serde default");
+    assert!(schema.is_empty(), "unknown type should skip schema default");
+    assert!(fns.is_empty());
 }
 
 #[test]

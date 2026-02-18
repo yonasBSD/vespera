@@ -278,6 +278,26 @@ pub fn is_sql_function_default(value: &str) -> bool {
     value.contains('(')
 }
 
+/// Check if a field has `#[sea_orm(primary_key)]`.
+///
+/// Primary keys in SeaORM imply auto-increment by default,
+/// meaning the database provides a value even when the client omits it.
+pub fn has_sea_orm_primary_key(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("sea_orm") {
+            continue;
+        }
+        let syn::Meta::List(meta_list) = &attr.meta else {
+            continue;
+        };
+        let tokens = meta_list.tokens.to_string();
+        if tokens.contains("primary_key") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if a field in the struct is optional (Option<T>).
 pub fn is_field_optional_in_struct(struct_item: &syn::ItemStruct, field_name: &str) -> bool {
     if let syn::Fields::Named(fields_named) = &struct_item.fields {
@@ -1213,5 +1233,40 @@ mod tests {
     #[case("active", false)]
     fn test_is_sql_function_default(#[case] value: &str, #[case] expected: bool) {
         assert_eq!(is_sql_function_default(value), expected);
+    }
+
+    // =========================================================================
+    // Tests for has_sea_orm_primary_key
+    // =========================================================================
+
+    #[test]
+    fn test_has_sea_orm_primary_key_true() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(primary_key)])];
+        assert!(has_sea_orm_primary_key(&attrs));
+    }
+
+    #[test]
+    fn test_has_sea_orm_primary_key_with_other_attrs() {
+        let attrs: Vec<syn::Attribute> =
+            vec![syn::parse_quote!(#[sea_orm(primary_key, default_value = "gen_random_uuid()")])];
+        assert!(has_sea_orm_primary_key(&attrs));
+    }
+
+    #[test]
+    fn test_has_sea_orm_primary_key_false() {
+        let attrs: Vec<syn::Attribute> =
+            vec![syn::parse_quote!(#[sea_orm(default_value = "NOW()")])];
+        assert!(!has_sea_orm_primary_key(&attrs));
+    }
+
+    #[test]
+    fn test_has_sea_orm_primary_key_no_sea_orm_attr() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(default)])];
+        assert!(!has_sea_orm_primary_key(&attrs));
+    }
+
+    #[test]
+    fn test_has_sea_orm_primary_key_empty_attrs() {
+        assert!(!has_sea_orm_primary_key(&[]));
     }
 }
