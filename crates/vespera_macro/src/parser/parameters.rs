@@ -1128,10 +1128,7 @@ mod tests {
         let result = convert_to_inline_schema(schema, true);
         match result {
             SchemaRef::Inline(s) => {
-                assert_eq!(
-                    s.ref_path,
-                    Some("#/components/schemas/User".to_string())
-                );
+                assert_eq!(s.ref_path, Some("#/components/schemas/User".to_string()));
                 assert_eq!(s.nullable, Some(true));
                 assert_eq!(s.schema_type, None);
             }
@@ -1193,13 +1190,13 @@ mod tests {
         known_schemas.insert("Status".to_string());
         struct_definitions.insert(
             "Status".to_string(),
-            r#"
+            r"
             pub enum Status {
                 Active,
                 Inactive,
                 Pending,
             }
-            "#
+            "
             .to_string(),
         );
 
@@ -1218,7 +1215,10 @@ mod tests {
             Some(SchemaRef::Ref(r)) => {
                 assert_eq!(r.ref_path, "#/components/schemas/Status");
             }
-            _ => panic!("Expected $ref for enum query parameter, got: {:?}", params[0].schema),
+            _ => panic!(
+                "Expected $ref for enum query parameter, got: {:?}",
+                params[0].schema
+            ),
         }
 
         // Second param: page → inline integer
@@ -1251,12 +1251,12 @@ mod tests {
         known_schemas.insert("Status".to_string());
         struct_definitions.insert(
             "Status".to_string(),
-            r#"
+            r"
             pub enum Status {
                 Active,
                 Inactive,
             }
-            "#
+            "
             .to_string(),
         );
 
@@ -1272,10 +1272,7 @@ mod tests {
         // Option<Enum> → inline schema with ref_path + nullable
         match &params[0].schema {
             Some(SchemaRef::Inline(s)) => {
-                assert_eq!(
-                    s.ref_path,
-                    Some("#/components/schemas/Status".to_string())
-                );
+                assert_eq!(s.ref_path, Some("#/components/schemas/Status".to_string()));
                 assert_eq!(s.nullable, Some(true));
             }
             _ => panic!("Expected inline schema with ref_path and nullable for Option<Enum>"),

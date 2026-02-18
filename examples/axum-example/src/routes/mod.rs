@@ -190,8 +190,6 @@ pub struct TermsQuery {
 }
 
 #[vespera::route(get, path = "/terms", tags = ["terms"])]
-pub async fn list_terms(
-    Query(query): Query<TermsQuery>,
-) -> Json<TermsQuery> {
+pub async fn list_terms(Query(query): Query<TermsQuery>) -> Json<TermsQuery> {
     Json(query)
 }
