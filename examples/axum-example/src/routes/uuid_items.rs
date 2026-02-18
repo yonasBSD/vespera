@@ -1,26 +1,10 @@
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use vespera::Schema;
-use vespera::axum::Json;
+use vespera::{axum::Json, schema_type};
 
-#[derive(Serialize, Deserialize, Schema)]
-pub struct UuidItem {
-    pub id: Uuid,
-    pub name: String,
-    pub external_ref: Option<Uuid>,
-    /// Unique tags for this item
-    pub tags: BTreeSet<String>,
-}
-
-#[derive(Deserialize, Schema)]
-pub struct CreateUuidItemRequest {
-    pub name: String,
-    pub external_ref: Option<Uuid>,
-    /// Unique tags for this item
-    pub tags: BTreeSet<String>,
-}
+schema_type!(UuidItem from crate::models::uuid_item::Model, omit = ["created_at"], add = [("tags": BTreeSet<String>)]);
+schema_type!(CreateUuidItemRequest from crate::models::uuid_item::Model, omit_default, add = [("tags": BTreeSet<String>)]);
 
 /// List all UUID items
 #[vespera::route(get, tags = ["uuid_items"])]

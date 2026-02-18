@@ -238,6 +238,14 @@ pub fn generate_schema_type_code(
                 continue;
             }
 
+            // Apply omit_default: skip fields with sea_orm(default_value) or sea_orm(primary_key)
+            if input.omit_default
+                && (extract_sea_orm_default_value(&field.attrs).is_some()
+                    || has_sea_orm_primary_key(&field.attrs))
+            {
+                continue;
+            }
+
             // Check if this is a SeaORM relation type
             let is_relation = is_seaorm_relation_type(&field.ty);
 

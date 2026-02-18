@@ -3,9 +3,10 @@
 //! Defines input structures for `schema!` and `schema_type!` macros.
 
 use syn::{
-    Ident, LitStr, Token, Type, bracketed, parenthesized,
+    bracketed, parenthesized,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
+    Ident, LitStr, Token, Type,
 };
 
 /// Input for the schema! macro
@@ -90,6 +91,7 @@ impl Parse for SchemaInput {
 /// Or:     `schema_type!(NewTypeName from SourceType, ignore)` - skip Schema derive
 /// Or:     `schema_type!(NewTypeName from SourceType, name = "CustomName")` - custom `OpenAPI` name
 /// Or:     `schema_type!(NewTypeName from SourceType, rename_all = "camelCase")` - serde `rename_all`
+#[allow(clippy::struct_excessive_bools)]
 pub struct SchemaTypeInput {
     /// The new type name to generate
     pub new_type: Ident,
@@ -123,6 +125,9 @@ pub struct SchemaTypeInput {
     /// Whether to generate a multipart/form-data struct (derives `TryFromMultipart` instead of serde)
     /// Use `multipart` bare keyword to set this to true.
     pub multipart: bool,
+    /// Whether to omit fields that have database defaults (sea_orm `default_value` or `primary_key`).
+    /// Use `omit_default` bare keyword to set this to true.
+    pub omit_default: bool,
 }
 
 /// Mode for the `partial` keyword in `schema_type`!
@@ -204,6 +209,7 @@ impl Parse for SchemaTypeInput {
         let mut schema_name = None;
         let mut rename_all = None;
         let mut multipart = false;
+        let mut omit_default = false;
 
         // Parse optional parameters
         while input.peek(Token![,]) {
@@ -293,11 +299,15 @@ impl Parse for SchemaTypeInput {
                     // bare `multipart` - derive TryFromMultipart instead of serde
                     multipart = true;
                 }
+                "omit_default" => {
+                    // bare `omit_default` - omit fields with database defaults
+                    omit_default = true;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "unknown parameter: `{ident_str}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, `partial`, `ignore`, `name`, `rename_all`, or `multipart`"
+                            "unknown parameter: `{ident_str}`. Expected `omit`, `pick`, `rename`, `add`, `clone`, `partial`, `ignore`, `name`, `rename_all`, `multipart`, or `omit_default`"
                         ),
                     ));
                 }
@@ -325,6 +335,7 @@ impl Parse for SchemaTypeInput {
             schema_name,
             rename_all,
             multipart,
+            omit_default,
         })
     }
 }
@@ -698,5 +709,35 @@ mod tests {
         let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
         assert!(input.multipart);
         assert!(matches!(input.partial, Some(PartialMode::All)));
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_omit_default() {
+        let tokens = quote::quote!(CreateUser from Model, omit_default);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.omit_default);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_omit_default_and_omit() {
+        let tokens = quote::quote!(CreateUser from Model, omit_default, omit = ["password"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.omit_default);
+        assert_eq!(input.omit.unwrap(), vec!["password"]);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_with_omit_default_and_pick() {
+        let tokens = quote::quote!(CreateUser from Model, omit_default, pick = ["name", "email"]);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(input.omit_default);
+        assert_eq!(input.pick.unwrap(), vec!["name", "email"]);
+    }
+
+    #[test]
+    fn test_parse_schema_type_input_omit_default_defaults_to_false() {
+        let tokens = quote::quote!(CreateUser from User);
+        let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+        assert!(!input.omit_default);
     }
 }

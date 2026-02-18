@@ -2498,18 +2498,20 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "CreateUuidItemRequest": {
         "type": "object",
+        "description": "UUID item model for testing UUID format in OpenAPI",
         "properties": {
-          "external_ref": {
+          "externalRef": {
             "type": "string",
             "format": "uuid",
+            "description": "External reference UUID",
             "nullable": true
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Item name"
           },
           "tags": {
             "type": "array",
-            "description": "Unique tags for this item",
             "items": {
               "type": "string"
             },
@@ -3990,22 +3992,26 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
       },
       "UuidItem": {
         "type": "object",
+        "description": "UUID item model for testing UUID format in OpenAPI",
         "properties": {
-          "external_ref": {
+          "externalRef": {
             "type": "string",
             "format": "uuid",
+            "description": "External reference UUID",
             "nullable": true
           },
           "id": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Item ID",
+            "default": "00000000-0000-0000-0000-000000000000"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Item name"
           },
           "tags": {
             "type": "array",
-            "description": "Unique tags for this item",
             "items": {
               "type": "string"
             },
