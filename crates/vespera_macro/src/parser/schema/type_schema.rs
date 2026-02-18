@@ -327,7 +327,8 @@ fn parse_type_impl(
                 })),
                 // Standard library types that should not be referenced
                 // Note: HashMap and BTreeMap are handled above in generic types
-                "Vec" | "HashSet" | "BTreeSet" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
+                "Vec" | "HashSet" | "BTreeSet" | "Option" | "Result" | "Json" | "Path"
+                | "Query" | "Header" => {
                     // These are not schema types, return object schema
                     SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
                 }

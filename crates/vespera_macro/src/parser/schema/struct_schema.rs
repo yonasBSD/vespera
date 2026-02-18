@@ -196,16 +196,20 @@ mod tests {
         let props = schema.properties.as_ref().unwrap();
         assert!(props.contains_key("id"));
         assert!(props.contains_key("name"));
-        assert!(schema
-            .required
-            .as_ref()
-            .unwrap()
-            .contains(&"id".to_string()));
-        assert!(!schema
-            .required
-            .as_ref()
-            .unwrap()
-            .contains(&"name".to_string()));
+        assert!(
+            schema
+                .required
+                .as_ref()
+                .unwrap()
+                .contains(&"id".to_string())
+        );
+        assert!(
+            !schema
+                .required
+                .as_ref()
+                .unwrap()
+                .contains(&"name".to_string())
+        );
     }
 
     #[test]

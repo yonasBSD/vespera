@@ -779,8 +779,8 @@ fn sql_function_default_for_type(original_ty: &syn::Type) -> Option<(TokenStream
             quote! { Default::default() },
             "00000000-0000-0000-0000-000000000000".to_string(),
         )),
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-        | "u128" | "usize" | "f32" | "f64" | "Decimal" => {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" | "f32" | "f64" | "Decimal" => {
             Some((quote! { Default::default() }, "0".to_string()))
         }
         "bool" => Some((quote! { Default::default() }, "false".to_string())),

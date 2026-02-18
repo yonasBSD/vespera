@@ -640,10 +640,12 @@ mod tests {
         let ty = empty_type_path();
         let result = extract_type_name(&ty);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("type path has no segments"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("type path has no segments")
+        );
     }
 
     #[test]
