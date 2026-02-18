@@ -264,7 +264,7 @@ pub fn get_type_default(ty: &Type) -> Option<serde_json::Value> {
         Type::Path(type_path) => type_path.path.segments.last().and_then(|segment| {
             match segment.ident.to_string().as_str() {
                 "String" => Some(serde_json::Value::String(String::new())),
-                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
+                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "Decimal" => {
                     Some(serde_json::Value::Number(serde_json::Number::from(0)))
                 }
                 "f32" | "f64" => Some(serde_json::Value::Number(
@@ -283,7 +283,6 @@ pub fn get_type_default(ty: &Type) -> Option<serde_json::Value> {
                 }
                 "NaiveDate" => Some(serde_json::Value::String("1970-01-01".to_string())),
                 "NaiveTime" | "Time" => Some(serde_json::Value::String("00:00:00".to_string())),
-                "Decimal" => Some(serde_json::Value::Number(serde_json::Number::from(0))),
                 _ => None,
             }
         }),

@@ -1269,4 +1269,11 @@ mod tests {
     fn test_has_sea_orm_primary_key_empty_attrs() {
         assert!(!has_sea_orm_primary_key(&[]));
     }
+
+    #[test]
+    fn test_has_sea_orm_primary_key_non_list_meta() {
+        // #[sea_orm = "value"] is a NameValue meta, not a List — should be skipped
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm = "something"])];
+        assert!(!has_sea_orm_primary_key(&attrs));
+    }
 }
