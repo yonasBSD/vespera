@@ -184,7 +184,7 @@ pub struct Operation {
 }
 
 /// Path Item definition (all HTTP methods for a specific path)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathItem {
     /// GET method
@@ -336,19 +336,7 @@ mod tests {
 
     #[test]
     fn test_path_item_set_operation() {
-        let mut path_item = PathItem {
-            get: None,
-            post: None,
-            put: None,
-            patch: None,
-            delete: None,
-            head: None,
-            options: None,
-            trace: None,
-            parameters: None,
-            summary: None,
-            description: None,
-        };
+        let mut path_item = PathItem::default();
 
         let operation = Operation {
             operation_id: Some("test_operation".to_string()),
@@ -418,19 +406,7 @@ mod tests {
 
     #[test]
     fn test_path_item_get_operation() {
-        let mut path_item = PathItem {
-            get: None,
-            post: None,
-            put: None,
-            patch: None,
-            delete: None,
-            head: None,
-            options: None,
-            trace: None,
-            parameters: None,
-            summary: None,
-            description: None,
-        };
+        let mut path_item = PathItem::default();
 
         let operation = Operation {
             operation_id: Some("test_operation".to_string()),
@@ -489,19 +465,7 @@ mod tests {
 
     #[test]
     fn test_path_item_set_operation_overwrites() {
-        let mut path_item = PathItem {
-            get: None,
-            post: None,
-            put: None,
-            patch: None,
-            delete: None,
-            head: None,
-            options: None,
-            trace: None,
-            parameters: None,
-            summary: None,
-            description: None,
-        };
+        let mut path_item = PathItem::default();
 
         let operation1 = Operation {
             operation_id: Some("first".to_string()),

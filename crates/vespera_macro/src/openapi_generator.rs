@@ -48,11 +48,7 @@ pub fn generate_openapi_doc_with_metadata(
         info: Info {
             title: title.unwrap_or_else(|| "API".to_string()),
             version: version.unwrap_or_else(|| "1.0.0".to_string()),
-            description: None,
-            terms_of_service: None,
-            contact: None,
-            license: None,
-            summary: None,
+            ..Default::default()
         },
         servers: servers.or_else(|| {
             Some(vec![Server {
@@ -250,19 +246,7 @@ fn build_path_items(
 
                 let path_item = paths
                     .entry(route_meta.path.clone())
-                    .or_insert_with(|| PathItem {
-                        get: None,
-                        post: None,
-                        put: None,
-                        patch: None,
-                        delete: None,
-                        head: None,
-                        options: None,
-                        trace: None,
-                        parameters: None,
-                        summary: None,
-                        description: None,
-                    });
+                    .or_insert_with(PathItem::default);
 
                 path_item.set_operation(method, operation);
                 break;
@@ -271,6 +255,24 @@ fn build_path_items(
     }
 
     (paths, all_tags)
+}
+
+/// Set the default value on an inline property schema, if not already set.
+///
+/// Looks up `field_name` in the properties map. If found as an inline schema
+/// and the schema has no existing default, sets `value` as the default.
+fn set_property_default(
+    properties: &mut BTreeMap<String, vespera_core::schema::SchemaRef>,
+    field_name: &str,
+    value: serde_json::Value,
+) {
+    use vespera_core::schema::SchemaRef;
+
+    if let Some(SchemaRef::Inline(prop_schema)) = properties.get_mut(field_name)
+        && prop_schema.default.is_none()
+    {
+        prop_schema.default = Some(value);
+    }
 }
 
 /// Process default functions for struct fields
@@ -284,7 +286,6 @@ fn process_default_functions(
     schema: &mut vespera_core::schema::Schema,
 ) {
     use syn::Fields;
-    use vespera_core::schema::SchemaRef;
 
     // Extract rename_all from struct level
     let struct_rename_all = extract_rename_all(&struct_item.attrs);
@@ -308,12 +309,7 @@ fn process_default_functions(
             // Priority 1: #[schema(default = "value")] from schema_type! macro
             if let Some(default_str) = extract_schema_default_attr(&field.attrs) {
                 let value = parse_default_string_to_json_value(&default_str);
-                if let Some(prop_schema_ref) = properties.get_mut(&field_name)
-                    && let SchemaRef::Inline(prop_schema) = prop_schema_ref
-                    && prop_schema.default.is_none()
-                {
-                    prop_schema.default = Some(value);
-                }
+                set_property_default(properties, &field_name, value);
                 continue;
             }
 
@@ -322,30 +318,19 @@ fn process_default_functions(
                 Some(Some(func_name)) => func_name, // default = "function_name"
                 Some(None) => {
                     // Simple default (no function) - we can set type-specific defaults
-                    if let Some(prop_schema_ref) = properties.get_mut(&field_name)
-                        && let SchemaRef::Inline(prop_schema) = prop_schema_ref
-                        && prop_schema.default.is_none()
-                        && let Some(default_value) = utils_get_type_default(&field.ty)
-                    {
-                        prop_schema.default = Some(default_value);
+                    if let Some(default_value) = utils_get_type_default(&field.ty) {
+                        set_property_default(properties, &field_name, default_value);
                     }
                     continue;
                 }
                 None => continue, // No default attribute
             };
 
-            // Find the function in the file AST
-            let func = find_function_in_file(file_ast, &default_info);
-            if let Some(func_item) = func {
-                // Extract default value from function body
-                if let Some(default_value) = extract_default_value_from_function(func_item) {
-                    // Set default value in schema
-                    if let Some(prop_schema_ref) = properties.get_mut(&field_name)
-                        && let SchemaRef::Inline(prop_schema) = prop_schema_ref
-                    {
-                        prop_schema.default = Some(default_value);
-                    }
-                }
+            // Find the function in the file AST and extract default value
+            if let Some(func_item) = find_function_in_file(file_ast, &default_info)
+                && let Some(default_value) = extract_default_value_from_function(func_item)
+            {
+                set_property_default(properties, &field_name, default_value);
             }
         }
     }
@@ -356,8 +341,10 @@ fn process_default_functions(
 /// This attribute is generated by `schema_type!` when converting `sea_orm(default_value)`.
 /// It carries the raw default value string for OpenAPI schema generation.
 fn extract_schema_default_attr(attrs: &[syn::Attribute]) -> Option<String> {
-    for attr in attrs {
-        if attr.path().is_ident("schema") {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("schema"))
+        .find_map(|attr| {
             let mut default_value = None;
             let _ = attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("default") {
@@ -367,12 +354,8 @@ fn extract_schema_default_attr(attrs: &[syn::Attribute]) -> Option<String> {
                 }
                 Ok(())
             });
-            if default_value.is_some() {
-                return default_value;
-            }
-        }
-    }
-    None
+            default_value
+        })
 }
 
 /// Parse a default value string into the appropriate `serde_json::Value`.
@@ -402,14 +385,10 @@ fn find_function_in_file<'a>(
     file_ast: &'a syn::File,
     function_name: &str,
 ) -> Option<&'a syn::ItemFn> {
-    for item in &file_ast.items {
-        if let syn::Item::Fn(fn_item) = item
-            && fn_item.sig.ident == function_name
-        {
-            return Some(fn_item);
-        }
-    }
-    None
+    file_ast.items.iter().find_map(|item| match item {
+        syn::Item::Fn(fn_item) if fn_item.sig.ident == function_name => Some(fn_item),
+        _ => None,
+    })
 }
 
 /// Extract default value from function body
@@ -1503,5 +1482,95 @@ pub fn create_users() -> String {
         let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
         // The unparseable definition should be skipped
         assert!(doc.components.is_none() || doc.components.as_ref().unwrap().schemas.is_none());
+    }
+
+    // ======== Tests for set_property_default helper ========
+
+    #[test]
+    fn test_set_property_default_on_inline_schema() {
+        use vespera_core::schema::{Schema, SchemaRef};
+
+        let mut properties = BTreeMap::new();
+        let mut schema = Schema::object();
+        schema.default = None;
+        properties.insert("name".to_string(), SchemaRef::Inline(Box::new(schema)));
+
+        set_property_default(
+            &mut properties,
+            "name",
+            serde_json::Value::String("Alice".to_string()),
+        );
+
+        if let Some(SchemaRef::Inline(prop)) = properties.get("name") {
+            assert_eq!(
+                prop.default,
+                Some(serde_json::Value::String("Alice".to_string()))
+            );
+        } else {
+            panic!("Expected Inline schema");
+        }
+    }
+
+    #[test]
+    fn test_set_property_default_does_not_overwrite_existing() {
+        use vespera_core::schema::{Schema, SchemaRef};
+
+        let mut properties = BTreeMap::new();
+        let mut schema = Schema::object();
+        schema.default = Some(serde_json::Value::String("existing".to_string()));
+        properties.insert("name".to_string(), SchemaRef::Inline(Box::new(schema)));
+
+        set_property_default(
+            &mut properties,
+            "name",
+            serde_json::Value::String("new".to_string()),
+        );
+
+        if let Some(SchemaRef::Inline(prop)) = properties.get("name") {
+            assert_eq!(
+                prop.default,
+                Some(serde_json::Value::String("existing".to_string())),
+                "Should NOT overwrite existing default"
+            );
+        } else {
+            panic!("Expected Inline schema");
+        }
+    }
+
+    #[test]
+    fn test_set_property_default_skips_ref_schema() {
+        use vespera_core::schema::{Reference, SchemaRef};
+
+        let mut properties = BTreeMap::new();
+        properties.insert(
+            "user".to_string(),
+            SchemaRef::Ref(Reference::schema("User")),
+        );
+
+        // Should silently no-op (Ref variants have no default field)
+        set_property_default(
+            &mut properties,
+            "user",
+            serde_json::Value::String("ignored".to_string()),
+        );
+
+        assert!(
+            matches!(properties.get("user"), Some(SchemaRef::Ref(_))),
+            "Should remain a Ref variant"
+        );
+    }
+
+    #[test]
+    fn test_set_property_default_skips_missing_property() {
+        let mut properties = BTreeMap::new();
+
+        // Should silently no-op (property doesn't exist)
+        set_property_default(
+            &mut properties,
+            "nonexistent",
+            serde_json::Value::Number(42.into()),
+        );
+
+        assert!(properties.is_empty(), "Should not insert new properties");
     }
 }

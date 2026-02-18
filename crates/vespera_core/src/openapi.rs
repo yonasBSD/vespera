@@ -48,7 +48,7 @@ pub struct License {
 }
 
 /// API information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
     /// API title
@@ -245,16 +245,7 @@ mod tests {
                 responses: BTreeMap::new(),
                 security: None,
             }),
-            post: None,
-            put: None,
-            delete: None,
-            patch: None,
-            options: None,
-            head: None,
-            trace: None,
-            parameters: None,
-            summary: None,
-            description: None,
+            ..Default::default()
         }
     }
 
