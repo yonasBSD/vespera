@@ -1624,8 +1624,8 @@ pub fn create_users() -> String {
 
     #[test]
     fn test_parse_default_string_to_json_value_float() {
-        let result = parse_default_string_to_json_value("3.14");
-        assert_eq!(result, serde_json::json!(3.14));
+        let result = parse_default_string_to_json_value("2.72");
+        assert_eq!(result, serde_json::json!(2.72));
     }
 
     #[test]
