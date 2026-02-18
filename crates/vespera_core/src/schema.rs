@@ -463,4 +463,79 @@ mod tests {
         let required = schema.required.expect("required should be initialized");
         assert!(required.is_empty());
     }
+
+    #[test]
+    fn serialize_minimum_whole_number_as_integer() {
+        let schema = Schema {
+            minimum: Some(0.0),
+            ..Schema::integer()
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        // Must be "minimum":0 (integer), NOT "minimum":0.0
+        assert!(
+            json.contains("\"minimum\":0"),
+            "expected integer 0, got: {json}"
+        );
+        assert!(
+            !json.contains("\"minimum\":0.0"),
+            "must not contain 0.0: {json}"
+        );
+    }
+
+    #[test]
+    fn serialize_minimum_fractional_as_float() {
+        let schema = Schema {
+            minimum: Some(1.5),
+            ..Schema::number()
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(
+            json.contains("\"minimum\":1.5"),
+            "expected 1.5, got: {json}"
+        );
+    }
+
+    #[test]
+    fn serialize_minimum_none_omitted() {
+        let schema = Schema::integer();
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(
+            !json.contains("minimum"),
+            "None minimum should be omitted: {json}"
+        );
+    }
+
+    #[test]
+    fn serialize_maximum_whole_number_as_integer() {
+        let schema = Schema {
+            maximum: Some(100.0),
+            ..Schema::integer()
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(
+            json.contains("\"maximum\":100"),
+            "expected integer 100, got: {json}"
+        );
+        assert!(
+            !json.contains("\"maximum\":100.0"),
+            "must not contain 100.0: {json}"
+        );
+    }
+
+    #[test]
+    fn serialize_multiple_of_whole_number_as_integer() {
+        let schema = Schema {
+            multiple_of: Some(2.0),
+            ..Schema::integer()
+        };
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(
+            json.contains("\"multipleOf\":2"),
+            "expected integer 2, got: {json}"
+        );
+        assert!(
+            !json.contains("\"multipleOf\":2.0"),
+            "must not contain 2.0: {json}"
+        );
+    }
 }

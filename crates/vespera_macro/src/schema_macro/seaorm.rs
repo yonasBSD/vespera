@@ -1173,6 +1173,30 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    #[test]
+    fn test_extract_sea_orm_default_value_non_list_meta() {
+        // #[sea_orm] as a path attribute (non-Meta::List) — line 222 branch
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm])];
+        let result = extract_sea_orm_default_value(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_sea_orm_default_value_empty_value_after_equals() {
+        // default_value = , (empty value) — line 236 branch
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[sea_orm(default_value = )])];
+        let result = extract_sea_orm_default_value(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_sea_orm_default_value_no_default_value_key() {
+        let attrs: Vec<syn::Attribute> =
+            vec![syn::parse_quote!(#[sea_orm(primary_key, auto_increment)])];
+        let result = extract_sea_orm_default_value(&attrs);
+        assert_eq!(result, None);
+    }
+
     // =========================================================================
     // Tests for is_sql_function_default
     // =========================================================================

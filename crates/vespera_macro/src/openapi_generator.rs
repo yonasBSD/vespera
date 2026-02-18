@@ -1594,4 +1594,73 @@ pub fn create_users() -> String {
 
         assert!(properties.is_empty(), "Should not insert new properties");
     }
+
+    #[test]
+    fn test_extract_schema_default_attr_with_value() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[schema(default = "42")])];
+        let result = extract_schema_default_attr(&attrs);
+        assert_eq!(result, Some("42".to_string()));
+    }
+
+    #[test]
+    fn test_extract_schema_default_attr_no_default() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[schema(rename = "foo")])];
+        let result = extract_schema_default_attr(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_schema_default_attr_non_schema() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(default)])];
+        let result = extract_schema_default_attr(&attrs);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_default_string_to_json_value_integer() {
+        let result = parse_default_string_to_json_value("42");
+        assert_eq!(result, serde_json::Value::Number(42.into()));
+    }
+
+    #[test]
+    fn test_parse_default_string_to_json_value_float() {
+        let result = parse_default_string_to_json_value("3.14");
+        assert_eq!(result, serde_json::json!(3.14));
+    }
+
+    #[test]
+    fn test_parse_default_string_to_json_value_bool() {
+        let result = parse_default_string_to_json_value("true");
+        assert_eq!(result, serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn test_parse_default_string_to_json_value_string_fallback() {
+        let result = parse_default_string_to_json_value("hello world");
+        assert_eq!(result, serde_json::Value::String("hello world".to_string()));
+    }
+
+    #[test]
+    fn test_process_default_functions_with_schema_default_attr() {
+        use vespera_core::schema::{Schema, SchemaRef};
+
+        let file_ast: syn::File = syn::parse_str("").unwrap();
+        let struct_item: syn::ItemStruct =
+            syn::parse_str(r#"pub struct Test { #[schema(default = "100")] pub count: i32 }"#)
+                .unwrap();
+        let mut schema = Schema::object();
+        let props = schema.properties.get_or_insert_with(BTreeMap::new);
+        props.insert(
+            "count".to_string(),
+            SchemaRef::Inline(Box::new(Schema::integer())),
+        );
+        process_default_functions(&struct_item, &file_ast, &mut schema);
+        if let Some(SchemaRef::Inline(prop_schema)) =
+            schema.properties.as_ref().unwrap().get("count")
+        {
+            assert_eq!(prop_schema.default, Some(serde_json::json!(100)));
+        } else {
+            panic!("Expected inline schema with default");
+        }
+    }
 }

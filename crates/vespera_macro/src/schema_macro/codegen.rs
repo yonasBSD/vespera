@@ -446,4 +446,30 @@ mod tests {
         assert!(output.contains("id"));
         assert!(output.contains("name"));
     }
+
+    #[test]
+    fn test_schema_to_tokens_with_minimum() {
+        let mut schema = Schema::new(SchemaType::Integer);
+        schema.minimum = Some(0.0);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(
+            output.contains("minimum"),
+            "should contain minimum: {output}"
+        );
+        assert!(output.contains("Some"), "should contain Some: {output}");
+    }
+
+    #[test]
+    fn test_schema_to_tokens_with_maximum() {
+        let mut schema = Schema::new(SchemaType::Integer);
+        schema.maximum = Some(255.0);
+        let tokens = schema_to_tokens(&schema);
+        let output = tokens.to_string();
+        assert!(
+            output.contains("maximum"),
+            "should contain maximum: {output}"
+        );
+        assert!(output.contains("Some"), "should contain Some: {output}");
+    }
 }
