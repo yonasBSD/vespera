@@ -197,6 +197,18 @@ pub fn schema_to_tokens(schema: &Schema) -> TokenStream {
         quote! { None }
     };
 
+    let minimum_tokens = if let Some(min) = schema.minimum {
+        quote! { Some(#min) }
+    } else {
+        quote! { None }
+    };
+
+    let maximum_tokens = if let Some(max) = schema.maximum {
+        quote! { Some(#max) }
+    } else {
+        quote! { None }
+    };
+
     quote! {
         vespera::schema::Schema {
             ref_path: #ref_path_tokens,
@@ -206,6 +218,8 @@ pub fn schema_to_tokens(schema: &Schema) -> TokenStream {
             items: #items_tokens,
             properties: #properties_tokens,
             required: #required_tokens,
+            minimum: #minimum_tokens,
+            maximum: #maximum_tokens,
             ..vespera::schema::Schema::new(vespera::schema::SchemaType::Object)
         }
     }
