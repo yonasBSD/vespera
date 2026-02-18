@@ -285,6 +285,10 @@ fn parse_type_impl(
                     format: Some("char".to_string()),
                     ..Schema::string()
                 })),
+                "Uuid" => SchemaRef::Inline(Box::new(Schema {
+                    format: Some("uuid".to_string()),
+                    ..Schema::string()
+                })),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
                 // Date-time types from chrono and time crates
                 "DateTime"

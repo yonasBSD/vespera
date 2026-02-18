@@ -22,6 +22,7 @@ pub mod path;
 pub mod typed_form;
 pub mod typed_header;
 pub mod users;
+pub mod uuid_items;
 
 /// Health check endpoint
 #[vespera::route(get)]

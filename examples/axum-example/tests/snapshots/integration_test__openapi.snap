@@ -1916,6 +1916,59 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           }
         }
       }
+    },
+    "/uuid-items": {
+      "get": {
+        "operationId": "list_uuid_items",
+        "tags": [
+          "uuid_items"
+        ],
+        "description": "List all UUID items",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UuidItem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_uuid_item",
+        "tags": [
+          "uuid_items"
+        ],
+        "description": "Create a new UUID item",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUuidItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UuidItem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2439,6 +2492,22 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "name",
           "email",
           "requestId"
+        ]
+      },
+      "CreateUuidItemRequest": {
+        "type": "object",
+        "properties": {
+          "external_ref": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "Enum": {
@@ -3882,6 +3951,58 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "id",
           "name"
         ]
+      },
+      "UuidItem": {
+        "type": "object",
+        "properties": {
+          "external_ref": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "UuidItemSchema": {
+        "type": "object",
+        "description": "UUID item model for testing UUID format in OpenAPI",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Created at"
+          },
+          "externalRef": {
+            "type": "string",
+            "format": "uuid",
+            "description": "External reference UUID",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Item ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Item name"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt"
+        ]
       }
     }
   },
@@ -3906,6 +4027,9 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
     },
     {
       "name": "typed-form"
+    },
+    {
+      "name": "uuid_items"
     },
     {
       "name": "third"
