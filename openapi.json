@@ -2315,7 +2315,8 @@
         "properties": {
           "id": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "default": 0
           },
           "temperature": {
             "type": "number",
@@ -2324,7 +2325,8 @@
           }
         },
         "required": [
-          "id"
+          "id",
+          "temperature"
         ]
       },
       "ContactFormRequest": {
@@ -2492,18 +2494,29 @@
       },
       "CreateUuidItemRequest": {
         "type": "object",
+        "description": "UUID item model for testing UUID format in OpenAPI",
         "properties": {
-          "external_ref": {
+          "externalRef": {
             "type": "string",
             "format": "uuid",
+            "description": "External reference UUID",
             "nullable": true
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Item name"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
           }
         },
         "required": [
-          "name"
+          "name",
+          "tags"
         ]
       },
       "Enum": {
@@ -3015,11 +3028,13 @@
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "default": 0
           },
           "memo": {
             "$ref": "#/components/schemas/MemoSchema"
@@ -3030,7 +3045,8 @@
           },
           "updatedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "user": {
             "$ref": "#/components/schemas/UserSchema"
@@ -3045,6 +3061,8 @@
           "userId",
           "memoId",
           "content",
+          "createdAt",
+          "updatedAt",
           "user",
           "memo"
         ]
@@ -3057,11 +3075,13 @@
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "default": 0
           },
           "status": {
             "$ref": "#/components/schemas/MemoStatus"
@@ -3079,7 +3099,8 @@
           "userId",
           "title",
           "content",
-          "status"
+          "status",
+          "createdAt"
         ]
       },
       "MemoResponseComments": {
@@ -3140,11 +3161,13 @@
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "default": 0
           },
           "status": {
             "$ref": "#/components/schemas/MemoStatus"
@@ -3166,6 +3189,7 @@
           "title",
           "content",
           "status",
+          "createdAt",
           "user"
         ]
       },
@@ -3177,11 +3201,13 @@
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "default": 0
           },
           "status": {
             "$ref": "#/components/schemas/MemoStatus"
@@ -3191,7 +3217,8 @@
           },
           "updatedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "user": {
             "$ref": "#/components/schemas/UserSchema"
@@ -3207,6 +3234,8 @@
           "title",
           "content",
           "status",
+          "createdAt",
+          "updatedAt",
           "user"
         ]
       },
@@ -3215,11 +3244,13 @@
         "properties": {
           "created_at": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "default": 0
           },
           "user_id": {
             "type": "integer",
@@ -3228,7 +3259,8 @@
         },
         "required": [
           "id",
-          "user_id"
+          "user_id",
+          "created_at"
         ]
       },
       "MemoStatus": {
@@ -3284,7 +3316,11 @@
             "description": "Items per page",
             "default": 20
           }
-        }
+        },
+        "required": [
+          "page",
+          "perPage"
+        ]
       },
       "PatchFileUploadRequest": {
         "type": "object",
@@ -3482,6 +3518,9 @@
         },
         "required": [
           "name",
+          "email5",
+          "email6",
+          "num",
           "in_skip",
           "in_skip3"
         ]
@@ -3837,7 +3876,10 @@
                 "type": "string",
                 "description": "Sort order: \"asc\" or \"desc\""
               }
-            }
+            },
+            "required": [
+              "sort"
+            ]
           },
           {
             "$ref": "#/components/schemas/Pagination"
@@ -3895,7 +3937,8 @@
           "createdAt": {
             "type": "string",
             "format": "date-time",
-            "description": "Created at"
+            "description": "Created at",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "email": {
             "type": "string",
@@ -3904,7 +3947,8 @@
           "id": {
             "type": "integer",
             "format": "int32",
-            "description": "User ID"
+            "description": "User ID",
+            "default": 0
           },
           "name": {
             "type": "string",
@@ -3913,13 +3957,16 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time",
-            "description": "Updated at"
+            "description": "Updated at",
+            "default": "1970-01-01T00:00:00+00:00"
           }
         },
         "required": [
           "id",
           "email",
-          "name"
+          "name",
+          "createdAt",
+          "updatedAt"
         ]
       },
       "UserSummary": {
@@ -3941,23 +3988,36 @@
       },
       "UuidItem": {
         "type": "object",
+        "description": "UUID item model for testing UUID format in OpenAPI",
         "properties": {
-          "external_ref": {
+          "externalRef": {
             "type": "string",
             "format": "uuid",
+            "description": "External reference UUID",
             "nullable": true
           },
           "id": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Item ID",
+            "default": "00000000-0000-0000-0000-000000000000"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Item name"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
           }
         },
         "required": [
           "id",
-          "name"
+          "name",
+          "tags"
         ]
       },
       "UuidItemSchema": {
@@ -3967,7 +4027,8 @@
           "createdAt": {
             "type": "string",
             "format": "date-time",
-            "description": "Created at"
+            "description": "Created at",
+            "default": "1970-01-01T00:00:00+00:00"
           },
           "externalRef": {
             "type": "string",
@@ -3978,7 +4039,8 @@
           "id": {
             "type": "string",
             "format": "uuid",
-            "description": "Item ID"
+            "description": "Item ID",
+            "default": "00000000-0000-0000-0000-000000000000"
           },
           "name": {
             "type": "string",
@@ -3986,7 +4048,9 @@
           }
         },
         "required": [
-          "name"
+          "id",
+          "name",
+          "createdAt"
         ]
       }
     }

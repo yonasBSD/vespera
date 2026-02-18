@@ -39,8 +39,14 @@ pub struct User { id: u32, name: String }
 | `f32`, `f64` | `number` | |
 | `bool` | `boolean` | |
 | `Vec<T>` | `array` + items | |
+| `BTreeSet<T>`, `HashSet<T>` | `array` + items + `uniqueItems: true` | Set types |
 | `Option<T>` | T (nullable context) | Parent marks as optional |
 | `HashMap<K,V>` | `object` + additionalProperties | |
+| `Uuid` | `string` + `format: uuid` | |
+| `Decimal` | `string` + `format: decimal` | |
+| `NaiveDate` | `string` + `format: date` | |
+| `NaiveTime` | `string` + `format: time` | |
+| `DateTime`, `DateTimeWithTimeZone` | `string` + `format: date-time` | |
 | `FieldData<NamedTempFile>` | `string` + `format: binary` | File upload field |
 | `()` | empty response | 204 No Content |
 | Custom struct | `$ref` | Must derive Schema |
@@ -112,7 +118,7 @@ pub struct UserResponse {
     #[serde(rename = "fullName")]  // ✅ Respected
     name: String,        // → "fullName" in JSON Schema
     
-    #[serde(default)]    // ✅ Marks as optional in schema
+    #[serde(default)]    // ✅ Recognized (does NOT affect `required` — only Option<T> does)
     bio: Option<String>,
     
     #[serde(skip)]       // ✅ Excluded from schema
@@ -188,6 +194,7 @@ npx @apidevtools/swagger-cli validate openapi.json
 **Primary Parameters (USE THESE):**
 - `pick = [...]` - Allowlist: include ONLY these fields
 - `omit = [...]` - Denylist: exclude these fields
+- `omit_default` - Auto-omit fields with DB defaults (primary_key, default_value)
 
 **Advanced Parameters (USE SPARINGLY):**
 - `partial` - For PATCH endpoints only
@@ -231,6 +238,12 @@ schema_type!(UserPatch from crate::models::user::Model, partial);
 
 // Partial updates (specific fields only)
 schema_type!(UserPatch from crate::models::user::Model, partial = ["name", "email"]);
+
+// Auto-omit fields with DB defaults (primary_key, default_value = "...")
+schema_type!(CreatePostRequest from crate::models::post::Model, omit_default);
+
+// Combine omit_default with add
+schema_type!(CreateItemRequest from crate::models::item::Model, omit_default, add = [("tags": Vec<String>)]);
 
 // Custom serde rename strategy
 schema_type!(UserSnakeCase from crate::models::user::Model, rename_all = "snake_case");
@@ -322,6 +335,7 @@ Json(model.into())  // Easy conversion!
 |-----------|-------------|---------|
 | `pick` | Include only these fields | `pick = ["name", "email"]` |
 | `omit` | Exclude these fields | `omit = ["password"]` |
+| `omit_default` | Auto-omit fields with DB defaults | `omit_default` (bare keyword) |
 
 **Situational (Use When Needed):**
 
@@ -378,6 +392,10 @@ vespera::schema_type!(Schema from Model, name = "MemoSchema");
 | Custom enums | `crate::module::EnumName` | Auto-resolved to absolute path |
 
 **Circular Reference Handling:** Automatically detected and handled by inlining fields.
+
+**Database Defaults in OpenAPI:** Fields with `#[sea_orm(default_value = "...")]` or `#[sea_orm(primary_key)]` automatically get `default` values in the generated OpenAPI schema. SQL functions like `NOW()` and `gen_random_uuid()` are mapped to type-appropriate defaults.
+
+**Required Logic:** `required` is determined **solely by nullability** (`Option<T>`). Fields with `#[serde(default)]` or `#[serde(skip_serializing_if)]` are still `required` unless they are `Option<T>`.
 
 ### Complete Example
 
@@ -477,6 +495,7 @@ tempfile = "3"                 # For NamedTempFile file uploads
 ```rust
 // ✅ RECOMMENDED PATTERNS
 schema_type!(CreateUserRequest from crate::models::user::Model, pick = ["name", "email"]);
+schema_type!(CreatePostRequest from crate::models::post::Model, omit_default);
 schema_type!(UserResponse from crate::models::user::Model, omit = ["password_hash"]);
 schema_type!(UserListItem from crate::models::user::Model, pick = ["id", "name"]);
 

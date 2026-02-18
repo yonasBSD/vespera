@@ -316,7 +316,7 @@ fn is_known_type(
         // Check for generic types like Vec<T>, Option<T> - recursively check inner type
         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
             match ident_str.as_str() {
-                "Vec" | "Option" => {
+                "Vec" | "HashSet" | "BTreeSet" | "Option" => {
                     if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return is_known_type(inner_ty, known_schemas, struct_definitions);
                     }

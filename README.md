@@ -363,6 +363,52 @@ schema_type!(UserDTO from User, rename_all = "camelCase");
 // Available: "camelCase", "snake_case", "PascalCase", "SCREAMING_SNAKE_CASE", etc.
 ```
 
+### Omit Fields with Database Defaults (`omit_default`)
+
+Automatically omit fields that have database-level defaults — perfect for create DTOs where the database handles `id`, `created_at`, etc.:
+
+```rust
+#[derive(DeriveEntityModel)]
+#[sea_orm(table_name = "posts")]
+pub struct Model {
+    #[sea_orm(primary_key)]             // ← has default (auto-increment)
+    pub id: i32,
+    pub title: String,
+    pub content: String,
+    #[sea_orm(default_value = "NOW()")]  // ← has default (SQL function)
+    pub created_at: DateTimeWithTimeZone,
+}
+
+// Omits `id` (primary_key) and `created_at` (default_value) automatically
+schema_type!(CreatePostRequest from crate::models::post::Model, omit_default);
+// Generated struct only has: title, content
+```
+
+`omit_default` detects fields with:
+- `#[sea_orm(primary_key)]` — auto-increment / generated IDs
+- `#[sea_orm(default_value = "...")]` — SQL defaults like `NOW()`, `gen_random_uuid()`, literals
+
+Can be combined with other parameters:
+
+```rust
+// omit_default + add extra fields
+schema_type!(CreateItemRequest from Model, omit_default, add = [("tags": Vec<String>)]);
+```
+
+### Database Defaults in OpenAPI
+
+Fields with database defaults automatically get `default` values in the generated OpenAPI schema:
+
+| SeaORM Attribute | OpenAPI Default |
+|-----------------|-----------------|
+| `primary_key` (Uuid) | `"00000000-0000-0000-0000-000000000000"` |
+| `primary_key` (i32/i64) | `0` |
+| `default_value = "NOW()"` | `"1970-01-01T00:00:00+00:00"` |
+| `default_value = "gen_random_uuid()"` | `"00000000-0000-0000-0000-000000000000"` |
+| `default_value = "true"` | `true` (literal passthrough) |
+
+> **Note:** `required` is determined solely by nullability (`Option<T>`). Fields with defaults are still `required` unless they are `Option<T>`.
+
 ### SeaORM Integration
 
 `schema_type!` has first-class support for SeaORM models with relations:
@@ -434,6 +480,7 @@ When `multipart` is enabled:
 | `rename_all` | Serde rename strategy: `rename_all = "camelCase"` |
 | `ignore` | Skip Schema derive (bare keyword, no value) |
 | `multipart` | Derive `TryFromMultipart` instead of serde (bare keyword) |
+| `omit_default` | Auto-omit fields with DB defaults: `primary_key`, `default_value` (bare keyword) |
 
 ---
 
@@ -547,6 +594,12 @@ This automatically:
 | `Vec<T>` | `array` with items |
 | `Option<T>` | nullable T |
 | `HashMap<K, V>` | `object` with additionalProperties |
+| `BTreeSet<T>`, `HashSet<T>` | `array` with `uniqueItems: true` |
+| `Uuid` | `string` with `format: uuid` |
+| `Decimal` | `string` with `format: decimal` |
+| `NaiveDate` | `string` with `format: date` |
+| `NaiveTime` | `string` with `format: time` |
+| `DateTime`, `DateTimeWithTimeZone` | `string` with `format: date-time` |
 | `FieldData<NamedTempFile>` | `string` with `format: binary` |
 | Custom struct | `$ref` to components/schemas |
 

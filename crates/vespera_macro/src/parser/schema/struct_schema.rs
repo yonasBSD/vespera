@@ -10,9 +10,8 @@ use vespera_core::schema::{Schema, SchemaRef, SchemaType};
 
 use super::{
     serde_attrs::{
-        extract_default, extract_doc_comment, extract_field_rename, extract_flatten,
-        extract_rename_all, extract_skip, extract_skip_serializing_if, rename_field,
-        strip_raw_prefix,
+        extract_doc_comment, extract_field_rename, extract_flatten, extract_rename_all,
+        extract_skip, rename_field, strip_raw_prefix,
     },
     type_schema::parse_type_to_schema_ref,
 };
@@ -104,36 +103,21 @@ pub fn parse_struct_to_schema(
                     }
                 }
 
-                // Check for default attribute
-                let has_default = extract_default(&field.attrs).is_some();
+                // Required is determined solely by nullability (Option<T>).
+                // Fields with #[serde(default)] still have defaults applied in
+                // openapi_generator, but that does NOT affect required status.
+                let is_optional = matches!(
+                    field_type,
+                    Type::Path(type_path)
+                        if type_path
+                            .path
+                            .segments
+                            .first()
+                            .is_some_and(|s| s.ident == "Option")
+                );
 
-                // Check for skip_serializing_if attribute
-                let has_skip_serializing_if = extract_skip_serializing_if(&field.attrs);
-
-                // If default or skip_serializing_if is present, mark field as optional (not required)
-                // and set default value if it's a simple default (not a function)
-                if has_default || has_skip_serializing_if {
-                    // For default = "function_name", we'll handle it in openapi_generator
-                    // For now, just mark as optional
-                    if let SchemaRef::Inline(ref mut _schema) = schema_ref {
-                        // Default will be set later in openapi_generator if it's a function
-                        // For simple default, we could set it here, but serde handles it
-                    }
-                } else {
-                    // Check if field is Option<T>
-                    let is_optional = matches!(
-                        field_type,
-                        Type::Path(type_path)
-                            if type_path
-                                .path
-                                .segments
-                                .first()
-                                .is_some_and(|s| s.ident == "Option")
-                    );
-
-                    if !is_optional {
-                        required.push(field_name.clone());
-                    }
+                if !is_optional {
+                    required.push(field_name.clone());
                 }
 
                 properties.insert(field_name, schema_ref);
@@ -283,6 +267,7 @@ mod tests {
     }
 
     // Test struct with default and skip_serializing_if
+    // Required is determined solely by nullability (Option<T>), not by defaults.
     #[test]
     fn test_parse_struct_to_schema_with_default_fields() {
         let struct_item: syn::ItemStruct = syn::parse_str(
@@ -290,7 +275,7 @@ mod tests {
             struct Config {
                 required_field: i32,
                 #[serde(default)]
-                optional_with_default: String,
+                with_default: String,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 maybe_skip: Option<i32>,
             }
@@ -300,14 +285,14 @@ mod tests {
         let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
         let props = schema.properties.as_ref().unwrap();
         assert!(props.contains_key("required_field"));
-        assert!(props.contains_key("optional_with_default"));
+        assert!(props.contains_key("with_default"));
         assert!(props.contains_key("maybe_skip"));
 
         let required = schema.required.as_ref().unwrap();
         assert!(required.contains(&"required_field".to_string()));
-        // Fields with default should NOT be required
-        assert!(!required.contains(&"optional_with_default".to_string()));
-        // Fields with skip_serializing_if should NOT be required
+        // Non-nullable fields are always required, even with #[serde(default)]
+        assert!(required.contains(&"with_default".to_string()));
+        // Option<T> fields are not required (nullable)
         assert!(!required.contains(&"maybe_skip".to_string()));
     }
 

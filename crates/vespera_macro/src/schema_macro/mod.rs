@@ -29,7 +29,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use seaorm::{
     RelationFieldInfo, convert_relation_type_to_schema_with_info, convert_type_with_chrono,
-    extract_sea_orm_default_value, is_sql_function_default,
+    extract_sea_orm_default_value, has_sea_orm_primary_key, is_sql_function_default,
 };
 use transformation::{
     build_omit_set, build_partial_config, build_pick_set, build_rename_map, determine_rename_all,
@@ -238,6 +238,14 @@ pub fn generate_schema_type_code(
                 continue;
             }
 
+            // Apply omit_default: skip fields with sea_orm(default_value) or sea_orm(primary_key)
+            if input.omit_default
+                && (extract_sea_orm_default_value(&field.attrs).is_some()
+                    || has_sea_orm_primary_key(&field.attrs))
+            {
+                continue;
+            }
+
             // Check if this is a SeaORM relation type
             let is_relation = is_seaorm_relation_type(&field.ty);
 
@@ -408,8 +416,8 @@ pub fn generate_schema_type_code(
                 // that may have ORM-specific attributes we don't want in the generated struct
                 let serde_field_attrs = extract_field_serde_attrs(&field.attrs);
 
-                // Generate serde default + schema(default) from sea_orm(default_value)
-                // Only for non-partial, non-Option fields with literal (non-SQL-function) defaults
+                // Generate serde default + schema(default) from sea_orm(default_value) or primary_key
+                // Handles literal defaults, SQL function defaults, and implicit auto-increment
                 let (serde_default_attr, schema_default_attr) = generate_sea_orm_default_attrs(
                     &field.attrs,
                     new_type_name,
@@ -622,7 +630,7 @@ pub fn generate_schema_type_code(
 }
 
 /// Generate `#[serde(default = "...")]` and `#[schema(default = "...")]` attributes
-/// from `#[sea_orm(default_value = ...)]` on source fields.
+/// from `#[sea_orm(default_value = ...)]` or `#[sea_orm(primary_key)]` on source fields.
 ///
 /// Returns `(serde_default_attr, schema_default_attr)` as `TokenStream`s.
 /// - `serde_default_attr`: `#[serde(default = "default_structname_field")]` for deserialization
@@ -630,12 +638,18 @@ pub fn generate_schema_type_code(
 ///
 /// Also generates a companion default function and appends it to `default_functions`.
 ///
-/// Skips serde default generation when:
-/// - The field type doesn't implement `FromStr` (enums, custom types)
-/// - The field already has `#[serde(default)]`
-/// - The field is wrapped in `Option` (partial mode or already optional)
+/// Handles three categories of defaults:
+/// 1. **Literal defaults** (`default_value = "42"`, `"draft"`, `0.7`):
+///    Generates parse-based default function + schema default.
+/// 2. **SQL function defaults** (`default_value = "NOW()"`, `"gen_random_uuid()"`):
+///    Generates type-specific default function + schema default with type's zero value.
+/// 3. **Primary key** (implicit auto-increment):
+///    Treated as having an implicit default — generates type-specific default.
 ///
-/// Always generates `#[schema(default)]` for OpenAPI when a literal default exists.
+/// Skips serde default generation when:
+/// - The field is wrapped in `Option` (partial mode or already optional)
+/// - The field already has `#[serde(default)]`
+/// - For literal defaults: the field type doesn't implement `FromStr`
 fn generate_sea_orm_default_attrs(
     original_attrs: &[syn::Attribute],
     struct_name: &syn::Ident,
@@ -650,74 +664,79 @@ fn generate_sea_orm_default_attrs(
         return (quote! {}, quote! {});
     }
 
-    // Check for sea_orm(default_value)
-    let Some(default_value) = extract_sea_orm_default_value(original_attrs) else {
-        return (quote! {}, quote! {});
-    };
+    // Check for sea_orm(default_value) and sea_orm(primary_key)
+    let default_value = extract_sea_orm_default_value(original_attrs);
+    let has_pk = has_sea_orm_primary_key(original_attrs);
 
-    // SQL functions like NOW(), CURRENT_TIMESTAMP(), gen_random_uuid()
-    // can't be expressed as concrete JSON defaults, but we can make the field
-    // not-required by generating serde(default) with a dummy default value.
-    if is_sql_function_default(&default_value) {
-        let has_existing_serde_default = extract_default(original_attrs).is_some();
-        if !has_existing_serde_default
-            && let Some(default_body) = sql_function_default_body(original_ty)
-        {
+    // No default source found
+    if default_value.is_none() && !has_pk {
+        return (quote! {}, quote! {});
+    }
+
+    let has_existing_serde_default = extract_default(original_attrs).is_some();
+
+    match &default_value {
+        // Literal default (e.g., "42", "draft", "0.7")
+        Some(value) if !is_sql_function_default(value) => {
+            let schema_default_attr = quote! { #[schema(default = #value)] };
+
+            if has_existing_serde_default {
+                return (quote! {}, schema_default_attr);
+            }
+
+            if !is_parseable_type(original_ty) {
+                return (quote! {}, schema_default_attr);
+            }
+
             let fn_name = format!("default_{struct_name}_{field_name}");
             let fn_ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
+
             default_functions.push(quote! {
                 #[allow(non_snake_case)]
                 fn #fn_ident() -> #field_ty {
-                    #default_body
+                    #value.parse().unwrap()
                 }
             });
+
             let serde_default_attr = quote! { #[serde(default = #fn_name)] };
-            return (serde_default_attr, quote! {});
+            (serde_default_attr, schema_default_attr)
         }
-        return (quote! {}, quote! {});
-    }
+        // SQL function default (NOW(), gen_random_uuid(), etc.) or primary_key auto-increment
+        _ => {
+            let Some((default_expr, schema_default_str)) =
+                sql_function_default_for_type(original_ty)
+            else {
+                return (quote! {}, quote! {});
+            };
 
-    // Generate #[schema(default = "value")] for OpenAPI (always, regardless of type support)
-    let schema_default_attr = quote! { #[schema(default = #default_value)] };
+            let schema_default_attr = quote! { #[schema(default = #schema_default_str)] };
 
-    // Check if field already has serde(default)
-    let has_existing_serde_default = extract_default(original_attrs).is_some();
-    if has_existing_serde_default {
-        return (quote! {}, schema_default_attr);
-    }
+            if has_existing_serde_default {
+                return (quote! {}, schema_default_attr);
+            }
 
-    // Only generate serde default function for types known to implement FromStr
-    if !is_parseable_type(original_ty) {
-        return (quote! {}, schema_default_attr);
-    }
+            let fn_name = format!("default_{struct_name}_{field_name}");
+            let fn_ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
 
-    // Generate default function with struct-specific name to avoid collisions:
-    // fn default_{StructName}_{field_name}() -> Type { "value".parse().unwrap() }
-    let fn_name = format!("default_{struct_name}_{field_name}");
-    let fn_ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
+            default_functions.push(quote! {
+                #[allow(non_snake_case)]
+                fn #fn_ident() -> #field_ty {
+                    #default_expr
+                }
+            });
 
-    default_functions.push(quote! {
-        #[allow(non_snake_case)]
-        fn #fn_ident() -> #field_ty {
-            #default_value.parse().unwrap()
+            let serde_default_attr = quote! { #[serde(default = #fn_name)] };
+            (serde_default_attr, schema_default_attr)
         }
-    });
-
-    let serde_default_attr = quote! { #[serde(default = #fn_name)] };
-
-    (serde_default_attr, schema_default_attr)
+    }
 }
 
-/// Generate a dummy default expression for types with SQL function defaults
-/// (e.g., `gen_random_uuid()`, `NOW()`).
+/// Return a type-appropriate (Rust default expression, OpenAPI default string) pair
+/// for fields with SQL function defaults or implicit auto-increment.
 ///
-/// Returns `Some(TokenStream)` with the default expression for supported types,
-/// `None` for types where a dummy default cannot be generated.
-///
-/// These defaults exist solely to satisfy `serde(default)` so the field becomes
-/// not-required in OpenAPI. The actual value is irrelevant since the database
-/// provides the real default.
-fn sql_function_default_body(original_ty: &syn::Type) -> Option<TokenStream> {
+/// The Rust expression is used in the generated `#[serde(default = "fn")]` function body.
+/// The OpenAPI string is used in `#[schema(default = "value")]`.
+fn sql_function_default_for_type(original_ty: &syn::Type) -> Option<(TokenStream, String)> {
     let syn::Type::Path(type_path) = original_ty else {
         return None;
     };
@@ -725,31 +744,47 @@ fn sql_function_default_body(original_ty: &syn::Type) -> Option<TokenStream> {
     let type_name = segment.ident.to_string();
 
     match type_name.as_str() {
-        // Types implementing Default (returns zero/empty values)
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
-        | "usize" | "f32" | "f64" | "bool" | "String" | "Decimal" | "Uuid" => {
-            Some(quote! { Default::default() })
+        "DateTimeWithTimeZone" | "DateTimeUtc" => {
+            let expr = quote! {
+                vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH.fixed_offset()
+            };
+            Some((expr, "1970-01-01T00:00:00+00:00".to_string()))
         }
-        // SeaORM datetime types → chrono epoch
-        "DateTimeWithTimeZone" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH.fixed_offset()
-        }),
-        "DateTimeUtc" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH
-        }),
-        "DateTimeLocal" => Some(quote! {
-            vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH
-                .with_timezone(&vespera::chrono::Local)
-        }),
-        "DateTime" | "NaiveDateTime" => Some(quote! {
-            vespera::chrono::NaiveDateTime::UNIX_EPOCH
-        }),
-        "NaiveDate" | "Date" => Some(quote! {
-            vespera::chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
-        }),
-        "NaiveTime" | "Time" => Some(quote! {
-            vespera::chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-        }),
+        "DateTime" => {
+            // Could be chrono::DateTime<Tz> — use UTC epoch
+            let expr = quote! {
+                vespera::chrono::DateTime::<vespera::chrono::Utc>::UNIX_EPOCH.fixed_offset()
+            };
+            Some((expr, "1970-01-01T00:00:00+00:00".to_string()))
+        }
+        "NaiveDateTime" => {
+            let expr = quote! {
+                vespera::chrono::NaiveDateTime::UNIX_EPOCH
+            };
+            Some((expr, "1970-01-01T00:00:00".to_string()))
+        }
+        "NaiveDate" => {
+            let expr = quote! {
+                vespera::chrono::NaiveDate::default()
+            };
+            Some((expr, "1970-01-01".to_string()))
+        }
+        "NaiveTime" | "Time" => {
+            let expr = quote! {
+                vespera::chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+            };
+            Some((expr, "00:00:00".to_string()))
+        }
+        "Uuid" => Some((
+            quote! { Default::default() },
+            "00000000-0000-0000-0000-000000000000".to_string(),
+        )),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" | "f32" | "f64" | "Decimal" => {
+            Some((quote! { Default::default() }, "0".to_string()))
+        }
+        "bool" => Some((quote! { Default::default() }, "false".to_string())),
+        "String" => Some((quote! { Default::default() }, String::new())),
         _ => None,
     }
 }
