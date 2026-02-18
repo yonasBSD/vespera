@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use syn::{FnArg, Pat, PatType, Type};
 use vespera_core::{
     route::{Parameter, ParameterLocation},
-    schema::{Schema, SchemaRef, SchemaType},
+    schema::{Schema, SchemaRef},
 };
 
 use super::schema::{
@@ -14,9 +14,8 @@ use crate::schema_macro::type_utils::{
     is_map_type as utils_is_map_type, is_primitive_like as utils_is_primitive_like,
 };
 
-/// Convert `SchemaRef` to inline schema for query parameters
-/// Query parameters should always use inline schemas, not refs
-/// Adds nullable flag if the field is optional
+/// Convert `SchemaRef` for query parameters, adding nullable flag if optional.
+/// Preserves `$ref` for known types (e.g. enums) — only wraps with nullable when optional.
 fn convert_to_inline_schema(field_schema: SchemaRef, is_optional: bool) -> SchemaRef {
     match field_schema {
         SchemaRef::Inline(mut schema) => {
@@ -25,12 +24,17 @@ fn convert_to_inline_schema(field_schema: SchemaRef, is_optional: bool) -> Schem
             }
             SchemaRef::Inline(schema)
         }
-        SchemaRef::Ref(_) => {
-            let mut schema = Schema::new(SchemaType::Object);
+        SchemaRef::Ref(r) => {
             if is_optional {
-                schema.nullable = Some(true);
+                SchemaRef::Inline(Box::new(Schema {
+                    ref_path: Some(r.ref_path),
+                    schema_type: None,
+                    nullable: Some(true),
+                    ..Default::default()
+                }))
+            } else {
+                SchemaRef::Ref(r)
             }
-            SchemaRef::Inline(Box::new(schema))
         }
     }
 }
@@ -433,7 +437,7 @@ mod tests {
     use insta::{assert_debug_snapshot, with_settings};
     use rstest::rstest;
     use vespera_core::route::ParameterLocation;
-    use vespera_core::schema::Reference;
+    use vespera_core::schema::{Reference, SchemaType};
 
     use super::*;
 
@@ -1011,16 +1015,11 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_ref_to_inline_conversion_required() {
-        // Test line 318: SchemaRef::Ref converted to inline for required fields
-        // This requires a field where:
-        // 1. field_schema is SchemaRef::Ref
-        // 2. is_optional is false
-        // 3. The ref conversion at lines 294-304 fails (no struct_def)
+    fn test_schema_ref_preserved_for_required_field() {
+        // Required field with known schema but no struct definition → $ref preserved
         let mut struct_definitions = HashMap::new();
         let mut known_schemas = HashSet::new();
 
-        // Struct with required RefType field
         struct_definitions.insert(
             "QueryWithRef".to_string(),
             r"
@@ -1032,7 +1031,7 @@ mod tests {
         );
 
         // RefType is a known schema (will generate SchemaRef::Ref)
-        // BUT we don't have its struct definition, so the conversion at 296-303 fails
+        // No struct definition, so ref stays as-is (e.g. enum type)
         known_schemas.insert("RefType".to_string());
 
         let ty: Type = syn::parse_str("QueryWithRef").unwrap();
@@ -1041,12 +1040,12 @@ mod tests {
         assert!(result.is_some());
         let params = result.unwrap();
         assert_eq!(params.len(), 1);
-        // Line 318: Ref that couldn't be converted is turned into inline object
+        // $ref is preserved for required fields
         match &params[0].schema {
-            Some(SchemaRef::Inline(schema)) => {
-                assert_eq!(schema.schema_type, Some(SchemaType::Object));
+            Some(SchemaRef::Ref(r)) => {
+                assert_eq!(r.ref_path, "#/components/schemas/RefType");
             }
-            _ => panic!("Expected inline schema (converted from Ref)"),
+            _ => panic!("Expected $ref schema for required known type"),
         }
     }
 
@@ -1122,30 +1121,161 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_to_inline_schema_with_ref_optional() {
+    fn test_convert_to_inline_schema_ref_optional_preserves_ref_path() {
         let schema = SchemaRef::Ref(Reference {
             ref_path: "#/components/schemas/User".to_string(),
         });
         let result = convert_to_inline_schema(schema, true);
         match result {
             SchemaRef::Inline(s) => {
+                assert_eq!(s.ref_path, Some("#/components/schemas/User".to_string()));
                 assert_eq!(s.nullable, Some(true));
+                assert_eq!(s.schema_type, None);
             }
-            SchemaRef::Ref(_) => panic!("Expected Inline"),
+            SchemaRef::Ref(_) => panic!("Expected Inline wrapper for optional $ref"),
         }
     }
 
     #[test]
-    fn test_convert_to_inline_schema_ref_optional() {
+    fn test_convert_to_inline_schema_ref_required_passes_through() {
+        use vespera_core::schema::Reference;
+        let schema = SchemaRef::Ref(Reference::schema("SomeType"));
+        let result = convert_to_inline_schema(schema, false);
+        match result {
+            SchemaRef::Ref(r) => {
+                assert_eq!(r.ref_path, "#/components/schemas/SomeType");
+            }
+            SchemaRef::Inline(_) => panic!("Expected $ref pass-through for required field"),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_inline_schema_ref_optional_wraps_nullable() {
         use vespera_core::schema::Reference;
         let schema = SchemaRef::Ref(Reference::schema("SomeType"));
         let result = convert_to_inline_schema(schema, true);
         match result {
             SchemaRef::Inline(s) => {
-                assert_eq!(s.schema_type, Some(SchemaType::Object));
+                assert_eq!(
+                    s.ref_path,
+                    Some("#/components/schemas/SomeType".to_string())
+                );
                 assert_eq!(s.nullable, Some(true));
             }
-            SchemaRef::Ref(_) => panic!("Expected Inline"),
+            SchemaRef::Ref(_) => panic!("Expected Inline wrapper for optional $ref"),
+        }
+    }
+
+    // ======== Enum query parameter tests ========
+
+    #[test]
+    fn test_query_struct_with_enum_field_produces_ref() {
+        // Enum field in a query struct should produce $ref to the enum schema
+        let mut struct_definitions = HashMap::new();
+        let mut known_schemas = HashSet::new();
+
+        struct_definitions.insert(
+            "FilterParams".to_string(),
+            r"
+            pub struct FilterParams {
+                pub status: Status,
+                pub page: i32,
+            }
+            "
+            .to_string(),
+        );
+
+        // Status is a known enum schema (registered via #[derive(Schema)])
+        // Its definition is an enum, so ItemStruct parsing will fail → $ref preserved
+        known_schemas.insert("Status".to_string());
+        struct_definitions.insert(
+            "Status".to_string(),
+            r"
+            pub enum Status {
+                Active,
+                Inactive,
+                Pending,
+            }
+            "
+            .to_string(),
+        );
+
+        let ty: Type = syn::parse_str("FilterParams").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 2);
+
+        // First param: status → $ref to enum schema
+        assert_eq!(params[0].name, "status");
+        assert_eq!(params[0].r#in, ParameterLocation::Query);
+        assert_eq!(params[0].required, Some(true));
+        match &params[0].schema {
+            Some(SchemaRef::Ref(r)) => {
+                assert_eq!(r.ref_path, "#/components/schemas/Status");
+            }
+            _ => panic!(
+                "Expected $ref for enum query parameter, got: {:?}",
+                params[0].schema
+            ),
+        }
+
+        // Second param: page → inline integer
+        assert_eq!(params[1].name, "page");
+        assert_eq!(params[1].required, Some(true));
+        match &params[1].schema {
+            Some(SchemaRef::Inline(s)) => {
+                assert_eq!(s.schema_type, Some(SchemaType::Integer));
+            }
+            _ => panic!("Expected inline integer schema"),
+        }
+    }
+
+    #[test]
+    fn test_query_struct_with_optional_enum_field() {
+        // Option<Enum> field → nullable $ref
+        let mut struct_definitions = HashMap::new();
+        let mut known_schemas = HashSet::new();
+
+        struct_definitions.insert(
+            "FilterParams".to_string(),
+            r"
+            pub struct FilterParams {
+                pub status: Option<Status>,
+            }
+            "
+            .to_string(),
+        );
+
+        known_schemas.insert("Status".to_string());
+        struct_definitions.insert(
+            "Status".to_string(),
+            r"
+            pub enum Status {
+                Active,
+                Inactive,
+            }
+            "
+            .to_string(),
+        );
+
+        let ty: Type = syn::parse_str("FilterParams").unwrap();
+        let result = parse_query_struct_to_parameters(&ty, &known_schemas, &struct_definitions);
+
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "status");
+        assert_eq!(params[0].required, Some(false));
+
+        // Option<Enum> → inline schema with ref_path + nullable
+        match &params[0].schema {
+            Some(SchemaRef::Inline(s)) => {
+                assert_eq!(s.ref_path, Some("#/components/schemas/Status".to_string()));
+                assert_eq!(s.nullable, Some(true));
+            }
+            _ => panic!("Expected inline schema with ref_path and nullable for Option<Enum>"),
         }
     }
 }

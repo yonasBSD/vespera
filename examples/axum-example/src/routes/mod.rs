@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use sea_orm::{DeriveActiveEnum, EnumIter};
+use serde::{Deserialize, Serialize};
 use vespera::{
     Schema,
     axum::{Json, extract::Query},
@@ -168,5 +169,27 @@ pub async fn mod_file_with_complex_struct_body_with_rename(
 
 #[vespera::route(get, path = "/test_struct")]
 pub async fn mod_file_with_test_struct(Query(query): Query<TestStruct>) -> Json<TestStruct> {
+    Json(query)
+}
+#[derive(
+    Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, vespera::Schema,
+)]
+#[serde(rename_all = "camelCase")]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "terms_terms_type")]
+pub enum TermsType {
+    #[sea_orm(string_value = "terms")]
+    Terms,
+    #[sea_orm(string_value = "privacy")]
+    Privacy,
+}
+
+#[derive(Debug, Serialize, Deserialize, Schema)]
+#[serde(rename_all = "camelCase")]
+pub struct TermsQuery {
+    pub terms_type: TermsType,
+}
+
+#[vespera::route(get, path = "/terms", tags = ["terms"])]
+pub async fn list_terms(Query(query): Query<TermsQuery>) -> Json<TermsQuery> {
     Json(query)
 }

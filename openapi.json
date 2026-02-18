@@ -1304,6 +1304,36 @@
         }
       }
     },
+    "/terms": {
+      "get": {
+        "operationId": "list_terms",
+        "tags": [
+          "terms"
+        ],
+        "parameters": [
+          {
+            "name": "termsType",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TermsType"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermsQuery"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/test-struct": {
       "get": {
         "operationId": "mod_file_with_test_struct",
@@ -3300,6 +3330,24 @@
           "isSubscribed"
         ]
       },
+      "TermsQuery": {
+        "type": "object",
+        "properties": {
+          "termsType": {
+            "$ref": "#/components/schemas/TermsType"
+          }
+        },
+        "required": [
+          "termsType"
+        ]
+      },
+      "TermsType": {
+        "type": "string",
+        "enum": [
+          "terms",
+          "privacy"
+        ]
+      },
       "TestStruct": {
         "type": "object",
         "properties": {
@@ -3604,6 +3652,9 @@
     },
     {
       "name": "hello"
+    },
+    {
+      "name": "terms"
     },
     {
       "name": "typed-form"
