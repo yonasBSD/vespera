@@ -236,32 +236,6 @@ impl PathItem {
             HttpMethod::Trace => self.trace = Some(operation),
         }
     }
-
-    /// Get an operation for a specific HTTP method
-    #[must_use]
-    pub const fn get_operation(&self, method: &HttpMethod) -> Option<&Operation> {
-        match method {
-            HttpMethod::Get => self.get.as_ref(),
-            HttpMethod::Post => self.post.as_ref(),
-            HttpMethod::Put => self.put.as_ref(),
-            HttpMethod::Patch => self.patch.as_ref(),
-            HttpMethod::Delete => self.delete.as_ref(),
-            HttpMethod::Head => self.head.as_ref(),
-            HttpMethod::Options => self.options.as_ref(),
-            HttpMethod::Trace => self.trace.as_ref(),
-        }
-    }
-}
-
-/// Route information (for internal use)
-#[derive(Debug, Clone)]
-pub struct RouteInfo {
-    /// HTTP method
-    pub method: HttpMethod,
-    /// Path
-    pub path: String,
-    /// Operation information
-    pub operation: Operation,
 }
 
 #[cfg(test)]
@@ -402,65 +376,6 @@ mod tests {
         operation_trace.operation_id = Some("trace_operation".to_string());
         path_item.set_operation(HttpMethod::Trace, operation_trace);
         assert!(path_item.trace.is_some());
-    }
-
-    #[test]
-    fn test_path_item_get_operation() {
-        let mut path_item = PathItem::default();
-
-        let operation = Operation {
-            operation_id: Some("test_operation".to_string()),
-            tags: None,
-            summary: None,
-            description: None,
-            parameters: None,
-            request_body: None,
-            responses: BTreeMap::new(),
-            security: None,
-        };
-
-        // Initially, all operations should be None
-        assert!(path_item.get_operation(&HttpMethod::Get).is_none());
-        assert!(path_item.get_operation(&HttpMethod::Post).is_none());
-
-        // Set GET operation
-        path_item.set_operation(HttpMethod::Get, operation.clone());
-        let retrieved = path_item.get_operation(&HttpMethod::Get);
-        assert!(retrieved.is_some());
-        assert_eq!(
-            retrieved.unwrap().operation_id,
-            Some("test_operation".to_string())
-        );
-
-        // Set POST operation
-        let mut operation_post = operation.clone();
-        operation_post.operation_id = Some("post_operation".to_string());
-        path_item.set_operation(HttpMethod::Post, operation_post);
-        let retrieved = path_item.get_operation(&HttpMethod::Post);
-        assert!(retrieved.is_some());
-        assert_eq!(
-            retrieved.unwrap().operation_id,
-            Some("post_operation".to_string())
-        );
-
-        // Test all methods
-        path_item.set_operation(HttpMethod::Put, operation.clone());
-        assert!(path_item.get_operation(&HttpMethod::Put).is_some());
-
-        path_item.set_operation(HttpMethod::Patch, operation.clone());
-        assert!(path_item.get_operation(&HttpMethod::Patch).is_some());
-
-        path_item.set_operation(HttpMethod::Delete, operation.clone());
-        assert!(path_item.get_operation(&HttpMethod::Delete).is_some());
-
-        path_item.set_operation(HttpMethod::Head, operation.clone());
-        assert!(path_item.get_operation(&HttpMethod::Head).is_some());
-
-        path_item.set_operation(HttpMethod::Options, operation.clone());
-        assert!(path_item.get_operation(&HttpMethod::Options).is_some());
-
-        path_item.set_operation(HttpMethod::Trace, operation);
-        assert!(path_item.get_operation(&HttpMethod::Trace).is_some());
     }
 
     #[test]

@@ -48,33 +48,6 @@ pub enum SchemaType {
     Null,
 }
 
-/// Number format
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum NumberFormat {
-    Float,
-    Double,
-    Int32,
-    Int64,
-}
-
-/// String format
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum StringFormat {
-    Date,
-    DateTime,
-    Password,
-    Byte,
-    Binary,
-    Email,
-    Uuid,
-    Uri,
-    Hostname,
-    IpV4,
-    IpV6,
-}
-
 /// Serialize `Option<f64>` as integer when the value has no fractional part.
 ///
 /// Ensures OpenAPI JSON uses `0` instead of `0.0` for integer constraints like
