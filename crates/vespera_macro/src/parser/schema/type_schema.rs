@@ -129,7 +129,7 @@ fn parse_type_impl(
                             );
                         }
                     }
-                    "Vec" | "Option" => {
+                    "Vec" | "HashSet" | "BTreeSet" | "Option" => {
                         if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                             let inner_schema = parse_type_to_schema_ref(
                                 inner_ty,
@@ -138,6 +138,11 @@ fn parse_type_impl(
                             );
                             if ident_str == "Vec" {
                                 return SchemaRef::Inline(Box::new(Schema::array(inner_schema)));
+                            }
+                            if ident_str == "HashSet" || ident_str == "BTreeSet" {
+                                let mut schema = Schema::array(inner_schema);
+                                schema.unique_items = Some(true);
+                                return SchemaRef::Inline(Box::new(schema));
                             }
                             // Option<T> -> nullable schema
                             match inner_schema {
@@ -322,7 +327,7 @@ fn parse_type_impl(
                 })),
                 // Standard library types that should not be referenced
                 // Note: HashMap and BTreeMap are handled above in generic types
-                "Vec" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
+                "Vec" | "HashSet" | "BTreeSet" | "Option" | "Result" | "Json" | "Path" | "Query" | "Header" => {
                     // These are not schema types, return object schema
                     SchemaRef::Inline(Box::new(Schema::new(SchemaType::Object)))
                 }
@@ -1416,5 +1421,86 @@ mod tests {
         } else {
             panic!("Expected inline string schema for &mut String");
         }
+    }
+
+    // ========== Coverage: HashSet/BTreeSet → uniqueItems ==========
+
+    #[test]
+    fn test_hashset_string_produces_unique_items_array() {
+        let ty: Type = syn::parse_str("HashSet<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            assert_eq!(schema.unique_items, Some(true));
+            if let Some(SchemaRef::Inline(items)) = schema.items.as_deref() {
+                assert_eq!(items.schema_type, Some(SchemaType::String));
+            } else {
+                panic!("Expected inline string items for HashSet<String>");
+            }
+        } else {
+            panic!("Expected inline schema for HashSet<String>");
+        }
+    }
+
+    #[test]
+    fn test_btreeset_i32_produces_unique_items_array() {
+        let ty: Type = syn::parse_str("BTreeSet<i32>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            assert_eq!(schema.unique_items, Some(true));
+            if let Some(SchemaRef::Inline(items)) = schema.items.as_deref() {
+                assert_eq!(items.schema_type, Some(SchemaType::Integer));
+            } else {
+                panic!("Expected inline integer items for BTreeSet<i32>");
+            }
+        } else {
+            panic!("Expected inline schema for BTreeSet<i32>");
+        }
+    }
+
+    #[test]
+    fn test_option_hashset_is_nullable_unique_array() {
+        let ty: Type = syn::parse_str("Option<HashSet<i64>>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            assert_eq!(schema.unique_items, Some(true));
+            assert_eq!(schema.nullable, Some(true));
+            if let Some(SchemaRef::Inline(items)) = schema.items.as_deref() {
+                assert_eq!(items.schema_type, Some(SchemaType::Integer));
+            } else {
+                panic!("Expected inline integer items for Option<HashSet<i64>>");
+            }
+        } else {
+            panic!("Expected inline schema for Option<HashSet<i64>>");
+        }
+    }
+
+    #[test]
+    fn test_vec_does_not_have_unique_items() {
+        let ty: Type = syn::parse_str("Vec<String>").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        if let SchemaRef::Inline(schema) = &schema_ref {
+            assert_eq!(schema.schema_type, Some(SchemaType::Array));
+            assert!(schema.unique_items.is_none());
+        } else {
+            panic!("Expected inline schema for Vec<String>");
+        }
+    }
+
+    #[test]
+    fn test_bare_hashset_without_generics() {
+        // HashSet without angle brackets → falls through to bare-name match
+        let ty: Type = syn::parse_str("HashSet").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        assert!(matches!(schema_ref, SchemaRef::Inline(_)));
+    }
+
+    #[test]
+    fn test_bare_btreeset_without_generics() {
+        let ty: Type = syn::parse_str("BTreeSet").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
+        assert!(matches!(schema_ref, SchemaRef::Inline(_)));
     }
 }

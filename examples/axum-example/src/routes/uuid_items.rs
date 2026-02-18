@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vespera::Schema;
@@ -8,12 +10,16 @@ pub struct UuidItem {
     pub id: Uuid,
     pub name: String,
     pub external_ref: Option<Uuid>,
+    /// Unique tags for this item
+    pub tags: BTreeSet<String>,
 }
 
 #[derive(Deserialize, Schema)]
 pub struct CreateUuidItemRequest {
     pub name: String,
     pub external_ref: Option<Uuid>,
+    /// Unique tags for this item
+    pub tags: BTreeSet<String>,
 }
 
 /// List all UUID items
@@ -29,6 +35,7 @@ pub async fn list_uuid_items() -> Json<Vec<UuidItem>> {
         id: Uuid::new_v4(),
         name: "example".to_string(),
         external_ref: Some(Uuid::new_v4()),
+        tags: BTreeSet::new(),
     }])
 }
 
@@ -39,5 +46,6 @@ pub async fn create_uuid_item(Json(req): Json<CreateUuidItemRequest>) -> Json<Uu
         id: Uuid::new_v4(),
         name: req.name,
         external_ref: req.external_ref,
+        tags: req.tags,
     })
 }

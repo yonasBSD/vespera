@@ -2500,10 +2500,19 @@
           },
           "name": {
             "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Unique tags for this item",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
           }
         },
         "required": [
-          "name"
+          "name",
+          "tags"
         ]
       },
       "Enum": {
@@ -3962,11 +3971,20 @@
           },
           "name": {
             "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Unique tags for this item",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
           }
         },
         "required": [
           "id",
-          "name"
+          "name",
+          "tags"
         ]
       },
       "UuidItemSchema": {
