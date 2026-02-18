@@ -3049,8 +3049,6 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "userId",
           "memoId",
           "content",
-          "createdAt",
-          "updatedAt",
           "user",
           "memo"
         ]
@@ -3085,8 +3083,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "userId",
           "title",
           "content",
-          "status",
-          "createdAt"
+          "status"
         ]
       },
       "MemoResponseComments": {
@@ -3173,7 +3170,6 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "title",
           "content",
           "status",
-          "createdAt",
           "user"
         ]
       },
@@ -3215,8 +3211,6 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           "title",
           "content",
           "status",
-          "createdAt",
-          "updatedAt",
           "user"
         ]
       },
@@ -3238,8 +3232,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         },
         "required": [
           "id",
-          "user_id",
-          "created_at"
+          "user_id"
         ]
       },
       "MemoStatus": {
@@ -3930,9 +3923,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
         "required": [
           "id",
           "email",
-          "name",
-          "createdAt",
-          "updatedAt"
+          "name"
         ]
       },
       "UserSummary": {
@@ -3999,9 +3990,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           }
         },
         "required": [
-          "id",
-          "name",
-          "createdAt"
+          "name"
         ]
       }
     }
