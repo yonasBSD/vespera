@@ -261,11 +261,13 @@ fn parse_type_impl(
                     format: Some("uint64".to_string()),
                     ..Schema::integer()
                 })),
-                // i128, isize, u128, usize: no standard format in the registry
-                "i128" | "isize" | "u128" | "usize" => {
-                    SchemaRef::Inline(Box::new(Schema::integer()))
-                }
-                "StatusCode" => SchemaRef::Inline(Box::new(Schema::integer())),
+                // i128, isize, StatusCode: no standard format in the registry
+                "i128" | "isize" | "StatusCode" => SchemaRef::Inline(Box::new(Schema::integer())),
+                // u128, usize: unsigned with no standard format — use minimum: 0
+                "u128" | "usize" => SchemaRef::Inline(Box::new(Schema {
+                    minimum: Some(0.0),
+                    ..Schema::integer()
+                })),
                 "f32" => SchemaRef::Inline(Box::new(Schema {
                     format: Some("float".to_string()),
                     ..Schema::number()

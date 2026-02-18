@@ -2214,7 +2214,8 @@
             "nullable": true
           },
           "maxItems": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 0
           },
           "maxPrice": {
             "type": "number",
@@ -3597,6 +3598,7 @@
           },
           "maxItems": {
             "type": "integer",
+            "minimum": 0,
             "nullable": true
           },
           "maxPrice": {

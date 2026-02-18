@@ -75,6 +75,27 @@ pub enum StringFormat {
     IpV6,
 }
 
+/// Serialize `Option<f64>` as integer when the value has no fractional part.
+///
+/// Ensures OpenAPI JSON uses `0` instead of `0.0` for integer constraints like
+/// `minimum`/`maximum`, matching the convention that integer type bounds are integers.
+#[allow(clippy::ref_option)] // serde serialize_with mandates &Option<T> signature
+fn serialize_number_constraint<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(v) if v.fract() == 0.0 => {
+            // Practical OpenAPI constraints are well within i64 range
+            #[allow(clippy::cast_possible_truncation)]
+            let int_val = *v as i64;
+            serializer.serialize_some(&int_val)
+        }
+        Some(v) => serializer.serialize_some(v),
+        None => serializer.serialize_none(),
+    }
+}
+
 /// JSON Schema definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,10 +129,16 @@ pub struct Schema {
 
     // Number constraints
     /// Minimum value
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_number_constraint"
+    )]
     pub minimum: Option<f64>,
     /// Maximum value
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_number_constraint"
+    )]
     pub maximum: Option<f64>,
     /// Exclusive minimum
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,7 +147,10 @@ pub struct Schema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclusive_maximum: Option<bool>,
     /// Multiple of
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_number_constraint"
+    )]
     pub multiple_of: Option<f64>,
 
     // String constraints

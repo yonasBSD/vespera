@@ -2218,7 +2218,8 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
             "nullable": true
           },
           "maxItems": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 0
           },
           "maxPrice": {
             "type": "number",
@@ -3601,6 +3602,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
           },
           "maxItems": {
             "type": "integer",
+            "minimum": 0,
             "nullable": true
           },
           "maxPrice": {

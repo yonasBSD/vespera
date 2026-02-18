@@ -3,6 +3,8 @@
 //! Provides functions to detect and handle circular references between
 //! `SeaORM` models when generating schema types.
 
+use std::collections::HashMap;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -11,6 +13,101 @@ use super::{
     type_utils::{capitalize_first, is_option_type, is_seaorm_relation_type},
 };
 use crate::parser::extract_skip;
+
+/// Combined result of circular reference analysis.
+///
+/// Produced by [`analyze_circular_refs()`] which parses a definition string once
+/// and extracts all three pieces of information that would otherwise require
+/// three separate parse calls.
+pub struct CircularAnalysis {
+    /// Field names that would create circular references.
+    pub circular_fields: Vec<String>,
+    /// Whether the model has any `BelongsTo` or `HasOne` relations (FK-based).
+    pub has_fk_relations: bool,
+    /// For each `HasOne`/`BelongsTo` field, whether the FK is required (not `Option`).
+    ///
+    /// Keyed by field name. Contains entries for ALL `HasOne`/`BelongsTo` fields,
+    /// not just circular ones, so callers can look up any relation field.
+    pub circular_field_required: HashMap<String, bool>,
+}
+
+/// Analyze a struct definition for circular references, FK relations, and FK optionality
+/// in a single parse + single field walk.
+///
+/// This consolidates the logic of [`detect_circular_fields()`], [`has_fk_relations()`],
+/// and [`is_circular_relation_required()`] to avoid redundant parsing of the same
+/// definition string.
+pub fn analyze_circular_refs(source_module_path: &[String], definition: &str) -> CircularAnalysis {
+    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(definition) else {
+        return CircularAnalysis {
+            circular_fields: Vec::new(),
+            has_fk_relations: false,
+            circular_field_required: HashMap::new(),
+        };
+    };
+
+    let syn::Fields::Named(fields_named) = &parsed.fields else {
+        return CircularAnalysis {
+            circular_fields: Vec::new(),
+            has_fk_relations: false,
+            circular_field_required: HashMap::new(),
+        };
+    };
+
+    let source_module = source_module_path
+        .last()
+        .map_or("", std::string::String::as_str);
+
+    let mut circular_fields = Vec::new();
+    let mut has_fk = false;
+    let mut circular_field_required = HashMap::new();
+
+    for field in &fields_named.named {
+        let Some(field_ident) = field.ident.as_ref() else {
+            continue;
+        };
+        let field_name = field_ident.to_string();
+        let ty_str = quote!(#field.ty).to_string().replace(' ', "");
+
+        // --- has_fk_relations logic ---
+        if ty_str.contains("HasOne<") || ty_str.contains("BelongsTo<") {
+            has_fk = true;
+
+            // --- is_circular_relation_required logic (for ALL FK fields) ---
+            let required = extract_belongs_to_from_field(&field.attrs).is_some_and(|fk| {
+                fields_named
+                    .named
+                    .iter()
+                    .find(|f| {
+                        f.ident.as_ref().map(std::string::ToString::to_string) == Some(fk.clone())
+                    })
+                    .is_some_and(|f| !is_option_type(&f.ty))
+            });
+            circular_field_required.insert(field_name.clone(), required);
+        }
+
+        // --- detect_circular_fields logic ---
+        // Skip HasMany — they are excluded by default and don't create circular refs
+        if !ty_str.contains("HasMany<") {
+            let is_circular = (ty_str.contains("HasOne<")
+                || ty_str.contains("BelongsTo<")
+                || ty_str.contains("Box<"))
+                && (ty_str.contains(&format!("{source_module}::Schema"))
+                    || ty_str.contains(&format!("{source_module}::Entity"))
+                    || ty_str.contains(&format!("{}Schema", capitalize_first(source_module))));
+
+            if is_circular {
+                circular_fields.push(field_name);
+            }
+        }
+    }
+
+    CircularAnalysis {
+        circular_fields,
+        has_fk_relations: has_fk,
+        circular_field_required,
+    }
+}
 
 /// Detect circular reference fields in a related schema.
 ///
@@ -21,61 +118,14 @@ use crate::parser::extract_skip;
 /// from generated schemas.
 ///
 /// Returns a list of field names that would create circular references.
+///
+/// Thin wrapper around [`analyze_circular_refs()`] for backward compatibility.
 pub fn detect_circular_fields(
     _source_schema_name: &str,
     source_module_path: &[String],
     related_schema_def: &str,
 ) -> Vec<String> {
-    // Parse the related schema definition
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_schema_def) else {
-        return Vec::new();
-    };
-
-    // Get the source module name (e.g., "memo" from ["crate", "models", "memo"])
-    let source_module = source_module_path
-        .last()
-        .map_or("", std::string::String::as_str);
-
-    let syn::Fields::Named(fields_named) = &parsed.fields else {
-        return Vec::new();
-    };
-
-    fields_named
-        .named
-        .iter()
-        .filter_map(|field| {
-            let field_ident = field.ident.as_ref()?;
-            let field_name = field_ident.to_string();
-
-            // Check if this field's type references the source schema
-            let ty_str = quote!(#field.ty).to_string();
-
-            // Normalize whitespace: quote!() produces "foo :: bar" instead of "foo::bar"
-            // Remove all whitespace to make pattern matching reliable
-            let ty_str_normalized = ty_str.replace(' ', "");
-
-            // SKIP HasMany relations - they are excluded by default from schemas,
-            // so they don't create actual circular references in the output
-            if ty_str_normalized.contains("HasMany<") {
-                return None;
-            }
-
-            // Check for BelongsTo/HasOne patterns that reference the source:
-            // - HasOne<memo::Entity>
-            // - BelongsTo<memo::Entity>
-            // - Box<memo::Schema> (already converted)
-            // - Option<Box<memo::Schema>>
-            let is_circular = (ty_str_normalized.contains("HasOne<")
-                || ty_str_normalized.contains("BelongsTo<")
-                || ty_str_normalized.contains("Box<"))
-                && (ty_str_normalized.contains(&format!("{source_module}::Schema"))
-                    || ty_str_normalized.contains(&format!("{source_module}::Entity"))
-                    || ty_str_normalized
-                        .contains(&format!("{}Schema", capitalize_first(source_module))));
-
-            is_circular.then_some(field_name)
-        })
-        .collect()
+    analyze_circular_refs(source_module_path, related_schema_def).circular_fields
 }
 
 /// Check if a Model has any `BelongsTo` or `HasOne` relations (FK-based relations).
@@ -85,64 +135,25 @@ pub fn detect_circular_fields(
 ///
 /// - Schemas with FK relations -> have `from_model()`, need async call
 /// - Schemas without FK relations -> have `From<Model>`, can use sync conversion
+///
+/// Thin wrapper around [`analyze_circular_refs()`] for backward compatibility.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn has_fk_relations(model_def: &str) -> bool {
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(model_def) else {
-        return false;
-    };
-
-    if let syn::Fields::Named(fields_named) = &parsed.fields {
-        for field in &fields_named.named {
-            let field_ty = &field.ty;
-            let ty_str = quote!(#field_ty).to_string().replace(' ', "");
-
-            // Check for BelongsTo or HasOne patterns
-            if ty_str.contains("HasOne<") || ty_str.contains("BelongsTo<") {
-                return true;
-            }
-        }
-    }
-
-    false
+    analyze_circular_refs(&[], model_def).has_fk_relations
 }
 
 /// Check if a circular relation field in the related schema is required (Box<T>) or optional (Option<Box<T>>).
 ///
 /// Returns true if the circular relation is required and needs a parent stub.
+///
+/// Thin wrapper around [`analyze_circular_refs()`] for backward compatibility.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_circular_relation_required(related_model_def: &str, circular_field_name: &str) -> bool {
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_model_def) else {
-        return false;
-    };
-
-    let syn::Fields::Named(fields_named) = &parsed.fields else {
-        return false;
-    };
-
-    // Find the circular field by name
-    let Some(field) = fields_named
-        .named
-        .iter()
-        .find(|f| f.ident.as_ref().is_some_and(|i| i == circular_field_name))
-    else {
-        return false;
-    };
-
-    // Check if this is a HasOne/BelongsTo with required FK
-    let ty_str = quote!(#field.ty).to_string().replace(' ', "");
-    if !ty_str.contains("HasOne<") && !ty_str.contains("BelongsTo<") {
-        return false;
-    }
-
-    // Check FK field optionality
-    let Some(fk) = extract_belongs_to_from_field(&field.attrs) else {
-        return false;
-    };
-
-    // Find FK field and check if it's Option
-    fields_named
-        .named
-        .iter()
-        .find(|f| f.ident.as_ref().map(std::string::ToString::to_string) == Some(fk.clone()))
-        .is_some_and(|f| !is_option_type(&f.ty))
+    analyze_circular_refs(&[], related_model_def)
+        .circular_field_required
+        .get(circular_field_name)
+        .copied()
+        .unwrap_or(false)
 }
 
 /// Generate a default value for a `SeaORM` relation field in inline construction.

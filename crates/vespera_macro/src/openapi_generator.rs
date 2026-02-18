@@ -19,20 +19,26 @@ use crate::{
     schema_macro::type_utils::get_type_default as utils_get_type_default,
 };
 
-/// Generate `OpenAPI` document from collected metadata
+/// Generate `OpenAPI` document from collected metadata.
+///
+/// When `file_cache` is provided (from collector), skips file I/O entirely.
+/// When `None`, falls back to reading files from disk (used in tests).
 pub fn generate_openapi_doc_with_metadata(
     title: Option<String>,
     version: Option<String>,
     servers: Option<Vec<Server>>,
     metadata: &CollectedMetadata,
+    file_cache: Option<HashMap<String, syn::File>>,
 ) -> OpenApi {
     let (known_schema_names, struct_definitions) = build_schema_lookups(metadata);
-    let file_cache = build_file_cache(metadata);
+    let file_cache = file_cache.unwrap_or_else(|| build_file_cache(metadata));
     let struct_file_index = build_struct_file_index(&file_cache);
+    let parsed_definitions = build_parsed_definitions(metadata);
     let schemas = parse_component_schemas(
         metadata,
         &known_schema_names,
         &struct_definitions,
+        &parsed_definitions,
         &file_cache,
         &struct_file_index,
     );
@@ -144,6 +150,20 @@ fn build_struct_file_index(file_cache: &HashMap<String, syn::File>) -> HashMap<S
     index
 }
 
+/// Pre-parse all struct/enum definitions into `syn::Item` for reuse.
+///
+/// Avoids calling `syn::parse_str` per-struct inside `parse_component_schemas()`
+/// and other consumers that need the parsed AST.
+fn build_parsed_definitions(metadata: &CollectedMetadata) -> HashMap<String, syn::Item> {
+    let mut parsed = HashMap::with_capacity(metadata.structs.len());
+    for struct_meta in &metadata.structs {
+        if let Ok(item) = syn::parse_str::<syn::Item>(&struct_meta.definition) {
+            parsed.insert(struct_meta.name.clone(), item);
+        }
+    }
+    parsed
+}
+
 /// Parse struct and enum definitions into `OpenAPI` component schemas.
 ///
 /// Only includes structs where `include_in_openapi` is true
@@ -156,16 +176,17 @@ fn parse_component_schemas(
     metadata: &CollectedMetadata,
     known_schema_names: &HashSet<String>,
     struct_definitions: &HashMap<String, String>,
+    parsed_definitions: &HashMap<String, syn::Item>,
     file_cache: &HashMap<String, syn::File>,
     struct_file_index: &HashMap<String, &str>,
 ) -> BTreeMap<String, vespera_core::schema::Schema> {
     let mut schemas = BTreeMap::new();
 
     for struct_meta in metadata.structs.iter().filter(|s| s.include_in_openapi) {
-        let Ok(parsed) = syn::parse_str::<syn::Item>(&struct_meta.definition) else {
+        let Some(parsed) = parsed_definitions.get(&struct_meta.name) else {
             continue;
         };
-        let mut schema = match &parsed {
+        let mut schema = match parsed {
             syn::Item::Struct(struct_item) => {
                 parse_struct_to_schema(struct_item, known_schema_names, struct_definitions)
             }
@@ -176,7 +197,7 @@ fn parse_component_schemas(
         };
 
         // Process default values using cached file ASTs (O(1) lookup)
-        if let syn::Item::Struct(struct_item) = &parsed {
+        if let syn::Item::Struct(struct_item) = parsed {
             let file_ast = struct_file_index
                 .get(&struct_meta.name)
                 .and_then(|path| file_cache.get(*path))
@@ -302,9 +323,8 @@ fn process_default_functions(
                 || "unknown".to_string(),
                 |i| strip_raw_prefix(&i.to_string()).to_string(),
             );
-            let field_name = extract_field_rename(&field.attrs).unwrap_or_else(|| {
-                rename_field(&rust_field_name, struct_rename_all.as_deref())
-            });
+            let field_name = extract_field_rename(&field.attrs)
+                .unwrap_or_else(|| rename_field(&rust_field_name, struct_rename_all.as_deref()));
 
             // Priority 1: #[schema(default = "value")] from schema_type! macro
             if let Some(default_str) = extract_schema_default_attr(&field.attrs) {
@@ -488,7 +508,7 @@ mod tests {
     fn test_generate_openapi_empty_metadata() {
         let metadata = CollectedMetadata::new();
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert_eq!(doc.openapi, OpenApiVersion::V3_1_0);
         assert_eq!(doc.info.title, "API");
@@ -515,7 +535,7 @@ mod tests {
     ) {
         let metadata = CollectedMetadata::new();
 
-        let doc = generate_openapi_doc_with_metadata(title, version, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(title, version, None, &metadata, None);
 
         assert_eq!(doc.info.title, expected_title);
         assert_eq!(doc.info.version, expected_version);
@@ -546,7 +566,7 @@ pub fn get_users() -> String {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert!(doc.paths.contains_key("/users"));
         let path_item = doc.paths.get("/users").unwrap();
@@ -564,7 +584,7 @@ pub fn get_users() -> String {
             ..Default::default()
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
         let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
@@ -580,7 +600,7 @@ pub fn get_users() -> String {
             ..Default::default()
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
         let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
@@ -597,7 +617,7 @@ pub fn get_users() -> String {
             ..Default::default()
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
         let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
@@ -633,7 +653,7 @@ pub fn get_status() -> Status {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Check enum schema
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
@@ -660,7 +680,7 @@ pub fn get_status() -> Status {
         });
 
         // This should gracefully handle the invalid item (skip it) instead of panicking
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
         // The invalid struct definition should be skipped, resulting in no schemas
         assert!(doc.components.is_none() || doc.components.as_ref().unwrap().schemas.is_none());
     }
@@ -700,6 +720,7 @@ pub fn get_user() -> User {
             Some("1.0.0".to_string()),
             None,
             &metadata,
+            None,
         );
 
         // Check struct schema
@@ -755,7 +776,7 @@ pub fn create_user() -> String {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert_eq!(doc.paths.len(), 1); // Same path, different methods
         let path_item = doc.paths.get("/users").unwrap();
@@ -824,7 +845,7 @@ pub fn create_user() -> String {
         }
 
         // Should not panic, just skip invalid files
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Check struct
         if expect_struct {
@@ -869,7 +890,7 @@ pub fn get_users() -> String {
             description: Some("Get all users".to_string()),
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Check route has description
         let path_item = doc.paths.get("/users").unwrap();
@@ -899,7 +920,7 @@ pub fn get_users() -> String {
             },
         ];
 
-        let doc = generate_openapi_doc_with_metadata(None, None, Some(servers), &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, Some(servers), &metadata, None);
 
         assert!(doc.servers.is_some());
         let doc_servers = doc.servers.unwrap();
@@ -1143,7 +1164,7 @@ pub fn get_user() -> User {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Struct should be present
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
@@ -1189,7 +1210,7 @@ pub fn get_config() -> Config {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
         let schemas = doc.components.as_ref().unwrap().schemas.as_ref().unwrap();
@@ -1260,7 +1281,7 @@ pub fn get_user() -> User {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Struct should be found via fallback and processed
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
@@ -1399,7 +1420,7 @@ pub fn get_users() -> String {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Route with unknown HTTP method should be skipped entirely
         assert!(
@@ -1451,7 +1472,7 @@ pub fn create_users() -> String {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
 
         // Only the valid POST route should appear
         assert_eq!(doc.paths.len(), 1);
@@ -1479,7 +1500,7 @@ pub fn create_users() -> String {
         });
 
         // Should gracefully skip unparseable definitions
-        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata);
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
         // The unparseable definition should be skipped
         assert!(doc.components.is_none() || doc.components.as_ref().unwrap().schemas.is_none());
     }

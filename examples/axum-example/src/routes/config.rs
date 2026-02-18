@@ -44,7 +44,6 @@ pub async fn get_config() -> Json<Config> {
 /// Update config
 #[vespera::route(patch, tags = ["config"])]
 pub async fn update_config(Json(req): Json<UpdateConfigRequest>) -> Json<Config> {
-
     let _ = crate::models::config::Model {
         id: 1,
         temperature: Decimal::new(10, 2),
