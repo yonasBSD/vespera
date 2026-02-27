@@ -7,12 +7,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::{
-    file_cache::get_circular_analysis,
+    file_cache::{get_circular_analysis, get_module_path_from_schema_path},
     file_lookup::find_model_from_schema_path,
     seaorm::{RelationFieldInfo, convert_type_with_chrono},
-    type_utils::{
-        extract_module_path_from_schema_path, is_seaorm_relation_type, snake_to_pascal_case,
-    },
+    type_utils::{is_seaorm_relation_type, snake_to_pascal_case},
 };
 use crate::parser::{extract_rename_all, extract_skip};
 
@@ -74,7 +72,7 @@ pub fn generate_inline_relation_type_from_def(
     // IMPORTANT: Use the TARGET model's module path for type resolution, not the parent's.
     // This ensures enum types like `AuthProvider` are resolved to `crate::models::user::AuthProvider`
     // instead of incorrectly using the parent module path.
-    let target_module_path = extract_module_path_from_schema_path(&rel_info.schema_path);
+    let target_module_path = get_module_path_from_schema_path(&rel_info.schema_path);
     let effective_module_path = if target_module_path.is_empty() {
         source_module_path
     } else {
@@ -196,7 +194,7 @@ pub fn generate_inline_relation_type_no_relations_from_def(
     // IMPORTANT: Use the TARGET model's module path for type resolution, not the parent's.
     // This ensures enum types like `StoryStatus` are resolved to `crate::models::story::StoryStatus`
     // instead of incorrectly using the parent module path.
-    let target_module_path = extract_module_path_from_schema_path(&rel_info.schema_path);
+    let target_module_path = get_module_path_from_schema_path(&rel_info.schema_path);
     let effective_module_path = if target_module_path.is_empty() {
         source_module_path
     } else {

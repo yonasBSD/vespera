@@ -13,7 +13,7 @@ use crate::{
     metadata::StructMetadata,
     parser::{
         extract_default, extract_field_rename, extract_rename_all, extract_skip,
-        extract_skip_serializing_if, parse_type_to_schema_ref, rename_field, strip_raw_prefix,
+        extract_skip_serializing_if, parse_type_to_schema_ref, rename_field, strip_raw_prefix_owned,
     },
 };
 
@@ -46,7 +46,7 @@ pub fn generate_filtered_schema(
 
             let rust_field_name = field.ident.as_ref().map_or_else(
                 || "unknown".to_string(),
-                |i| strip_raw_prefix(&i.to_string()).to_string(),
+                |i| strip_raw_prefix_owned(i.to_string()),
             );
 
             // Apply rename

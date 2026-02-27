@@ -22,7 +22,7 @@ use vespera_core::schema::{Discriminator, Schema, SchemaRef, SchemaType};
 use super::{
     serde_attrs::{
         SerdeEnumRepr, extract_doc_comment, extract_enum_repr, extract_field_rename,
-        extract_rename_all, rename_field, strip_raw_prefix,
+        extract_rename_all, rename_field, strip_raw_prefix_owned,
     },
     type_schema::parse_type_to_schema_ref,
 };
@@ -110,7 +110,7 @@ fn parse_unit_enum_to_schema(
     let mut enum_values = Vec::new();
 
     for variant in &enum_item.variants {
-        let variant_name = strip_raw_prefix(&variant.ident.to_string()).to_string();
+        let variant_name = strip_raw_prefix_owned(variant.ident.to_string());
 
         // Check for variant-level rename attribute first (takes precedence)
         let enum_value = extract_field_rename(&variant.attrs)
@@ -133,7 +133,7 @@ fn parse_unit_enum_to_schema(
 
 /// Get the variant key (name after rename transformations)
 fn get_variant_key(variant: &syn::Variant, rename_all: Option<&str>) -> String {
-    let variant_name = strip_raw_prefix(&variant.ident.to_string()).to_string();
+    let variant_name = strip_raw_prefix_owned(variant.ident.to_string());
 
     extract_field_rename(&variant.attrs).unwrap_or_else(|| rename_field(&variant_name, rename_all))
 }
@@ -153,7 +153,7 @@ fn build_struct_variant_properties(
     for field in &fields_named.named {
         let rust_field_name = field.ident.as_ref().map_or_else(
             || "unknown".to_string(),
-            |i| strip_raw_prefix(&i.to_string()).to_string(),
+            |i| strip_raw_prefix_owned(i.to_string()),
         );
 
         // Check for field-level rename attribute first (takes precedence)

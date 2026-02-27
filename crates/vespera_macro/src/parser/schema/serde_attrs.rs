@@ -30,10 +30,16 @@ pub fn extract_doc_comment(attrs: &[syn::Attribute]) -> Option<String> {
     }
 }
 
-/// Strips the `r#` prefix from raw identifiers.
-/// E.g., `r#type` becomes `type`.
-pub fn strip_raw_prefix(ident: &str) -> &str {
-    ident.strip_prefix("r#").unwrap_or(ident)
+
+/// Strips the `r#` prefix from raw identifiers, returning an owned `String`.
+/// For the 99% case (no `r#` prefix), returns the input directly with zero extra allocation.
+#[allow(clippy::option_if_let_else)] // clippy suggestion doesn't compile: borrow-move conflict
+pub fn strip_raw_prefix_owned(ident: String) -> String {
+    if let Some(stripped) = ident.strip_prefix("r#") {
+        stripped.to_string()
+    } else {
+        ident
+    }
 }
 
 /// Capitalizes the first character of a string.
@@ -1112,13 +1118,13 @@ mod tests {
         assert_eq!(result, "test_name");
     }
 
-    /// Test strip_raw_prefix function
+    /// Test strip_raw_prefix_owned function
     #[test]
-    fn test_strip_raw_prefix() {
-        assert_eq!(strip_raw_prefix("r#type"), "type");
-        assert_eq!(strip_raw_prefix("r#match"), "match");
-        assert_eq!(strip_raw_prefix("normal"), "normal");
-        assert_eq!(strip_raw_prefix("r#"), "");
+    fn test_strip_raw_prefix_owned() {
+        assert_eq!(strip_raw_prefix_owned("r#type".to_string()), "type");
+        assert_eq!(strip_raw_prefix_owned("r#match".to_string()), "match");
+        assert_eq!(strip_raw_prefix_owned("normal".to_string()), "normal");
+        assert_eq!(strip_raw_prefix_owned("r#".to_string()), "");
     }
 
     #[rstest]

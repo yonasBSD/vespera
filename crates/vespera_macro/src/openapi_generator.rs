@@ -14,7 +14,7 @@ use crate::{
     metadata::CollectedMetadata,
     parser::{
         build_operation_from_function, extract_default, extract_field_rename, extract_rename_all,
-        parse_enum_to_schema, parse_struct_to_schema, rename_field, strip_raw_prefix,
+        parse_enum_to_schema, parse_struct_to_schema, rename_field, strip_raw_prefix_owned,
     },
     schema_macro::type_utils::get_type_default as utils_get_type_default,
 };
@@ -321,7 +321,7 @@ fn process_default_functions(
         for field in &fields_named.named {
             let rust_field_name = field.ident.as_ref().map_or_else(
                 || "unknown".to_string(),
-                |i| strip_raw_prefix(&i.to_string()).to_string(),
+                |i| strip_raw_prefix_owned(i.to_string()),
             );
             let field_name = extract_field_rename(&field.attrs)
                 .unwrap_or_else(|| rename_field(&rust_field_name, struct_rename_all.as_deref()));

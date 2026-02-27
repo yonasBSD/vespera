@@ -56,11 +56,14 @@ struct FileCache {
     struct_lookup: HashMap<String, Option<StructMetadata>>,
     /// Cached FK column lookups: (schema_path, via_rel) → Option<column_name>.
     fk_column_lookup: HashMap<(String, String), Option<String>>,
+    /// Cached module path extraction from schema paths: path_str → Vec<module segments>.
+    module_path_cache: HashMap<String, Vec<String>>,
 
     // --- Phase 4 profiling counters ---
     circular_cache_hits: usize,
     struct_lookup_cache_hits: usize,
     fk_column_cache_hits: usize,
+    module_path_cache_hits: usize,
 }
 
 thread_local! {
@@ -75,32 +78,12 @@ thread_local! {
         circular_analysis: HashMap::new(),
         struct_lookup: HashMap::new(),
         fk_column_lookup: HashMap::new(),
+        module_path_cache: HashMap::new(),
         circular_cache_hits: 0,
         struct_lookup_cache_hits: 0,
         fk_column_cache_hits: 0,
+        module_path_cache_hits: 0,
     });
-}
-
-/// Get the list of `.rs` files in `src_dir`, using cache when available.
-///
-/// On first call for a given `src_dir`, performs a recursive filesystem walk
-/// and caches the result. Subsequent calls return the cached list.
-#[allow(dead_code)] // Part of cache public API; used in tests
-pub fn get_rs_files(src_dir: &Path) -> Vec<PathBuf> {
-    FILE_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-
-        if let Some(files) = cache.file_lists.get(src_dir) {
-            return files.clone();
-        }
-
-        let mut files = Vec::new();
-        collect_rs_files_recursive(src_dir, &mut files);
-        cache
-            .file_lists
-            .insert(src_dir.to_path_buf(), files.clone());
-        files
-    })
 }
 
 /// Get candidate files that likely contain `struct_name`, using cache when available.
@@ -272,6 +255,45 @@ pub fn get_fk_column(schema_path: &str, via_rel: &str) -> Option<String> {
     result
 }
 
+/// Get or compute module path from schema path, with caching.
+///
+/// Wraps `extract_module_path_from_schema_path` logic with a `HashMap<String, Vec<String>>`
+/// cache. The `schema_path` TokenStream is stringified once for both cache key and computation,
+/// avoiding the double `.to_string()` that would occur when calling the uncached function.
+pub fn get_module_path_from_schema_path(schema_path: &proc_macro2::TokenStream) -> Vec<String> {
+    let path_str = schema_path.to_string();
+
+    // 1. Check cache — borrow dropped at end of closure
+    let cached = FILE_CACHE.with(|cache| cache.borrow().module_path_cache.get(&path_str).cloned());
+    if let Some(result) = cached {
+        FILE_CACHE.with(|cache| cache.borrow_mut().module_path_cache_hits += 1);
+        return result;
+    }
+
+    // 2. Compute from the string directly (avoids double to_string())
+    let segments: Vec<&str> = path_str
+        .split("::")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let result = if segments.len() > 1 {
+        segments[..segments.len() - 1]
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // 3. Store — new borrow
+    FILE_CACHE.with(|cache| {
+        cache.borrow_mut().module_path_cache.insert(path_str, result.clone());
+    });
+
+    result
+}
+
 /// Print profiling summary to stderr if `VESPERA_PROFILE` env var is set.
 ///
 /// Call this at the end of macro execution to output cache statistics.
@@ -311,6 +333,11 @@ pub fn print_profile_summary() {
             cache.fk_column_cache_hits,
             cache.fk_column_lookup.len()
         );
+        eprintln!(
+            "  module path: {} cache hits, {} entries",
+            cache.module_path_cache_hits,
+            cache.module_path_cache.len()
+        );
     });
 }
 
@@ -322,24 +349,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_get_rs_files_caches_result() {
-        let temp_dir = TempDir::new().unwrap();
-        let src_dir = temp_dir.path();
-
-        std::fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
-        std::fs::create_dir(src_dir.join("models")).unwrap();
-        std::fs::write(
-            src_dir.join("models").join("user.rs"),
-            "pub struct User { pub id: i32 }",
-        )
-        .unwrap();
-
-        let files1 = get_rs_files(src_dir);
-        let files2 = get_rs_files(src_dir);
-        assert_eq!(files1.len(), 2);
-        assert_eq!(files1, files2, "Cached result should be identical");
-    }
 
     #[test]
     fn test_get_struct_candidates_filters_correctly() {

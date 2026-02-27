@@ -51,7 +51,7 @@ use validation::{
 
 use crate::{
     metadata::StructMetadata,
-    parser::{extract_default, extract_field_rename, strip_raw_prefix},
+    parser::{extract_default, extract_field_rename, strip_raw_prefix_owned},
 };
 
 /// Generate schema code from a struct with optional field filtering
@@ -235,7 +235,7 @@ pub fn generate_schema_type_code(
         for field in &fields_named.named {
             let rust_field_name = field.ident.as_ref().map_or_else(
                 || "unknown".to_string(),
-                |i| strip_raw_prefix(&i.to_string()).to_string(),
+                |i| strip_raw_prefix_owned(i.to_string()),
             );
 
             // Apply omit/pick filters

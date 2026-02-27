@@ -139,41 +139,9 @@ pub fn generate_from_model_with_relations(
                     }
                 }
                 "HasMany" => {
-                    // HasMany with relation_enum: use FK-based query on target entity
-                    // HasMany without relation_enum: use standard find_related
-                    if let Some(ref via_rel_value) = rel.via_rel {
-                        // Look up the FK column from the target entity
-                        let schema_path_str = rel.schema_path.to_string().replace(' ', "");
-                        if let Some(fk_col_name) = get_fk_column(&schema_path_str, via_rel_value) {
-                            // Convert snake_case FK column to PascalCase for Column enum
-                            let fk_col_pascal = snake_to_pascal_case(&fk_col_name);
-                            let fk_col_ident = syn::Ident::new(&fk_col_pascal, proc_macro2::Span::call_site());
-
-                            // Build the Column path: entity_path without ::Entity, then ::Column::FkCol
-                            // e.g., crate::models::notification::Entity -> crate::models::notification::Column::TargetUserId
-                            let entity_path_str = entity_path.to_string().replace(' ', "");
-                            let column_path_str = entity_path_str.replace(":: Entity", ":: Column");
-                            let column_path_idents: Vec<syn::Ident> = column_path_str.split("::").map(str::trim).filter(|s| !s.is_empty()).map(|s| syn::Ident::new(s, proc_macro2::Span::call_site())).collect();
-
-                            quote! {
-                                let #field_name = #(#column_path_idents)::*::#fk_col_ident
-                                    .into_column()
-                                    .eq(model.id.clone())
-                                    .into_condition();
-                                let #field_name = #entity_path::find()
-                                    .filter(#field_name)
-                                    .all(db)
-                                    .await?;
-                            }
-                        } else {
-                            // FK column not found - fall back to empty vec with warning comment
-                            quote! {
-                                // WARNING: Could not find FK column for relation_enum, using empty vec
-                                let #field_name: Vec<_> = vec![];
-                            }
-                        }
-                    } else if let Some(via_rel_value) = &rel.relation_enum {
-                        // Has relation_enum but no via_rel - try using relation_enum as via_rel
+                    // Try via_rel first, fall back to relation_enum as FK source
+                    let fk_rel_source = rel.via_rel.as_ref().or(rel.relation_enum.as_ref());
+                    if let Some(via_rel_value) = fk_rel_source {
                         let schema_path_str = rel.schema_path.to_string().replace(' ', "");
                         if let Some(fk_col_name) = get_fk_column(&schema_path_str, via_rel_value) {
                             let fk_col_pascal = snake_to_pascal_case(&fk_col_name);
@@ -194,9 +162,8 @@ pub fn generate_from_model_with_relations(
                                     .await?;
                             }
                         } else {
-                            // FK column not found - fall back to empty vec
                             quote! {
-                                // WARNING: Could not find FK column for relation_enum, using empty vec
+                                // WARNING: Could not find FK column for relation, using empty vec
                                 let #field_name: Vec<_> = vec![];
                             }
                         }
