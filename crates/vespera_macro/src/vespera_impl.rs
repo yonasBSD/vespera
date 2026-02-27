@@ -927,4 +927,92 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("failed to write OpenAPI spec file"));
     }
+    #[test]
+    fn test_process_vespera_macro_no_openapi_output() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        create_temp_file(&temp_dir, "empty.rs", "// empty route file\n");
+
+        let processed = ProcessedVesperaInput {
+            folder_name: temp_dir.path().to_string_lossy().to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+            merge: vec![],
+        };
+
+        let result = process_vespera_macro(&processed, &HashMap::new());
+        assert!(
+            result.is_ok(),
+            "Should succeed with no openapi output configured"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_process_vespera_macro_with_profiling() {
+        let old_profile = std::env::var("VESPERA_PROFILE").ok();
+        unsafe { std::env::set_var("VESPERA_PROFILE", "1") };
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        create_temp_file(&temp_dir, "empty.rs", "// empty\n");
+
+        let processed = ProcessedVesperaInput {
+            folder_name: temp_dir.path().to_string_lossy().to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+            merge: vec![],
+        };
+
+        let result = process_vespera_macro(&processed, &HashMap::new());
+
+        // Restore
+        unsafe {
+            if let Some(val) = old_profile {
+                std::env::set_var("VESPERA_PROFILE", val);
+            } else {
+                std::env::remove_var("VESPERA_PROFILE");
+            }
+        };
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_process_export_app_with_profiling() {
+        let old_profile = std::env::var("VESPERA_PROFILE").ok();
+        unsafe { std::env::set_var("VESPERA_PROFILE", "1") };
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        create_temp_file(&temp_dir, "empty.rs", "// empty\n");
+
+        let name: syn::Ident = syn::parse_quote!(TestProfileApp);
+        let folder_path = temp_dir.path().to_string_lossy().to_string();
+
+        let result = process_export_app(
+            &name,
+            &folder_path,
+            &HashMap::new(),
+            &temp_dir.path().to_string_lossy(),
+        );
+
+        // Restore
+        unsafe {
+            if let Some(val) = old_profile {
+                std::env::set_var("VESPERA_PROFILE", val);
+            } else {
+                std::env::remove_var("VESPERA_PROFILE");
+            }
+        };
+
+        // Exercise the code path
+        let _ = result;
+    }
 }

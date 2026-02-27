@@ -452,4 +452,53 @@ mod tests {
         let c2 = get_struct_candidates(src_dir, "Target");
         assert_eq!(c1, c2, "Cached candidates should be identical");
     }
+
+    #[test]
+    fn test_get_struct_candidates_file_list_cache_hit() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::write(
+            src_dir.join("file_a.rs"),
+            "pub struct Alpha { pub id: i32 }",
+        )
+        .unwrap();
+        std::fs::write(
+            src_dir.join("file_b.rs"),
+            "pub struct Beta { pub name: String }",
+        )
+        .unwrap();
+
+        // First call: populates file_lists cache for src_dir
+        let result1 = get_struct_candidates(src_dir, "Alpha");
+        assert_eq!(result1.len(), 1);
+
+        // Second call: same src_dir, different struct_name
+        // struct_candidates cache MISS (different key), but file_lists cache HIT → line 125
+        let result2 = get_struct_candidates(src_dir, "Beta");
+        assert_eq!(result2.len(), 1);
+    }
+
+    #[test]
+    fn test_get_fk_column_cache_hit() {
+        // First call: computes and caches result (None since path doesn't exist)
+        let result1 = get_fk_column("nonexistent::path::Schema", "SomeRelation");
+        // Second call: hits cache → lines 259-260
+        let result2 = get_fk_column("nonexistent::path::Schema", "SomeRelation");
+        assert_eq!(result1, result2);
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn test_print_profile_summary_with_profile_env() {
+        // Set VESPERA_PROFILE to enable profiling output
+        unsafe { std::env::set_var("VESPERA_PROFILE", "1") };
+
+        // This should print profile summary to stderr (lines 311-321)
+        print_profile_summary();
+
+        // Clean up
+        unsafe { std::env::remove_var("VESPERA_PROFILE") };
+        // Test passes if no panic — output goes to stderr
+    }
 }

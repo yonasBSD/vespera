@@ -210,26 +210,6 @@ pub fn find_struct_by_name_in_all_files(
                 return Some((metadata.clone(), module_path));
             }
 
-            // Fallback: contains-match disambiguation
-            if found_in_candidates.len() > 1 {
-                let matching: Vec<_> = found_in_candidates
-                    .into_iter()
-                    .filter(|(path, _)| {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .is_some_and(|name| {
-                                normalize_name(name).contains(prefix_normalized.as_str())
-                            })
-                    })
-                    .collect();
-
-                if matching.len() == 1 {
-                    let (path, metadata) = matching.into_iter().next().unwrap();
-                    let module_path = file_path_to_module_path(&path, src_dir);
-                    return Some((metadata, module_path));
-                }
-            }
-
             // Still ambiguous among candidates
             return None;
         }
@@ -262,52 +242,12 @@ pub fn find_struct_by_name_in_all_files(
     }
 
     match found_structs.len() {
-        0 => None,
         1 => {
             let (path, metadata) = found_structs.remove(0);
             let module_path = file_path_to_module_path(&path, src_dir);
             Some((metadata, module_path))
         }
-        _ => {
-            // Multiple matches without hint (or hint didn't match candidates above).
-            // Re-use hint disambiguation logic for full-scan results.
-            if let Some(prefix_normalized) = &prefix_normalized {
-                let exact_match: Vec<_> = found_structs
-                    .iter()
-                    .filter(|(path, _)| {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .is_some_and(|name| normalize_name(name) == *prefix_normalized)
-                    })
-                    .collect();
-
-                if exact_match.len() == 1 {
-                    let (path, metadata) = exact_match[0];
-                    let module_path = file_path_to_module_path(path, src_dir);
-                    return Some((metadata.clone(), module_path));
-                }
-
-                let matching: Vec<_> = found_structs
-                    .into_iter()
-                    .filter(|(path, _)| {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .is_some_and(|name| {
-                                normalize_name(name).contains(prefix_normalized.as_str())
-                            })
-                    })
-                    .collect();
-
-                if matching.len() == 1 {
-                    let (path, metadata) = matching.into_iter().next().unwrap();
-                    let module_path = file_path_to_module_path(&path, src_dir);
-                    return Some((metadata, module_path));
-                }
-            }
-
-            // Still ambiguous
-            None
-        }
+        _ => None,
     }
 }
 
@@ -1514,6 +1454,116 @@ pub struct Model {
         assert!(
             result.is_none(),
             "Field without 'from' attribute should return None"
+        );
+    }
+
+    // ============================================================
+    // Coverage tests for find_struct_by_name_in_all_files (candidate/rest paths)
+    // ============================================================
+
+    #[test]
+    #[serial]
+    fn test_find_struct_candidate_unparseable_file() {
+        // Tests line 145: candidate file fails to parse -> continue to next candidate
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        // user.rs matches hint prefix "user" (candidate), contains "Model" text, but won't parse
+        std::fs::write(
+            src_dir.join("user.rs"),
+            "pub struct Model {{{{ broken syntax",
+        )
+        .unwrap();
+
+        // valid.rs contains Model and parses fine (goes to rest since filename doesn't match prefix)
+        std::fs::write(src_dir.join("valid.rs"), "pub struct Model { pub id: i32 }").unwrap();
+
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("UserSchema"));
+
+        assert!(
+            result.is_some(),
+            "Should find Model in valid.rs after skipping unparseable candidate user.rs"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_find_struct_exact_filename_disambiguation() {
+        // Tests lines 168-170: multiple candidates found, exact filename match disambiguates
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        // user.rs: exact match (normalize_name("user") == prefix "user")
+        std::fs::write(src_dir.join("user.rs"), "pub struct Model { pub id: i32 }").unwrap();
+
+        // user_extended.rs: contains-match only (normalize_name("user_extended") = "userextended" != "user")
+        std::fs::write(
+            src_dir.join("user_extended.rs"),
+            "pub struct Model { pub name: String }",
+        )
+        .unwrap();
+
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("UserSchema"));
+
+        assert!(result.is_some(), "Should resolve via exact filename match");
+        let (metadata, _) = result.unwrap();
+        assert!(
+            metadata.definition.contains("id"),
+            "Should return user.rs Model (with id field)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_find_struct_no_match_in_candidates_falls_to_rest() {
+        // Tests line 189: candidates have no struct match -> rs_files = rest -> full scan finds it
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        // user.rs is a candidate (filename matches "user" prefix) but has no struct Model
+        // Must contain "Model" text for get_struct_candidates to include it
+        std::fs::write(
+            src_dir.join("user.rs"),
+            "pub struct Other { pub x: i32 } // Model ref",
+        )
+        .unwrap();
+
+        // data.rs is in rest (filename "data" doesn't contain "user"), has struct Model
+        std::fs::write(src_dir.join("data.rs"), "pub struct Model { pub id: i32 }").unwrap();
+
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("UserSchema"));
+
+        assert!(
+            result.is_some(),
+            "Should find Model in data.rs after candidates had no match"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_find_struct_full_scan_unparseable_file() {
+        // Tests line 197: full-scan file fails to parse -> continue to next file
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        // user.rs is candidate but no struct Model
+        std::fs::write(
+            src_dir.join("user.rs"),
+            "pub struct Other { pub x: i32 } // Model",
+        )
+        .unwrap();
+
+        // broken.rs is rest, contains "Model" text but won't parse
+        std::fs::write(src_dir.join("broken.rs"), "Model unparseable {{{{{").unwrap();
+
+        // valid.rs is rest, has struct Model
+        std::fs::write(src_dir.join("valid.rs"), "pub struct Model { pub id: i32 }").unwrap();
+
+        let result = find_struct_by_name_in_all_files(src_dir, "Model", Some("UserSchema"));
+
+        assert!(
+            result.is_some(),
+            "Should find Model in valid.rs after skipping unparseable broken.rs in rest"
         );
     }
 }

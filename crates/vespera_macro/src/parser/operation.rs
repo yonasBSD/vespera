@@ -74,7 +74,8 @@ pub fn build_operation_from_function(
                             description: None,
                             required: Some(true),
                             schema: Some(parse_type_to_schema_ref_with_schemas(
-                                string_type.get_or_init(|| syn::parse_str::<Type>("String").unwrap()),
+                                string_type
+                                    .get_or_init(|| syn::parse_str::<Type>("String").unwrap()),
                                 known_schemas,
                                 struct_definitions,
                             )),

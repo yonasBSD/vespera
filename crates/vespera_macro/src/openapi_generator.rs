@@ -1678,4 +1678,30 @@ pub fn create_users() -> String {
             panic!("Expected inline schema with default");
         }
     }
+
+    #[test]
+    fn test_generate_openapi_route_function_not_in_ast() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let route_content = "pub fn get_items() -> String { \"items\".to_string() }\n";
+        let route_file = create_temp_file(&temp_dir, "users.rs", route_content);
+
+        let mut metadata = CollectedMetadata::new();
+        metadata.routes.push(RouteMetadata {
+            method: "GET".to_string(),
+            path: "/users".to_string(),
+            function_name: "get_users".to_string(),
+            module_path: "test::users".to_string(),
+            file_path: route_file.to_string_lossy().to_string(),
+            signature: "fn get_users() -> String".to_string(),
+            error_status: None,
+            tags: None,
+            description: None,
+        });
+
+        let doc = generate_openapi_doc_with_metadata(None, None, None, &metadata, None);
+        assert!(
+            doc.paths.is_empty(),
+            "Route with non-matching function should be skipped"
+        );
+    }
 }
