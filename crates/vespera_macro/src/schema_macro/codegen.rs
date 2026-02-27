@@ -13,7 +13,8 @@ use crate::{
     metadata::StructMetadata,
     parser::{
         extract_default, extract_field_rename, extract_rename_all, extract_skip,
-        extract_skip_serializing_if, parse_type_to_schema_ref, rename_field, strip_raw_prefix_owned,
+        extract_skip_serializing_if, parse_type_to_schema_ref, rename_field,
+        strip_raw_prefix_owned,
     },
 };
 

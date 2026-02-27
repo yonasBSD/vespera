@@ -30,7 +30,6 @@ pub fn extract_doc_comment(attrs: &[syn::Attribute]) -> Option<String> {
     }
 }
 
-
 /// Strips the `r#` prefix from raw identifiers, returning an owned `String`.
 /// For the 99% case (no `r#` prefix), returns the input directly with zero extra allocation.
 #[allow(clippy::option_if_let_else)] // clippy suggestion doesn't compile: borrow-move conflict

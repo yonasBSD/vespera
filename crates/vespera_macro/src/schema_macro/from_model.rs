@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 
+use super::type_utils::normalize_token_str;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Type;
-use super::type_utils::normalize_token_str;
 
 use super::{
     circular::{generate_inline_struct_construction, generate_inline_type_construction},

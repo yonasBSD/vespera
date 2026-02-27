@@ -155,7 +155,6 @@ pub fn find_struct_by_name_in_all_files(
     // This avoids parsing ALL files for the common same-file pattern:
     //   schema_type!(Schema from Model, name = "UserSchema")  in user.rs
     if let Some(prefix_normalized) = &prefix_normalized {
-
         // Partition files: candidate files (filename matches hint prefix) vs rest
         let (candidates, rest): (Vec<_>, Vec<_>) = rs_files.into_iter().partition(|path| {
             path.file_stem()
@@ -201,9 +200,7 @@ pub fn find_struct_by_name_in_all_files(
                 .filter(|(path, _)| {
                     path.file_stem()
                         .and_then(|s| s.to_str())
-                        .is_some_and(|name| {
-                            normalize_name(name) == *prefix_normalized
-                        })
+                        .is_some_and(|name| normalize_name(name) == *prefix_normalized)
                 })
                 .collect();
 
@@ -221,8 +218,7 @@ pub fn find_struct_by_name_in_all_files(
                         path.file_stem()
                             .and_then(|s| s.to_str())
                             .is_some_and(|name| {
-                                normalize_name(name)
-                                    .contains(prefix_normalized.as_str())
+                                normalize_name(name).contains(prefix_normalized.as_str())
                             })
                     })
                     .collect();
@@ -276,15 +272,12 @@ pub fn find_struct_by_name_in_all_files(
             // Multiple matches without hint (or hint didn't match candidates above).
             // Re-use hint disambiguation logic for full-scan results.
             if let Some(prefix_normalized) = &prefix_normalized {
-
                 let exact_match: Vec<_> = found_structs
                     .iter()
                     .filter(|(path, _)| {
                         path.file_stem()
                             .and_then(|s| s.to_str())
-                            .is_some_and(|name| {
-                                normalize_name(name) == *prefix_normalized
-                            })
+                            .is_some_and(|name| normalize_name(name) == *prefix_normalized)
                     })
                     .collect();
 
@@ -300,8 +293,7 @@ pub fn find_struct_by_name_in_all_files(
                         path.file_stem()
                             .and_then(|s| s.to_str())
                             .is_some_and(|name| {
-                                normalize_name(name)
-                                    .contains(prefix_normalized.as_str())
+                                normalize_name(name).contains(prefix_normalized.as_str())
                             })
                     })
                     .collect();

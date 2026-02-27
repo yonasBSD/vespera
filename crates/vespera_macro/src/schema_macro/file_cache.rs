@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::file_lookup::collect_rs_files_recursive;
 use super::circular::CircularAnalysis;
+use super::file_lookup::collect_rs_files_recursive;
 use crate::metadata::StructMetadata;
 
 /// Internal cache state.
@@ -221,7 +221,10 @@ pub fn get_circular_analysis(source_module_path: &[String], definition: &str) ->
 
     // 3. Store — new borrow
     FILE_CACHE.with(|cache| {
-        cache.borrow_mut().circular_analysis.insert(key, result.clone());
+        cache
+            .borrow_mut()
+            .circular_analysis
+            .insert(key, result.clone());
     });
 
     result
@@ -244,7 +247,10 @@ pub fn get_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
 
     // 3. Store — new borrow
     FILE_CACHE.with(|cache| {
-        cache.borrow_mut().struct_lookup.insert(path_str.to_string(), result.clone());
+        cache
+            .borrow_mut()
+            .struct_lookup
+            .insert(path_str.to_string(), result.clone());
     });
 
     result
@@ -269,7 +275,10 @@ pub fn get_fk_column(schema_path: &str, via_rel: &str) -> Option<String> {
 
     // 3. Store — new borrow
     FILE_CACHE.with(|cache| {
-        cache.borrow_mut().fk_column_lookup.insert(key, result.clone());
+        cache
+            .borrow_mut()
+            .fk_column_lookup
+            .insert(key, result.clone());
     });
 
     result
@@ -308,7 +317,10 @@ pub fn get_module_path_from_schema_path(schema_path: &proc_macro2::TokenStream) 
 
     // 3. Store — new borrow
     FILE_CACHE.with(|cache| {
-        cache.borrow_mut().module_path_cache.insert(path_str, result.clone());
+        cache
+            .borrow_mut()
+            .module_path_cache
+            .insert(path_str, result.clone());
     });
 
     result
@@ -368,7 +380,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-
 
     #[test]
     fn test_get_struct_candidates_filters_correctly() {

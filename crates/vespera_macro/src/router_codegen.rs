@@ -1212,7 +1212,13 @@ pub fn get_users() -> String {
         let metadata = CollectedMetadata::new();
         let spec = r#"{"openapi":"3.1.0"}"#;
 
-        let result = generate_router_code(&metadata, Some("/docs"), None, Some(quote::quote!(#spec)), &[]);
+        let result = generate_router_code(
+            &metadata,
+            Some("/docs"),
+            None,
+            Some(quote::quote!(#spec)),
+            &[],
+        );
         let code = result.to_string();
 
         assert!(code.contains("/docs"));
@@ -1226,7 +1232,13 @@ pub fn get_users() -> String {
         let metadata = CollectedMetadata::new();
         let spec = r#"{"openapi":"3.1.0"}"#;
 
-        let result = generate_router_code(&metadata, None, Some("/redoc"), Some(quote::quote!(#spec)), &[]);
+        let result = generate_router_code(
+            &metadata,
+            None,
+            Some("/redoc"),
+            Some(quote::quote!(#spec)),
+            &[],
+        );
         let code = result.to_string();
 
         assert!(code.contains("/redoc"));
@@ -1240,8 +1252,13 @@ pub fn get_users() -> String {
         let metadata = CollectedMetadata::new();
         let spec = r#"{"openapi":"3.1.0"}"#;
 
-        let result =
-            generate_router_code(&metadata, Some("/docs"), Some("/redoc"), Some(quote::quote!(#spec)), &[]);
+        let result = generate_router_code(
+            &metadata,
+            Some("/docs"),
+            Some("/redoc"),
+            Some(quote::quote!(#spec)),
+            &[],
+        );
         let code = result.to_string();
 
         assert!(code.contains("/docs"));
@@ -1530,7 +1547,13 @@ pub fn get_users() -> String {
         let spec = r#"{"openapi":"3.1.0"}"#;
         let merge_apps: Vec<syn::Path> = vec![syn::parse_quote!(app::MyApp)];
 
-        let result = generate_router_code(&metadata, Some("/docs"), None, Some(quote::quote!(#spec)), &merge_apps);
+        let result = generate_router_code(
+            &metadata,
+            Some("/docs"),
+            None,
+            Some(quote::quote!(#spec)),
+            &merge_apps,
+        );
         let code = result.to_string();
 
         // Should have merge code for docs
@@ -1555,7 +1578,13 @@ pub fn get_users() -> String {
         let spec = r#"{"openapi":"3.1.0"}"#;
         let merge_apps: Vec<syn::Path> = vec![syn::parse_quote!(other::OtherApp)];
 
-        let result = generate_router_code(&metadata, None, Some("/redoc"), Some(quote::quote!(#spec)), &merge_apps);
+        let result = generate_router_code(
+            &metadata,
+            None,
+            Some("/redoc"),
+            Some(quote::quote!(#spec)),
+            &merge_apps,
+        );
         let code = result.to_string();
 
         // Should have merge code for redoc

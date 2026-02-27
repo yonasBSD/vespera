@@ -184,7 +184,6 @@ pub fn resolve_type_to_absolute_path(ty: &Type, source_module_path: &[String]) -
     quote! { #(#path_idents)::* :: #type_ident #args }
 }
 
-
 /// Extract the module path from a type (excluding the type name itself).
 /// e.g., `crate::models::memo::Model` -> `["crate", "models", "memo"]`
 pub fn extract_module_path(ty: &Type) -> Vec<String> {
@@ -699,5 +698,4 @@ mod tests {
         let ty: syn::Type = syn::parse_str("Vec<DateTime<Utc>>").unwrap();
         assert!(is_primitive_like(&ty));
     }
-
 }

@@ -259,7 +259,10 @@ pub fn extract_sea_orm_default_value(attrs: &[syn::Attribute]) -> Option<String>
                 }
 
                 // If quoted string, strip quotes and return inner value
-                if let Some(inner) = raw_value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                if let Some(inner) = raw_value
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                {
                     return Some(inner.to_string());
                 }
                 // Numeric, bool, or other literal — return as-is
