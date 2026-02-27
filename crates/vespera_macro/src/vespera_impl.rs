@@ -180,11 +180,23 @@ pub fn process_vespera_macro(
     let (docs_url, redoc_url, spec_json) =
         generate_and_write_openapi(processed, &metadata, file_asts)?;
 
+    let spec_tokens = spec_json.map(|json| {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+        let manifest_path = Path::new(&manifest_dir);
+        let target_dir = find_target_dir(manifest_path);
+        let vespera_dir = target_dir.join("vespera");
+        std::fs::create_dir_all(&vespera_dir).ok();
+        let spec_file = vespera_dir.join("vespera_spec.json");
+        std::fs::write(&spec_file, &json).ok();
+        let path_str = spec_file.display().to_string().replace('\\', "/");
+        quote::quote! { include_str!(#path_str) }
+    });
+
     let result = Ok(generate_router_code(
         &metadata,
         docs_url.as_deref(),
         redoc_url.as_deref(),
-        spec_json.as_deref(),
+        spec_tokens,
         &processed.merge,
     ));
 
@@ -238,6 +250,7 @@ pub fn process_export_app(
     std::fs::create_dir_all(&vespera_dir).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to create build cache directory '{}'. Error: {}. Ensure the target directory is writable.", vespera_dir.display(), e)))?;
     let spec_file = vespera_dir.join(format!("{name_str}.openapi.json"));
     std::fs::write(&spec_file, &spec_json).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to write OpenAPI spec file '{}'. Error: {}. Ensure the file path is writable.", spec_file.display(), e)))?;
+    let spec_path_str = spec_file.display().to_string().replace('\\', "/");
 
     // Generate router code (without docs routes, no merge)
     let router_code = generate_router_code(&metadata, None, None, None, &[]);
@@ -248,7 +261,7 @@ pub fn process_export_app(
 
         impl #name {
             /// OpenAPI specification as JSON string
-            pub const OPENAPI_SPEC: &'static str = #spec_json;
+            pub const OPENAPI_SPEC: &'static str = include_str!(#spec_path_str);
 
             /// Create the router for this app.
             /// Returns `Router<()>` which can be merged into any other router.
