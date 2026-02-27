@@ -24,26 +24,15 @@ pub fn build_entity_path_from_schema_path(
     schema_path: &TokenStream,
     _source_module_path: &[String],
 ) -> TokenStream {
-    // Parse the schema path to extract segments
+    // Parse the schema path, replace "Schema" with "Entity", and build Idents in one pass
     let path_str = schema_path.to_string();
-    let segments: Vec<&str> = path_str.split("::").map(str::trim).collect();
-
-    // Replace "Schema" with "Entity" in the last segment
-    let entity_segments: Vec<String> = segments
-        .iter()
+    let path_idents: Vec<syn::Ident> = path_str
+        .split("::")
         .map(|s| {
-            if *s == "Schema" {
-                "Entity".to_string()
-            } else {
-                s.to_string()
-            }
+            let s = s.trim();
+            let name = if s == "Schema" { "Entity" } else { s };
+            syn::Ident::new(name, proc_macro2::Span::call_site())
         })
-        .collect();
-
-    // Build the path tokens
-    let path_idents: Vec<syn::Ident> = entity_segments
-        .iter()
-        .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
         .collect();
 
     quote! { #(#path_idents)::* }
@@ -241,6 +230,12 @@ pub fn generate_from_model_with_relations(
         vec![]
     };
 
+    // Pre-build relation lookup for O(1) access in field assignments loop
+    let relation_by_name: HashMap<&syn::Ident, &RelationFieldInfo> = relation_fields
+        .iter()
+        .map(|rel| (&rel.field_name, rel))
+        .collect();
+
     // Build field assignments
     // For relation fields, check for circular references and use inline construction if needed
     let field_assignments: Vec<TokenStream> = field_mappings
@@ -248,7 +243,7 @@ pub fn generate_from_model_with_relations(
         .map(|(new_ident, source_ident, wrapped, is_relation)| {
             if *is_relation {
                 // Find the relation info for this field
-                if let Some(rel) = relation_fields.iter().find(|r| &r.field_name == source_ident) {
+                if let Some(rel) = relation_by_name.get(source_ident) {
                     let schema_path = &rel.schema_path;
 
                     // Try to find the related MODEL definition to check for circular refs

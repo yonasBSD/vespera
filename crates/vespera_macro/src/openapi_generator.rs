@@ -107,9 +107,8 @@ fn build_schema_lookups(
     let mut struct_definitions = HashMap::with_capacity(metadata.structs.len());
 
     for struct_meta in &metadata.structs {
-        let name = struct_meta.name.clone();
-        struct_definitions.insert(name.clone(), struct_meta.definition.clone());
-        known_schema_names.insert(name);
+        struct_definitions.insert(struct_meta.name.clone(), struct_meta.definition.clone());
+        known_schema_names.insert(struct_meta.name.clone());
     }
 
     (known_schema_names, struct_definitions)
