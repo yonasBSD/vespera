@@ -42,8 +42,9 @@ pub fn collect_metadata(
         let file_ast = syn::parse_file(&content).map_err(|e| err_call_site(format!("vespera! macro: syntax error in '{}': {}. Fix the Rust syntax errors in this file.", file.display(), e)))?;
 
         // Store file AST for downstream reuse (keyed by display path to match RouteMetadata.file_path)
-        let file_path_key = file.display().to_string();
-        file_asts.insert(file_path_key, file_ast.clone());
+        let file_path = file.display().to_string();
+        file_asts.insert(file_path.clone(), file_ast);
+        let file_ast = &file_asts[&file_path];
 
         // Get module path
         let segments = file
@@ -63,8 +64,6 @@ pub fn collect_metadata(
         } else {
             format!("{}::{}", folder_name, segments.join("::"))
         };
-
-        let file_path = file.display().to_string();
 
         // Pre-compute base path once per file (avoids repeated segments.join per route)
         let base_path = format!("/{}", segments.join("/"));

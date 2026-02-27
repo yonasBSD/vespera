@@ -6,7 +6,7 @@ use std::path::Path;
 
 use syn::Type;
 
-use crate::{file_utils::try_read_and_parse_file, metadata::StructMetadata};
+use crate::metadata::StructMetadata;
 
 /// Try to find a struct definition from a module path by reading source files.
 ///
@@ -90,7 +90,7 @@ pub fn find_struct_from_path(
             continue;
         }
 
-        let file_ast = try_read_and_parse_file(&file_path)?;
+        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
 
         // Look for the struct in the file
         for item in &file_ast.items {
@@ -134,19 +134,110 @@ pub fn find_struct_by_name_in_all_files(
     struct_name: &str,
     schema_name_hint: Option<&str>,
 ) -> Option<(StructMetadata, Vec<String>)> {
-    // Collect all .rs files recursively
-    let mut rs_files = Vec::new();
-    collect_rs_files_recursive(src_dir, &mut rs_files);
+    // Use cached struct-candidate index: files already filtered by text search
+    let mut rs_files = super::file_cache::get_struct_candidates(src_dir, struct_name);
 
-    // Store: (file_path, struct_metadata)
+    // FAST PATH: If schema_name_hint is provided, try matching files first.
+    // This avoids parsing ALL files for the common same-file pattern:
+    //   schema_type!(Schema from Model, name = "UserSchema")  in user.rs
+    if let Some(hint) = schema_name_hint {
+        let prefix_normalized = derive_hint_prefix(hint);
+
+        // Partition files: candidate files (filename matches hint prefix) vs rest
+        let (candidates, rest): (Vec<_>, Vec<_>) = rs_files.into_iter().partition(|path| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|name| {
+                    let norm = name.to_lowercase().replace('_', "");
+                    norm == prefix_normalized || norm.contains(&prefix_normalized)
+                })
+        });
+
+        // Parse only candidate files first
+        let mut found_in_candidates: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
+        for file_path in &candidates {
+            let Some(file_ast) = super::file_cache::get_parsed_ast(file_path) else {
+                continue;
+            };
+            for item in &file_ast.items {
+                if let syn::Item::Struct(struct_item) = item
+                    && struct_item.ident == struct_name
+                {
+                    found_in_candidates.push((
+                        file_path.clone(),
+                        StructMetadata::new_model(
+                            struct_name.to_string(),
+                            quote::quote!(#struct_item).to_string(),
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // If exactly one match in candidates, return immediately (fast path hit!)
+        if found_in_candidates.len() == 1 {
+            let (path, metadata) = found_in_candidates.remove(0);
+            let module_path = file_path_to_module_path(&path, src_dir);
+            return Some((metadata, module_path));
+        }
+
+        // If candidates found multiple, try disambiguation by exact filename match
+        if found_in_candidates.len() > 1 {
+            let exact_match: Vec<_> = found_in_candidates
+                .iter()
+                .filter(|(path, _)| {
+                    path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|name| {
+                            name.to_lowercase().replace('_', "") == prefix_normalized
+                        })
+                })
+                .collect();
+
+            if exact_match.len() == 1 {
+                let (path, metadata) = exact_match[0];
+                let module_path = file_path_to_module_path(path, src_dir);
+                return Some((metadata.clone(), module_path));
+            }
+
+            // Fallback: contains-match disambiguation
+            if found_in_candidates.len() > 1 {
+                let matching: Vec<_> = found_in_candidates
+                    .into_iter()
+                    .filter(|(path, _)| {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .is_some_and(|name| {
+                                name.to_lowercase()
+                                    .replace('_', "")
+                                    .contains(&prefix_normalized)
+                            })
+                    })
+                    .collect();
+
+                if matching.len() == 1 {
+                    let (path, metadata) = matching.into_iter().next().unwrap();
+                    let module_path = file_path_to_module_path(&path, src_dir);
+                    return Some((metadata, module_path));
+                }
+            }
+
+            // Still ambiguous among candidates
+            return None;
+        }
+
+        // No match in candidates — fall through to scan remaining files
+        rs_files = rest;
+    }
+
+    // FULL SCAN: Parse all remaining files (or all files if no hint)
     let mut found_structs: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
 
     for file_path in rs_files {
-        let Some(file_ast) = try_read_and_parse_file(&file_path) else {
+        let Some(file_ast) = super::file_cache::get_parsed_ast(&file_path) else {
             continue;
         };
 
-        // Look for the struct in the file
         for item in &file_ast.items {
             if let syn::Item::Struct(struct_item) = item
                 && struct_item.ident == struct_name
@@ -170,22 +261,11 @@ pub fn find_struct_by_name_in_all_files(
             Some((metadata, module_path))
         }
         _ => {
-            // Multiple structs with same name - try to disambiguate using schema_name_hint
+            // Multiple matches without hint (or hint didn't match candidates above).
+            // Re-use hint disambiguation logic for full-scan results.
             if let Some(hint) = schema_name_hint {
-                // Extract prefix from schema name (e.g., "UserSchema" -> "user", "MemoSchema" -> "memo")
-                let hint_lower = hint.to_lowercase();
-                let prefix = hint_lower
-                    .strip_suffix("schema")
-                    .or_else(|| hint_lower.strip_suffix("response"))
-                    .or_else(|| hint_lower.strip_suffix("request"))
-                    .unwrap_or(&hint_lower);
+                let prefix_normalized = derive_hint_prefix(hint);
 
-                // Normalize prefix: remove underscores for comparison
-                // This allows "AdminUserSchema" (prefix "adminuser") to match "admin_user.rs"
-                let prefix_normalized = prefix.replace('_', "");
-
-                // First, try exact filename match (normalized)
-                // e.g., "admin_user.rs" normalized to "adminuser" matches prefix "adminuser"
                 let exact_match: Vec<_> = found_structs
                     .iter()
                     .filter(|(path, _)| {
@@ -203,7 +283,6 @@ pub fn find_struct_by_name_in_all_files(
                     return Some((metadata.clone(), module_path));
                 }
 
-                // Fallback: Find files whose normalized name contains the prefix
                 let matching: Vec<_> = found_structs
                     .into_iter()
                     .filter(|(path, _)| {
@@ -228,6 +307,25 @@ pub fn find_struct_by_name_in_all_files(
             None
         }
     }
+}
+
+/// Derive a normalized prefix from a schema name hint for file matching.
+///
+/// Strips common suffixes ("Schema", "Response", "Request") and normalizes
+/// by removing underscores and lowercasing.
+///
+/// # Examples
+/// - "UserSchema" → "user"
+/// - "MemoResponse" → "memo"
+/// - "AdminUserSchema" → "adminuser"
+fn derive_hint_prefix(hint: &str) -> String {
+    let hint_lower = hint.to_lowercase();
+    let prefix = hint_lower
+        .strip_suffix("schema")
+        .or_else(|| hint_lower.strip_suffix("response"))
+        .or_else(|| hint_lower.strip_suffix("request"))
+        .unwrap_or(&hint_lower);
+    prefix.replace('_', "")
 }
 
 /// Recursively collect all `.rs` files in a directory.
@@ -320,7 +418,7 @@ pub fn find_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
             continue;
         }
 
-        let file_ast = try_read_and_parse_file(&file_path)?;
+        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
 
         // Look for the struct in the file
         for item in &file_ast.items {
@@ -387,7 +485,7 @@ pub fn find_fk_column_from_target_entity(
             continue;
         }
 
-        let file_ast = try_read_and_parse_file(&file_path)?;
+        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
 
         // Look for Model struct in the file
         for item in &file_ast.items {
@@ -453,7 +551,7 @@ pub fn find_model_from_schema_path(schema_path_str: &str) -> Option<StructMetada
             continue;
         }
 
-        let file_ast = try_read_and_parse_file(&file_path)?;
+        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
 
         // Look for Model struct in the file
         for item in &file_ast.items {

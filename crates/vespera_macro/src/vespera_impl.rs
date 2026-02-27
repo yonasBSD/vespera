@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// Docs info tuple type alias for cleaner signatures
-pub type DocsInfo = (Option<(String, String)>, Option<(String, String)>);
+pub type DocsInfo = (Option<String>, Option<String>, Option<String>);
 
 /// Generate `OpenAPI` JSON and write to files, returning docs info
 pub fn generate_and_write_openapi(
@@ -49,7 +49,7 @@ pub fn generate_and_write_openapi(
 ) -> MacroResult<DocsInfo> {
     if input.openapi_file_names.is_empty() && input.docs_url.is_none() && input.redoc_url.is_none()
     {
-        return Ok((None, None));
+        return Ok((None, None, None));
     }
 
     let mut openapi_doc = generate_openapi_doc_with_metadata(
@@ -94,13 +94,13 @@ pub fn generate_and_write_openapi(
         std::fs::write(file_path, &json_str).map_err(|e| err_call_site(format!("OpenAPI output: failed to write file '{openapi_file_name}'. Error: {e}. Ensure the file path is writable.")))?;
     }
 
-    let docs_info = input
-        .docs_url
-        .as_ref()
-        .map(|url| (url.clone(), json_str.clone()));
-    let redoc_info = input.redoc_url.as_ref().map(|url| (url.clone(), json_str));
+    let spec_json = if input.docs_url.is_some() || input.redoc_url.is_some() {
+        Some(json_str)
+    } else {
+        None
+    };
 
-    Ok((docs_info, redoc_info))
+    Ok((input.docs_url.clone(), input.redoc_url.clone(), spec_json))
 }
 
 /// Find the folder path for route scanning
@@ -157,6 +157,12 @@ pub fn process_vespera_macro(
     processed: &ProcessedVesperaInput,
     schema_storage: &HashMap<String, StructMetadata>,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    let profile_start = if std::env::var("VESPERA_PROFILE").is_ok() {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
     let folder_path = find_folder_path(&processed.folder_name)?;
     if !folder_path.exists() {
         return Err(syn::Error::new(
@@ -171,14 +177,26 @@ pub fn process_vespera_macro(
     let (mut metadata, file_asts) = collect_metadata(&folder_path, &processed.folder_name).map_err(|e| syn::Error::new(Span::call_site(), format!("vespera! macro: failed to scan route folder '{}'. Error: {}. Check that all .rs files have valid Rust syntax.", processed.folder_name, e)))?;
     metadata.structs.extend(schema_storage.values().cloned());
 
-    let (docs_info, redoc_info) = generate_and_write_openapi(processed, &metadata, file_asts)?;
+    let (docs_url, redoc_url, spec_json) =
+        generate_and_write_openapi(processed, &metadata, file_asts)?;
 
-    Ok(generate_router_code(
+    let result = Ok(generate_router_code(
         &metadata,
-        docs_info,
-        redoc_info,
+        docs_url.as_deref(),
+        redoc_url.as_deref(),
+        spec_json.as_deref(),
         &processed.merge,
-    ))
+    ));
+
+    if let Some(start) = profile_start {
+        eprintln!(
+            "[vespera-profile] vespera! macro total: {:?}",
+            start.elapsed()
+        );
+        crate::schema_macro::print_profile_summary();
+    }
+
+    result
 }
 
 /// Process `export_app` macro - extracted for testability
@@ -188,12 +206,18 @@ pub fn process_export_app(
     schema_storage: &HashMap<String, StructMetadata>,
     manifest_dir: &str,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    let profile_start = if std::env::var("VESPERA_PROFILE").is_ok() {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
     let folder_path = find_folder_path(folder_name)?;
     if !folder_path.exists() {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(
-                "export_app! macro: route folder '{folder_name}' not found. Create src/{folder_name} or specify a different folder with `dir = \"your_folder\"`."
+                "export_app! macro: route folder '{folder_name}' not found. Create src/{folder_name} or specify a different folder with `dir = \"your_folder\"`.",
             ),
         ));
     }
@@ -216,9 +240,9 @@ pub fn process_export_app(
     std::fs::write(&spec_file, &spec_json).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to write OpenAPI spec file '{}'. Error: {}. Ensure the file path is writable.", spec_file.display(), e)))?;
 
     // Generate router code (without docs routes, no merge)
-    let router_code = generate_router_code(&metadata, None, None, &[]);
+    let router_code = generate_router_code(&metadata, None, None, None, &[]);
 
-    Ok(quote! {
+    let result = Ok(quote! {
         /// Auto-generated vespera app struct
         pub struct #name;
 
@@ -232,7 +256,17 @@ pub fn process_export_app(
                 #router_code
             }
         }
-    })
+    });
+
+    if let Some(start) = profile_start {
+        eprintln!(
+            "[vespera-profile] export_app! macro total: {:?}",
+            start.elapsed()
+        );
+        crate::schema_macro::print_profile_summary();
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -269,9 +303,10 @@ mod tests {
         let metadata = CollectedMetadata::new();
         let result = generate_and_write_openapi(&processed, &metadata, HashMap::new());
         assert!(result.is_ok());
-        let (docs_info, redoc_info) = result.unwrap();
-        assert!(docs_info.is_none());
-        assert!(redoc_info.is_none());
+        let (docs_url, redoc_url, spec_json) = result.unwrap();
+        assert!(docs_url.is_none());
+        assert!(redoc_url.is_none());
+        assert!(spec_json.is_none());
     }
 
     #[test]
@@ -289,13 +324,14 @@ mod tests {
         let metadata = CollectedMetadata::new();
         let result = generate_and_write_openapi(&processed, &metadata, HashMap::new());
         assert!(result.is_ok());
-        let (docs_info, redoc_info) = result.unwrap();
-        assert!(docs_info.is_some());
-        let (url, json) = docs_info.unwrap();
-        assert_eq!(url, "/docs");
+        let (docs_url, redoc_url, spec_json) = result.unwrap();
+        assert!(docs_url.is_some());
+        assert_eq!(docs_url.unwrap(), "/docs");
+        assert!(spec_json.is_some());
+        let json = spec_json.unwrap();
         assert!(json.contains("\"openapi\""));
         assert!(json.contains("Test API"));
-        assert!(redoc_info.is_none());
+        assert!(redoc_url.is_none());
     }
 
     #[test]
@@ -313,11 +349,11 @@ mod tests {
         let metadata = CollectedMetadata::new();
         let result = generate_and_write_openapi(&processed, &metadata, HashMap::new());
         assert!(result.is_ok());
-        let (docs_info, redoc_info) = result.unwrap();
-        assert!(docs_info.is_none());
-        assert!(redoc_info.is_some());
-        let (url, _) = redoc_info.unwrap();
-        assert_eq!(url, "/redoc");
+        let (docs_url, redoc_url, spec_json) = result.unwrap();
+        assert!(docs_url.is_none());
+        assert!(redoc_url.is_some());
+        assert_eq!(redoc_url.unwrap(), "/redoc");
+        assert!(spec_json.is_some());
     }
 
     #[test]
@@ -335,9 +371,10 @@ mod tests {
         let metadata = CollectedMetadata::new();
         let result = generate_and_write_openapi(&processed, &metadata, HashMap::new());
         assert!(result.is_ok());
-        let (docs_info, redoc_info) = result.unwrap();
-        assert!(docs_info.is_some());
-        assert!(redoc_info.is_some());
+        let (docs_url, redoc_url, spec_json) = result.unwrap();
+        assert!(docs_url.is_some());
+        assert!(redoc_url.is_some());
+        assert!(spec_json.is_some());
     }
 
     #[test]

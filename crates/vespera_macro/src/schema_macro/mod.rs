@@ -6,6 +6,7 @@
 
 mod circular;
 mod codegen;
+mod file_cache;
 mod file_lookup;
 mod from_model;
 mod inline_types;
@@ -14,6 +15,8 @@ mod seaorm;
 mod transformation;
 pub mod type_utils;
 mod validation;
+
+pub use file_cache::print_profile_summary;
 
 use std::collections::{HashMap, HashSet};
 
@@ -63,12 +66,13 @@ pub fn generate_schema_code(
     let struct_def = schema_storage.get(&type_name).ok_or_else(|| syn::Error::new_spanned(&input.ty, format!("type `{type_name}` not found. Make sure it has #[derive(Schema)] before this macro invocation")))?;
 
     // Parse the struct definition
-    let parsed_struct: syn::ItemStruct = syn::parse_str(&struct_def.definition).map_err(|e| {
-        syn::Error::new_spanned(
-            &input.ty,
-            format!("failed to parse struct definition for `{type_name}`: {e}"),
-        )
-    })?;
+    let parsed_struct: syn::ItemStruct = file_cache::parse_struct_cached(&struct_def.definition)
+        .map_err(|e| {
+            syn::Error::new_spanned(
+                &input.ty,
+                format!("failed to parse struct definition for `{type_name}`: {e}"),
+            )
+        })?;
 
     // Build omit set
     let omit_set: HashSet<String> = input.omit.clone().unwrap_or_default().into_iter().collect();
@@ -153,12 +157,13 @@ pub fn generate_schema_type_code(
     };
 
     // Parse the struct definition
-    let parsed_struct: syn::ItemStruct = syn::parse_str(&struct_def.definition).map_err(|e| {
-        syn::Error::new_spanned(
-            &input.source_type,
-            format!("failed to parse struct definition for `{source_type_name}`: {e}"),
-        )
-    })?;
+    let parsed_struct: syn::ItemStruct = file_cache::parse_struct_cached(&struct_def.definition)
+        .map_err(|e| {
+            syn::Error::new_spanned(
+                &input.source_type,
+                format!("failed to parse struct definition for `{source_type_name}`: {e}"),
+            )
+        })?;
 
     // Extract all field names from source struct for validation
     // Include relation fields since they can be converted to Schema types

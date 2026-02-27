@@ -1,0 +1,304 @@
+//! Thread-local cache for file lookups to avoid redundant I/O and parsing.
+//!
+//! Within a single compilation, multiple `schema_type!` invocations may search
+//! for structs in the same files. This module caches:
+//! - The list of `.rs` files per source directory
+//! - File contents with mtime-based invalidation
+//! - Struct name → candidate file paths (cheap text-based pre-filter)
+//!
+//! Uses `thread_local!` because `syn::File` (and proc-macro types within it)
+//! are not `Send`/`Sync`, and proc-macros run single-threaded anyway.
+//! The mtime check handles rust-analyzer's proc-macro server, which may persist
+//! across file edits.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use super::file_lookup::collect_rs_files_recursive;
+
+/// Internal cache state.
+struct FileCache {
+    /// Cached `.rs` file lists per source directory.
+    file_lists: HashMap<PathBuf, Vec<PathBuf>>,
+
+    /// Cached file contents: file path → (mtime, content string).
+    /// Mtime is checked to invalidate stale entries in long-lived processes.
+    file_contents: HashMap<PathBuf, (SystemTime, String)>,
+
+    /// Struct name candidate index: (src_dir, struct_name) → files containing that name.
+    /// Built from cheap `String::contains` search, not full parsing.
+    struct_candidates: HashMap<(PathBuf, String), Vec<PathBuf>>,
+
+    // NOTE: We intentionally do NOT cache parsed `syn::ItemStruct` here.
+    // `syn` types contain `proc_macro::Span` handles that are tied to a specific
+    // macro invocation context. Caching them across invocations causes
+    // "use-after-free in `proc_macro` handle" panics.
+
+    // --- Profiling counters (zero-cost when VESPERA_PROFILE is not set) ---
+    /// Number of file content reads from disk (cache miss).
+    file_disk_reads: usize,
+    /// Number of file content cache hits.
+    content_cache_hits: usize,
+    /// Number of struct definitions parsed via syn::parse_str.
+    struct_parses: usize,
+    /// Number of full-file AST parses via syn::parse_file.
+    ast_parses: usize,
+}
+
+thread_local! {
+    static FILE_CACHE: RefCell<FileCache> = RefCell::new(FileCache {
+        file_lists: HashMap::new(),
+        file_contents: HashMap::new(),
+        struct_candidates: HashMap::new(),
+        file_disk_reads: 0,
+        content_cache_hits: 0,
+        struct_parses: 0,
+        ast_parses: 0,
+    });
+}
+
+/// Get the list of `.rs` files in `src_dir`, using cache when available.
+///
+/// On first call for a given `src_dir`, performs a recursive filesystem walk
+/// and caches the result. Subsequent calls return the cached list.
+#[allow(dead_code)] // Part of cache public API; used in tests
+pub fn get_rs_files(src_dir: &Path) -> Vec<PathBuf> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+
+        if let Some(files) = cache.file_lists.get(src_dir) {
+            return files.clone();
+        }
+
+        let mut files = Vec::new();
+        collect_rs_files_recursive(src_dir, &mut files);
+        cache
+            .file_lists
+            .insert(src_dir.to_path_buf(), files.clone());
+        files
+    })
+}
+
+/// Get candidate files that likely contain `struct_name`, using cache when available.
+///
+/// Performs a cheap text-based search (`String::contains`) on file contents.
+/// False positives are acceptable (struct name in comments/strings), but false
+/// negatives are not. Results are cached per `(src_dir, struct_name)` pair.
+pub fn get_struct_candidates(src_dir: &Path, struct_name: &str) -> Vec<PathBuf> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let key = (src_dir.to_path_buf(), struct_name.to_string());
+
+        if let Some(candidates) = cache.struct_candidates.get(&key) {
+            return candidates.clone();
+        }
+
+        // Ensure file list is cached
+        let files = if let Some(files) = cache.file_lists.get(src_dir) {
+            files.clone()
+        } else {
+            let mut files = Vec::new();
+            collect_rs_files_recursive(src_dir, &mut files);
+            cache
+                .file_lists
+                .insert(src_dir.to_path_buf(), files.clone());
+            files
+        };
+
+        // Filter using cheap text search, caching file contents along the way
+        let candidates: Vec<PathBuf> = files
+            .into_iter()
+            .filter(|path| {
+                let content = get_file_content_inner(&mut cache, path);
+                content.is_some_and(|c| c.contains(struct_name))
+            })
+            .collect();
+
+        cache.struct_candidates.insert(key, candidates.clone());
+        candidates
+    })
+}
+
+/// Get a parsed `syn::File` for the given path, using cached file content.
+///
+/// File content is cached with mtime-based invalidation. Parsing always runs
+/// (syn types aren't Send), but I/O is avoided on cache hits.
+/// Returns `None` if the file cannot be read or parsed.
+pub fn get_parsed_ast(path: &Path) -> Option<syn::File> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let content = get_file_content_inner(&mut cache, path)?;
+        cache.ast_parses += 1;
+        syn::parse_file(&content).ok()
+    })
+}
+
+/// Internal helper: get file content from cache or read from disk.
+/// Checks mtime for invalidation.
+fn get_file_content_inner(cache: &mut FileCache, path: &Path) -> Option<String> {
+    let current_mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+
+    if let Some(mtime) = current_mtime
+        && let Some((cached_mtime, content)) = cache.file_contents.get(path)
+        && *cached_mtime == mtime
+    {
+        cache.content_cache_hits += 1;
+        return Some(content.clone());
+    }
+
+    // Cache miss or stale — read and cache
+    let content = std::fs::read_to_string(path).ok()?;
+    cache.file_disk_reads += 1;
+
+    if let Some(mtime) = current_mtime {
+        cache
+            .file_contents
+            .insert(path.to_path_buf(), (mtime, content.clone()));
+    }
+
+    Some(content)
+}
+
+/// Parse a struct definition string via `syn::parse_str`.
+///
+/// NOTE: Results are NOT cached across calls. `syn::ItemStruct` contains
+/// `proc_macro::Span` handles that are tied to a specific macro invocation
+/// context — caching them causes "use-after-free" panics in the proc_macro bridge.
+/// File I/O caching (via `get_parsed_ast`) is the primary performance win;
+/// definition string parsing is fast (microseconds per struct).
+pub fn parse_struct_cached(definition: &str) -> Result<syn::ItemStruct, syn::Error> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.struct_parses += 1;
+        syn::parse_str(definition)
+    })
+}
+
+/// Print profiling summary to stderr if `VESPERA_PROFILE` env var is set.
+///
+/// Call this at the end of macro execution to output cache statistics.
+/// Silent by default — only outputs when `VESPERA_PROFILE=1`.
+pub fn print_profile_summary() {
+    if std::env::var("VESPERA_PROFILE").is_err() {
+        return;
+    }
+
+    FILE_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        eprintln!("[vespera-profile] File cache stats:");
+        eprintln!(
+            "  file I/O: {} disk reads, {} cache hits",
+            cache.file_disk_reads, cache.content_cache_hits
+        );
+        eprintln!("  struct parses: {}", cache.struct_parses);
+        eprintln!("  AST parses: {}", cache.ast_parses);
+        eprintln!(
+            "  cache entries: {} file lists, {} file contents, {} struct candidates",
+            cache.file_lists.len(),
+            cache.file_contents.len(),
+            cache.struct_candidates.len()
+        );
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn test_get_rs_files_caches_result() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
+        std::fs::create_dir(src_dir.join("models")).unwrap();
+        std::fs::write(
+            src_dir.join("models").join("user.rs"),
+            "pub struct User { pub id: i32 }",
+        )
+        .unwrap();
+
+        let files1 = get_rs_files(src_dir);
+        let files2 = get_rs_files(src_dir);
+        assert_eq!(files1.len(), 2);
+        assert_eq!(files1, files2, "Cached result should be identical");
+    }
+
+    #[test]
+    fn test_get_struct_candidates_filters_correctly() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::write(
+            src_dir.join("has_model.rs"),
+            "pub struct Model { pub id: i32 }",
+        )
+        .unwrap();
+        std::fs::write(
+            src_dir.join("no_model.rs"),
+            "pub struct Other { pub x: i32 }",
+        )
+        .unwrap();
+
+        let candidates = get_struct_candidates(src_dir, "Model");
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].ends_with("has_model.rs"));
+    }
+
+    #[test]
+    fn test_get_parsed_ast_returns_valid_ast() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        std::fs::write(&file_path, "pub struct Foo { pub x: i32 }").unwrap();
+
+        let ast = get_parsed_ast(&file_path);
+        assert!(ast.is_some());
+        assert!(!ast.unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn test_get_parsed_ast_caches_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("cached.rs");
+        std::fs::write(&file_path, "pub struct Bar;").unwrap();
+
+        let ast1 = get_parsed_ast(&file_path);
+        let ast2 = get_parsed_ast(&file_path);
+        assert!(ast1.is_some());
+        assert!(ast2.is_some());
+    }
+
+    #[test]
+    fn test_get_parsed_ast_returns_none_for_invalid() {
+        let result = get_parsed_ast(Path::new("/nonexistent/path.rs"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_parsed_ast_returns_none_for_unparseable() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("broken.rs");
+        std::fs::write(&file_path, "this is not valid rust {{{{").unwrap();
+
+        let result = get_parsed_ast(&file_path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_struct_candidates_caches_result() {
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path();
+
+        std::fs::write(src_dir.join("file.rs"), "pub struct Target { pub id: i32 }").unwrap();
+
+        let c1 = get_struct_candidates(src_dir, "Target");
+        let c2 = get_struct_candidates(src_dir, "Target");
+        assert_eq!(c1, c2, "Cached candidates should be identical");
+    }
+}

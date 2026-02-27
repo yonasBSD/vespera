@@ -37,7 +37,7 @@ pub struct CircularAnalysis {
 /// Parses the definition string once and extracts all circular reference
 /// information in a single field walk.
 pub fn analyze_circular_refs(source_module_path: &[String], definition: &str) -> CircularAnalysis {
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(definition) else {
+    let Ok(parsed) = super::file_cache::parse_struct_cached(definition) else {
         return CircularAnalysis {
             circular_fields: Vec::new(),
             has_fk_relations: false,
@@ -165,7 +165,7 @@ pub fn generate_inline_struct_construction(
     var_name: &str,
 ) -> TokenStream {
     // Parse the related schema definition
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_schema_def) else {
+    let Ok(parsed) = super::file_cache::parse_struct_cached(related_schema_def) else {
         // Fallback to From::from if parsing fails
         let var_ident = syn::Ident::new(var_name, proc_macro2::Span::call_site());
         return quote! { <#schema_path as From<_>>::from(#var_ident) };
@@ -233,7 +233,7 @@ pub fn generate_inline_type_construction(
     var_name: &str,
 ) -> TokenStream {
     // Parse the related model definition
-    let Ok(parsed) = syn::parse_str::<syn::ItemStruct>(related_model_def) else {
+    let Ok(parsed) = super::file_cache::parse_struct_cached(related_model_def) else {
         // Fallback to Default if parsing fails
         return quote! { Default::default() };
     };

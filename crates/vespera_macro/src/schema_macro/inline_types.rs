@@ -69,7 +69,7 @@ pub fn generate_inline_relation_type_from_def(
     model_def: &str,
 ) -> Option<InlineRelationType> {
     // Parse the model struct
-    let parsed_model: syn::ItemStruct = syn::parse_str(model_def).ok()?;
+    let parsed_model: syn::ItemStruct = super::file_cache::parse_struct_cached(model_def).ok()?;
 
     // IMPORTANT: Use the TARGET model's module path for type resolution, not the parent's.
     // This ensures enum types like `AuthProvider` are resolved to `crate::models::user::AuthProvider`
@@ -191,7 +191,7 @@ pub fn generate_inline_relation_type_no_relations_from_def(
     model_def: &str,
 ) -> Option<InlineRelationType> {
     // Parse the model struct
-    let parsed_model: syn::ItemStruct = syn::parse_str(model_def).ok()?;
+    let parsed_model: syn::ItemStruct = super::file_cache::parse_struct_cached(model_def).ok()?;
 
     // IMPORTANT: Use the TARGET model's module path for type resolution, not the parent's.
     // This ensures enum types like `StoryStatus` are resolved to `crate::models::story::StoryStatus`
