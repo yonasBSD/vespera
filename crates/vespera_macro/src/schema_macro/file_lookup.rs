@@ -52,8 +52,8 @@ pub fn find_struct_from_path(
     ty: &Type,
     schema_name_hint: Option<&str>,
 ) -> Option<(StructMetadata, Vec<String>)> {
-    // Get CARGO_MANIFEST_DIR to locate src folder
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    // Get CARGO_MANIFEST_DIR to locate src folder (cached to avoid repeated syscalls)
+    let manifest_dir = super::file_cache::get_manifest_dir()?;
     let src_dir = Path::new(&manifest_dir).join("src");
 
     // Extract path segments from the type
@@ -392,8 +392,8 @@ pub fn file_path_to_module_path(file_path: &Path, src_dir: &Path) -> Vec<String>
 ///
 /// Similar to `find_struct_from_path` but takes a string path instead of `syn::Type`.
 pub fn find_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
-    // Get CARGO_MANIFEST_DIR to locate src folder
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    // Get CARGO_MANIFEST_DIR to locate src folder (cached to avoid repeated syscalls)
+    let manifest_dir = super::file_cache::get_manifest_dir()?;
     let src_dir = Path::new(&manifest_dir).join("src");
 
     // Parse the path string into segments
@@ -460,8 +460,8 @@ pub fn find_fk_column_from_target_entity(
 ) -> Option<String> {
     use crate::schema_macro::seaorm::{extract_belongs_to_from_field, extract_relation_enum};
 
-    // Get CARGO_MANIFEST_DIR to locate src folder
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    // Get CARGO_MANIFEST_DIR to locate src folder (cached to avoid repeated syscalls)
+    let manifest_dir = super::file_cache::get_manifest_dir()?;
     let src_dir = Path::new(&manifest_dir).join("src");
 
     // Parse the schema path to get file path
@@ -518,8 +518,8 @@ pub fn find_fk_column_from_target_entity(
 /// Converts "`crate::models::user::Schema`" -> finds Model in src/models/user.rs
 #[allow(clippy::too_many_lines)]
 pub fn find_model_from_schema_path(schema_path_str: &str) -> Option<StructMetadata> {
-    // Get CARGO_MANIFEST_DIR to locate src folder
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    // Get CARGO_MANIFEST_DIR to locate src folder (cached to avoid repeated syscalls)
+    let manifest_dir = super::file_cache::get_manifest_dir()?;
     let src_dir = Path::new(&manifest_dir).join("src");
 
     // Parse the path string and convert Schema path to module path

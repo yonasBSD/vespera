@@ -58,6 +58,9 @@ struct FileCache {
     fk_column_lookup: HashMap<(String, String), Option<String>>,
     /// Cached module path extraction from schema paths: path_str → Vec<module segments>.
     module_path_cache: HashMap<String, Vec<String>>,
+    /// Cached CARGO_MANIFEST_DIR value to avoid repeated syscalls.
+    /// Within a single compilation, this never changes.
+    manifest_dir: Option<String>,
 
     // --- Phase 4 profiling counters ---
     circular_cache_hits: usize,
@@ -68,22 +71,39 @@ struct FileCache {
 
 thread_local! {
     static FILE_CACHE: RefCell<FileCache> = RefCell::new(FileCache {
-        file_lists: HashMap::new(),
-        file_contents: HashMap::new(),
-        struct_candidates: HashMap::new(),
+        file_lists: HashMap::with_capacity(4),
+        file_contents: HashMap::with_capacity(32),
+        struct_candidates: HashMap::with_capacity(32),
         file_disk_reads: 0,
         content_cache_hits: 0,
         struct_parses: 0,
         ast_parses: 0,
-        circular_analysis: HashMap::new(),
-        struct_lookup: HashMap::new(),
-        fk_column_lookup: HashMap::new(),
-        module_path_cache: HashMap::new(),
+        circular_analysis: HashMap::with_capacity(16),
+        struct_lookup: HashMap::with_capacity(32),
+        fk_column_lookup: HashMap::with_capacity(16),
+        module_path_cache: HashMap::with_capacity(32),
+        manifest_dir: None,
         circular_cache_hits: 0,
         struct_lookup_cache_hits: 0,
         fk_column_cache_hits: 0,
         module_path_cache_hits: 0,
     });
+}
+
+/// Get `CARGO_MANIFEST_DIR` from cache, or read from env and cache.
+///
+/// Within a single compilation, this value never changes. Caching avoids
+/// repeated syscalls (previously 20+ calls per `schema_type!` expansion).
+pub fn get_manifest_dir() -> Option<String> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(ref dir) = cache.manifest_dir {
+            return Some(dir.clone());
+        }
+        let dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+        cache.manifest_dir.clone_from(&dir);
+        dir
+    })
 }
 
 /// Get candidate files that likely contain `struct_name`, using cache when available.
