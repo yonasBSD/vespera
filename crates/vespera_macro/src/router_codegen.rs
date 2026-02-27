@@ -477,22 +477,22 @@ pub fn generate_router_code(
     // Check if we need to merge specs at runtime
     let has_merge = !merge_apps.is_empty();
 
+    // Generate merge code once, reuse in both docs_url and redoc_url routes
+    let merge_spec_code: Vec<_> = merge_apps
+        .iter()
+        .map(|app_path| {
+            quote! {
+                if let Ok(other) = vespera::serde_json::from_str::<vespera::OpenApi>(#app_path::OPENAPI_SPEC) {
+                    merged.merge(other);
+                }
+            }
+        })
+        .collect();
+
     if let Some(docs_url) = docs_url {
         let method_path = http_method_to_token_stream(HttpMethod::Get);
 
         if has_merge {
-            // Generate code that merges specs at runtime using OnceLock
-            let merge_spec_code: Vec<_> = merge_apps
-                .iter()
-                .map(|app_path| {
-                    quote! {
-                        if let Ok(other) = vespera::serde_json::from_str::<vespera::OpenApi>(#app_path::OPENAPI_SPEC) {
-                            merged.merge(other);
-                        }
-                    }
-                })
-                .collect();
-
             router_nests.push(quote!(
                 .route(#docs_url, #method_path(|| async {
                     static MERGED_SPEC: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -531,18 +531,6 @@ pub fn generate_router_code(
         let method_path = http_method_to_token_stream(HttpMethod::Get);
 
         if has_merge {
-            // Generate code that merges specs at runtime using OnceLock
-            let merge_spec_code: Vec<_> = merge_apps
-                .iter()
-                .map(|app_path| {
-                    quote! {
-                        if let Ok(other) = vespera::serde_json::from_str::<vespera::OpenApi>(#app_path::OPENAPI_SPEC) {
-                            merged.merge(other);
-                        }
-                    }
-                })
-                .collect();
-
             router_nests.push(quote!(
                 .route(#redoc_url, #method_path(|| async {
                     static MERGED_SPEC: std::sync::OnceLock<String> = std::sync::OnceLock::new();
