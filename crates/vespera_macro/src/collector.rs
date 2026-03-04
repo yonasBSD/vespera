@@ -1080,4 +1080,32 @@ pub async fn list_users() -> String {
 
         drop(temp_dir);
     }
+
+    #[test]
+    fn test_collect_file_fingerprints_skips_non_rs_files() {
+        // Exercises line 121: non-.rs files should be skipped
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create both .rs and non-.rs files
+        create_temp_file(&temp_dir, "valid.rs", "pub fn hello() {}");
+        create_temp_file(&temp_dir, "readme.txt", "This is a readme");
+        create_temp_file(&temp_dir, "data.json", "{}");
+        create_temp_file(&temp_dir, "script.py", "print('hello')");
+
+        let fingerprints = collect_file_fingerprints(temp_dir.path()).unwrap();
+
+        // Only .rs files should be in fingerprints
+        assert_eq!(
+            fingerprints.len(),
+            1,
+            "Only .rs files should be fingerprinted"
+        );
+        let keys: Vec<&String> = fingerprints.keys().collect();
+        assert!(
+            keys[0].ends_with("valid.rs"),
+            "The only fingerprinted file should be valid.rs"
+        );
+
+        drop(temp_dir);
+    }
 }

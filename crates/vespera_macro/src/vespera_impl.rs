@@ -1661,4 +1661,64 @@ mod tests {
         assert_eq!(fs::read_to_string(&path1).unwrap(), spec);
         assert_eq!(fs::read_to_string(&path2).unwrap(), spec);
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_process_vespera_macro_cache_hit() {
+        // Exercises lines 320-324, 327, 329: the cache_hit branch in process_vespera_macro.
+        // First call populates the cache, second call hits it.
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        create_temp_file(
+            &temp_dir,
+            "users.rs",
+            "pub async fn list_users() -> String { \"users\".to_string() }\n",
+        );
+
+        let folder_path = temp_dir.path().to_string_lossy().to_string();
+        let openapi_path = temp_dir.path().join("openapi.json");
+
+        // Set CARGO_MANIFEST_DIR so cache path resolves to temp_dir/target/vespera/
+        let old_manifest = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        let processed = ProcessedVesperaInput {
+            folder_name: folder_path.clone(),
+            openapi_file_names: vec![openapi_path.to_string_lossy().to_string()],
+            title: Some("Test API".to_string()),
+            version: Some("1.0.0".to_string()),
+            docs_url: Some("/docs".to_string()),
+            redoc_url: None,
+            servers: None,
+            merge: vec![],
+        };
+
+        // First call: cache MISS — scans files, generates spec, writes cache
+        let result1 = process_vespera_macro(&processed, &HashMap::new(), &[]);
+        assert!(
+            result1.is_ok(),
+            "First call (cache miss) should succeed: {:?}",
+            result1.err()
+        );
+        assert!(
+            openapi_path.exists(),
+            "openapi.json should be written on first call"
+        );
+
+        // Second call: cache HIT — exercises lines 320-324, 327, 329
+        let result2 = process_vespera_macro(&processed, &HashMap::new(), &[]);
+        assert!(
+            result2.is_ok(),
+            "Second call (cache hit) should succeed: {:?}",
+            result2.err()
+        );
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(val) = old_manifest {
+                std::env::set_var("CARGO_MANIFEST_DIR", val);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        };
+    }
 }

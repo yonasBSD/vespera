@@ -32,6 +32,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    path::Path,
     sync::{LazyLock, Mutex},
 };
 
@@ -80,10 +81,24 @@ pub fn process_derive_schema(
 }
 
 /// Extract default values from `#[serde(default = "fn_name")]` attributes.
-/// Uses `Span::call_site().local_file()` to read the struct's source file
-/// and find the default functions. Only parses the file if at least one field
-/// has a function-based default.
+/// Thin wrapper that obtains the source file path from `Span::call_site()`
+/// and delegates to [`extract_field_defaults_from_path`].
 fn extract_field_defaults(input: &syn::DeriveInput) -> BTreeMap<String, serde_json::Value> {
+    let Some(file_path) = proc_macro2::Span::call_site().local_file() else {
+        return BTreeMap::new();
+    };
+    extract_field_defaults_from_path(input, &file_path)
+}
+
+/// Extract default values from `#[serde(default = "fn_name")]` attributes
+/// using the given source file path.
+///
+/// Separated from [`extract_field_defaults`] for testability: `Span::call_site().local_file()`
+/// returns `None` in unit tests, so this function accepts the path directly.
+pub fn extract_field_defaults_from_path(
+    input: &syn::DeriveInput,
+    file_path: &Path,
+) -> BTreeMap<String, serde_json::Value> {
     let mut defaults = BTreeMap::new();
 
     let fields = match &input.data {
@@ -116,13 +131,8 @@ fn extract_field_defaults(input: &syn::DeriveInput) -> BTreeMap<String, serde_js
         return defaults;
     }
 
-    // Get file path from span
-    let Some(file_path) = proc_macro2::Span::call_site().local_file() else {
-        return defaults;
-    };
-
     // Read and parse the file (cached via FileCache parsed_file_asts)
-    let Some(file_ast) = crate::schema_macro::file_cache::get_parsed_file(&file_path) else {
+    let Some(file_ast) = crate::schema_macro::file_cache::get_parsed_file(file_path) else {
         return defaults;
     };
 
@@ -570,5 +580,99 @@ mod tests {
             let mut storage = SCHEMA_STORAGE.lock().unwrap();
             storage.remove(&key);
         }
+    }
+
+    #[test]
+    fn test_extract_field_defaults_from_path_with_default_fn() {
+        // Exercises lines 125-133 (was 118-119, 123-124 before refactor):
+        // get_parsed_file succeeds and extract_defaults_from_file runs.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("defaults.rs");
+        std::fs::write(
+            &file_path,
+            r#"
+fn default_status() -> String {
+    "active".to_string()
+}
+
+struct Config {
+    #[serde(default = "default_status")]
+    status: String,
+}
+"#,
+        )
+        .unwrap();
+
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct Config {
+                #[serde(default = "default_status")]
+                status: String,
+            }
+        };
+
+        let defaults = extract_field_defaults_from_path(&input, &file_path);
+        // The function should find default_status and extract its return value
+        assert!(
+            defaults.contains_key("status"),
+            "Should extract default for 'status' field"
+        );
+    }
+
+    #[test]
+    fn test_extract_field_defaults_from_path_file_not_found() {
+        // Exercises the else branch: get_parsed_file returns None for non-existent file
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct Config {
+                #[serde(default = "default_val")]
+                value: String,
+            }
+        };
+
+        let defaults =
+            extract_field_defaults_from_path(&input, Path::new("/nonexistent/path/foo.rs"));
+        assert!(
+            defaults.is_empty(),
+            "Should return empty defaults when file not found"
+        );
+    }
+
+    #[test]
+    fn test_extract_field_defaults_from_path_no_fn_defaults() {
+        // Exercises the early return: fn_defaults is empty
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("simple.rs");
+        std::fs::write(&file_path, "struct Foo { x: i32 }").unwrap();
+
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct Foo {
+                x: i32,
+            }
+        };
+
+        let defaults = extract_field_defaults_from_path(&input, &file_path);
+        assert!(defaults.is_empty(), "No serde defaults -> empty result");
+    }
+
+    #[test]
+    fn test_extract_field_defaults_from_path_tuple_struct() {
+        // Exercises line 101: Fields::Named else branch (tuple struct has unnamed fields)
+        let input: syn::DeriveInput = syn::parse_quote! {
+            struct Pair(String, i32);
+        };
+        let defaults = extract_field_defaults_from_path(&input, Path::new("/dummy.rs"));
+        assert!(
+            defaults.is_empty(),
+            "Tuple struct should return empty defaults"
+        );
+    }
+
+    #[test]
+    fn test_extract_field_defaults_from_path_enum() {
+        // Exercises line 103: Data::Struct else branch (enum)
+        let input: syn::DeriveInput = syn::parse_quote! {
+            enum Status { Active, Inactive }
+        };
+        let defaults = extract_field_defaults_from_path(&input, Path::new("/dummy.rs"));
+        assert!(defaults.is_empty(), "Enum should return empty defaults");
     }
 }

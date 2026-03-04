@@ -1601,4 +1601,47 @@ pub struct Model {
             "Should find the correct Model with email field"
         );
     }
+
+    #[test]
+    #[serial]
+    fn test_find_fk_column_parse_struct_cached_failure() {
+        // Exercises line 334: get_struct_definition succeeds but parse_struct_cached fails.
+        // We inject an invalid struct definition string into the cache so that
+        // parse_struct_cached returns Err, triggering the `continue` branch.
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let models_dir = src_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Create a real file so the file_path exists (candidate_file_paths will find it)
+        let model_file = models_dir.join("item.rs");
+        std::fs::write(&model_file, "pub struct Model { pub id: i32 }").unwrap();
+
+        // Inject a CORRUPT definition for "Model" at this path — syn::parse_str will fail
+        crate::schema_macro::file_cache::inject_struct_definition_for_test(
+            &model_file,
+            "Model",
+            "not valid rust {{ struct }}",
+        );
+
+        let original = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+        // This should trigger: get_struct_definition -> Some(corrupt) -> parse_struct_cached -> Err -> continue
+        let result =
+            find_fk_column_from_target_entity("crate::models::item::Schema", "SomeRelation");
+
+        unsafe {
+            if let Some(dir) = original {
+                std::env::set_var("CARGO_MANIFEST_DIR", dir);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+
+        assert!(
+            result.is_none(),
+            "Should return None when struct definition fails to parse"
+        );
+    }
 }

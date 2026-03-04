@@ -460,6 +460,27 @@ pub fn print_profile_summary() {
     });
 }
 
+/// Inject a fake struct definition into the cache for testing.
+/// Uses the file's real mtime so `ensure_struct_definitions` won't invalidate the cache.
+/// Enables tests to simulate scenarios where `get_struct_definition` succeeds
+/// but `parse_struct_cached` fails (defensive code path).
+#[cfg(test)]
+pub fn inject_struct_definition_for_test(path: &std::path::Path, name: &str, definition: &str) {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let mtime = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let entry = cache
+            .struct_definitions
+            .entry(path.to_path_buf())
+            .or_insert_with(|| (mtime, HashMap::new()));
+        entry.0 = mtime;
+        entry.1.insert(name.to_string(), definition.to_string());
+    });
+}
+
 #[cfg(test)]
 mod tests {
 
