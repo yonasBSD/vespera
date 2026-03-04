@@ -100,23 +100,11 @@ pub fn find_struct_from_path(
         if !file_path.exists() {
             continue;
         }
-
-        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
-
-        // Look for the struct in the file
-        for item in &file_ast.items {
-            match item {
-                syn::Item::Struct(struct_item) if struct_item.ident == struct_name => {
-                    return Some((
-                        StructMetadata::new_model(
-                            struct_name,
-                            quote::quote!(#struct_item).to_string(),
-                        ),
-                        type_module_path,
-                    ));
-                }
-                _ => {}
-            }
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name) {
+            return Some((
+                StructMetadata::new_model(struct_name, definition),
+                type_module_path,
+            ));
         }
     }
 
@@ -168,21 +156,11 @@ pub fn find_struct_by_name_in_all_files(
         // Parse only candidate files first
         let mut found_in_candidates: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
         for file_path in &candidates {
-            let Some(file_ast) = super::file_cache::get_parsed_ast(file_path) else {
-                continue;
-            };
-            for item in &file_ast.items {
-                if let syn::Item::Struct(struct_item) = item
-                    && struct_item.ident == struct_name
-                {
-                    found_in_candidates.push((
-                        file_path.clone(),
-                        StructMetadata::new_model(
-                            struct_name.to_string(),
-                            quote::quote!(#struct_item).to_string(),
-                        ),
-                    ));
-                }
+            if let Some(definition) = super::file_cache::get_struct_definition(file_path, struct_name) {
+                found_in_candidates.push((
+                    file_path.clone(),
+                    StructMetadata::new_model(struct_name.to_string(), definition),
+                ));
             }
         }
 
@@ -222,22 +200,11 @@ pub fn find_struct_by_name_in_all_files(
     let mut found_structs: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
 
     for file_path in rs_files {
-        let Some(file_ast) = super::file_cache::get_parsed_ast(&file_path) else {
-            continue;
-        };
-
-        for item in &file_ast.items {
-            if let syn::Item::Struct(struct_item) = item
-                && struct_item.ident == struct_name
-            {
-                found_structs.push((
-                    file_path.clone(),
-                    StructMetadata::new_model(
-                        struct_name.to_string(),
-                        quote::quote!(#struct_item).to_string(),
-                    ),
-                ));
-            }
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, struct_name) {
+            found_structs.push((
+                file_path.clone(),
+                StructMetadata::new_model(struct_name.to_string(), definition),
+            ));
         }
     }
 
@@ -366,20 +333,8 @@ pub fn find_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
         if !file_path.exists() {
             continue;
         }
-
-        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
-
-        // Look for the struct in the file
-        for item in &file_ast.items {
-            match item {
-                syn::Item::Struct(struct_item) if struct_item.ident == struct_name => {
-                    return Some(StructMetadata::new_model(
-                        struct_name,
-                        quote::quote!(#struct_item).to_string(),
-                    ));
-                }
-                _ => {}
-            }
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name) {
+            return Some(StructMetadata::new_model(struct_name, definition));
         }
     }
 
@@ -431,22 +386,20 @@ pub fn find_fk_column_from_target_entity(
             continue;
         }
 
-        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
+        let Some(model_def) = super::file_cache::get_struct_definition(&file_path, "Model") else {
+            continue;
+        };
+        let Ok(model) = super::file_cache::parse_struct_cached(&model_def) else {
+            continue;
+        };
 
-        // Look for Model struct in the file
-        for item in &file_ast.items {
-            if let syn::Item::Struct(struct_item) = item
-                && struct_item.ident == "Model"
-            {
-                // Search through fields for the one with matching relation_enum
-                if let syn::Fields::Named(fields_named) = &struct_item.fields {
-                    for field in &fields_named.named {
-                        let field_relation_enum = extract_relation_enum(&field.attrs);
-                        if field_relation_enum.as_deref() == Some(via_rel) {
-                            // Found the matching field, extract FK column from `from` attribute
-                            return extract_belongs_to_from_field(&field.attrs);
-                        }
-                    }
+        // Search through fields for the one with matching relation_enum
+        if let syn::Fields::Named(fields_named) = &model.fields {
+            for field in &fields_named.named {
+                let field_relation_enum = extract_relation_enum(&field.attrs);
+                if field_relation_enum.as_deref() == Some(via_rel) {
+                    // Found the matching field, extract FK column from `from` attribute
+                    return extract_belongs_to_from_field(&field.attrs);
                 }
             }
         }
@@ -493,19 +446,8 @@ pub fn find_model_from_schema_path(schema_path_str: &str) -> Option<StructMetada
         if !file_path.exists() {
             continue;
         }
-
-        let file_ast = super::file_cache::get_parsed_ast(&file_path)?;
-
-        // Look for Model struct in the file
-        for item in &file_ast.items {
-            if let syn::Item::Struct(struct_item) = item
-                && struct_item.ident == "Model"
-            {
-                return Some(StructMetadata::new_model(
-                    "Model".to_string(),
-                    quote::quote!(#struct_item).to_string(),
-                ));
-            }
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, "Model") {
+            return Some(StructMetadata::new_model("Model".to_string(), definition));
         }
     }
 

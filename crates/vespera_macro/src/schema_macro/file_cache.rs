@@ -33,10 +33,10 @@ struct FileCache {
     /// Built from cheap `String::contains` search, not full parsing.
     struct_candidates: HashMap<(PathBuf, String), Vec<PathBuf>>,
 
-    // NOTE: We intentionally do NOT cache parsed `syn::ItemStruct` here.
-    // `syn` types contain `proc_macro::Span` handles that are tied to a specific
-    // macro invocation context. Caching them across invocations causes
-    // "use-after-free in `proc_macro` handle" panics.
+    // NOTE: We do NOT cache `syn::ItemStruct` directly because `syn` types contain
+    // `proc_macro::Span` handles tied to a specific macro invocation context.
+    // Instead, `struct_definitions` caches extracted definition *strings* which have
+    // no Span handles and are safe to reuse across invocations.
 
     // --- Profiling counters (zero-cost when VESPERA_PROFILE is not set) ---
     /// Number of file content reads from disk (cache miss).
@@ -58,6 +58,9 @@ struct FileCache {
     fk_column_lookup: HashMap<(String, String), Option<String>>,
     /// Cached module path extraction from schema paths: path_str → Vec<module segments>.
     module_path_cache: HashMap<String, Vec<String>>,
+    /// Cached struct definitions from files: file_path → (mtime, struct_name → definition_string).
+    /// Unlike `syn::File`, strings have no `proc_macro::Span` handles, safe to cache.
+    struct_definitions: HashMap<PathBuf, (SystemTime, HashMap<String, String>)>,
     /// Cached CARGO_MANIFEST_DIR value to avoid repeated syscalls.
     /// Within a single compilation, this never changes.
     manifest_dir: Option<String>,
@@ -67,6 +70,7 @@ struct FileCache {
     struct_lookup_cache_hits: usize,
     fk_column_cache_hits: usize,
     module_path_cache_hits: usize,
+    struct_def_cache_hits: usize,
 }
 
 thread_local! {
@@ -87,6 +91,8 @@ thread_local! {
         struct_lookup_cache_hits: 0,
         fk_column_cache_hits: 0,
         module_path_cache_hits: 0,
+        struct_definitions: HashMap::with_capacity(32),
+        struct_def_cache_hits: 0,
     });
 }
 
@@ -157,6 +163,63 @@ pub fn get_parsed_ast(path: &Path) -> Option<syn::File> {
         let content = get_file_content_inner(&mut cache, path)?;
         cache.ast_parses += 1;
         syn::parse_file(&content).ok()
+    })
+}
+
+/// Ensure struct definitions are extracted and cached for the given file.
+/// On first call, parses the file and caches all struct definitions as strings.
+/// On subsequent calls, checks mtime to validate cache.
+fn ensure_struct_definitions(cache: &mut FileCache, path: &Path) -> bool {
+    let current_mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+
+    if let Some(mtime) = current_mtime
+        && let Some((cached_mtime, _)) = cache.struct_definitions.get(path)
+        && *cached_mtime == mtime
+    {
+        cache.struct_def_cache_hits += 1;
+        return true;
+    }
+
+    // Cache miss — parse file and extract all struct definitions
+    let Some(content) = get_file_content_inner(cache, path) else {
+        return false;
+    };
+    cache.ast_parses += 1;
+    let Ok(file_ast) = syn::parse_file(&content) else {
+        return false;
+    };
+
+    let mut defs = HashMap::new();
+    for item in &file_ast.items {
+        if let syn::Item::Struct(struct_item) = item {
+            let name = struct_item.ident.to_string();
+            let def = quote::quote!(#struct_item).to_string();
+            defs.insert(name, def);
+        }
+    }
+
+    if let Some(mtime) = current_mtime {
+        cache.struct_definitions.insert(path.to_path_buf(), (mtime, defs));
+    }
+
+    true
+}
+
+/// Get a struct definition string by name from a file, using cached extraction.
+///
+/// On first call for a file, parses via `syn::parse_file` and caches ALL struct
+/// definitions as strings. Subsequent calls for the same file return from cache
+/// without re-parsing.
+///
+/// Unlike `get_parsed_ast`, the cached data contains no `proc_macro::Span` handles,
+/// so it's safe to reuse across macro invocations.
+pub fn get_struct_definition(path: &Path, struct_name: &str) -> Option<String> {
+    FILE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if !ensure_struct_definitions(&mut cache, path) {
+            return None;
+        }
+        cache.struct_definitions.get(path)?.1.get(struct_name).cloned()
     })
 }
 
@@ -364,6 +427,11 @@ pub fn print_profile_summary() {
             "  FK column lookup: {} cache hits, {} entries",
             cache.fk_column_cache_hits,
             cache.fk_column_lookup.len()
+        );
+        eprintln!(
+            "  struct definitions: {} cache hits, {} entries",
+            cache.struct_def_cache_hits,
+            cache.struct_definitions.len()
         );
         eprintln!(
             "  module path: {} cache hits, {} entries",
