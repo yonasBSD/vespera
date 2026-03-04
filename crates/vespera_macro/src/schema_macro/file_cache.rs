@@ -151,21 +151,6 @@ pub fn get_struct_candidates(src_dir: &Path, struct_name: &str) -> Vec<PathBuf> 
         candidates
     })
 }
-
-/// Get a parsed `syn::File` for the given path, using cached file content.
-///
-/// File content is cached with mtime-based invalidation. Parsing always runs
-/// (syn types aren't Send), but I/O is avoided on cache hits.
-/// Returns `None` if the file cannot be read or parsed.
-pub fn get_parsed_ast(path: &Path) -> Option<syn::File> {
-    FILE_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let content = get_file_content_inner(&mut cache, path)?;
-        cache.ast_parses += 1;
-        syn::parse_file(&content).ok()
-    })
-}
-
 /// Ensure struct definitions are extracted and cached for the given file.
 /// On first call, parses the file and caches all struct definitions as strings.
 /// On subsequent calls, checks mtime to validate cache.
@@ -211,7 +196,7 @@ fn ensure_struct_definitions(cache: &mut FileCache, path: &Path) -> bool {
 /// definitions as strings. Subsequent calls for the same file return from cache
 /// without re-parsing.
 ///
-/// Unlike `get_parsed_ast`, the cached data contains no `proc_macro::Span` handles,
+/// The cached data contains no `proc_macro::Span` handles,
 /// so it's safe to reuse across macro invocations.
 pub fn get_struct_definition(path: &Path, struct_name: &str) -> Option<String> {
     FILE_CACHE.with(|cache| {
@@ -254,7 +239,7 @@ fn get_file_content_inner(cache: &mut FileCache, path: &Path) -> Option<String> 
 /// NOTE: Results are NOT cached across calls. `syn::ItemStruct` contains
 /// `proc_macro::Span` handles that are tied to a specific macro invocation
 /// context — caching them causes "use-after-free" panics in the proc_macro bridge.
-/// File I/O caching (via `get_parsed_ast`) is the primary performance win;
+/// File I/O caching (via `get_struct_definition`) is the primary performance win;
 /// definition string parsing is fast (microseconds per struct).
 pub fn parse_struct_cached(definition: &str) -> Result<syn::ItemStruct, syn::Error> {
     FILE_CACHE.with(|cache| {
@@ -305,7 +290,7 @@ pub fn get_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
         return result;
     }
 
-    // 2. Compute — this re-enters FILE_CACHE via get_parsed_ast (safe: our borrow is dropped)
+    // 2. Compute — this re-enters FILE_CACHE via get_struct_definition (safe: our borrow is dropped)
     let result = super::file_lookup::find_struct_from_schema_path(path_str);
 
     // 3. Store — new borrow
@@ -333,7 +318,7 @@ pub fn get_fk_column(schema_path: &str, via_rel: &str) -> Option<String> {
         return result;
     }
 
-    // 2. Compute — this re-enters FILE_CACHE via get_parsed_ast (safe: our borrow is dropped)
+    // 2. Compute — this re-enters FILE_CACHE via get_struct_definition (safe: our borrow is dropped)
     let result = super::file_lookup::find_fk_column_from_target_entity(schema_path, via_rel);
 
     // 3. Store — new borrow
@@ -470,44 +455,6 @@ mod tests {
         assert!(candidates[0].ends_with("has_model.rs"));
     }
 
-    #[test]
-    fn test_get_parsed_ast_returns_valid_ast() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.rs");
-        std::fs::write(&file_path, "pub struct Foo { pub x: i32 }").unwrap();
-
-        let ast = get_parsed_ast(&file_path);
-        assert!(ast.is_some());
-        assert!(!ast.unwrap().items.is_empty());
-    }
-
-    #[test]
-    fn test_get_parsed_ast_caches_content() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("cached.rs");
-        std::fs::write(&file_path, "pub struct Bar;").unwrap();
-
-        let ast1 = get_parsed_ast(&file_path);
-        let ast2 = get_parsed_ast(&file_path);
-        assert!(ast1.is_some());
-        assert!(ast2.is_some());
-    }
-
-    #[test]
-    fn test_get_parsed_ast_returns_none_for_invalid() {
-        let result = get_parsed_ast(Path::new("/nonexistent/path.rs"));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_get_parsed_ast_returns_none_for_unparseable() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("broken.rs");
-        std::fs::write(&file_path, "this is not valid rust {{{{").unwrap();
-
-        let result = get_parsed_ast(&file_path);
-        assert!(result.is_none());
-    }
 
     #[test]
     fn test_get_struct_candidates_caches_result() {
