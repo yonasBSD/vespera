@@ -12,9 +12,8 @@ use syn::Type;
 /// Note: `"str"` is intentionally excluded — only `is_primitive_type()` considers `str`,
 /// since it appears in parser contexts but not in schema_macro type parsing.
 pub const PRIMITIVE_TYPE_NAMES: &[&str] = &[
-    "i8", "i16", "i32", "i64", "i128", "isize",
-    "u8", "u16", "u32", "u64", "u128", "usize",
-    "f32", "f64", "bool", "String", "Decimal",
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32",
+    "f64", "bool", "String", "Decimal",
 ];
 
 /// Normalize a `TokenStream` or `Type` to a compact string by removing spaces.

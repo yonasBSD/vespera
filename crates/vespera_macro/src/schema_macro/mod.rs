@@ -103,24 +103,24 @@ pub fn generate_schema_type_code(
     // This may be empty for simple names like `Model` - will be overridden below if found from file
     let mut source_module_path = extract_module_path(&input.source_type);
 
-    // Find struct definition - lookup order depends on whether path is qualified
-    // For qualified paths (crate::models::memo::Model), try file lookup FIRST
-    // to avoid name collisions when multiple modules have same struct name (e.g., Model)
+    // Find struct definition - check SCHEMA_STORAGE first (no file I/O),
+    // fall back to file lookup for types not registered (e.g., SeaORM Model).
     let struct_def_owned: StructMetadata;
     let schema_name_hint = input.schema_name.as_deref();
     let struct_def = if is_qualified_path(&input.source_type) {
-        // Qualified path: try file lookup first, then storage
-        if let Some((found, module_path)) =
+        // Qualified path: try storage first (avoids parse_file for Schema-derived types),
+        // then file lookup for non-Schema types (e.g., SeaORM Model)
+        if let Some(found) = schema_storage.get(&source_type_name) {
+            found
+        } else if let Some((found, module_path)) =
             find_struct_from_path(&input.source_type, schema_name_hint)
         {
             struct_def_owned = found;
-            // Always use the module path from file lookup for qualified paths
+            // Use the module path from file lookup for qualified paths
             // The file lookup derives module path from actual file location, which is more accurate
             // for resolving relative paths like `super::user::Entity`
             source_module_path = module_path;
             &struct_def_owned
-        } else if let Some(found) = schema_storage.get(&source_type_name) {
-            found
         } else {
             return Err(syn::Error::new_spanned(
                 &input.source_type,

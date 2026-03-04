@@ -139,7 +139,10 @@ pub fn process_route_attribute(
         fn_name: item_fn.sig.ident.to_string(),
         method: route_args.method.as_ref().map(syn::Ident::to_string),
         custom_path: route_args.path.as_ref().map(syn::LitStr::value),
-        error_status: route_args.error_status.as_ref().and_then(extract_error_status_codes),
+        error_status: route_args
+            .error_status
+            .as_ref()
+            .and_then(extract_error_status_codes),
         tags: route_args.tags.as_ref().and_then(extract_tag_strings),
         description: route_args.description.as_ref().map(syn::LitStr::value),
         fn_item_str: item.to_string(),
@@ -319,7 +322,13 @@ mod tests {
 
     #[test]
     fn test_route_storage_populated_by_process_route_attribute() {
-        let attr = quote!(get, path = "/{id}", tags = ["users"], description = "Get user by ID", error_status = [404]);
+        let attr = quote!(
+            get,
+            path = "/{id}",
+            tags = ["users"],
+            description = "Get user by ID",
+            error_status = [404]
+        );
         let item = quote!(
             pub async fn get_user_test_storage() -> String {
                 "test".to_string()
@@ -334,8 +343,13 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // Find our entry and verify fields
-        let stored = storage.iter().find(|s| s.fn_name == "get_user_test_storage");
-        assert!(stored.is_some(), "StoredRouteInfo should be in ROUTE_STORAGE");
+        let stored = storage
+            .iter()
+            .find(|s| s.fn_name == "get_user_test_storage");
+        assert!(
+            stored.is_some(),
+            "StoredRouteInfo should be in ROUTE_STORAGE"
+        );
         let stored = stored.unwrap();
         assert_eq!(stored.method, Some("get".to_string()));
         assert_eq!(stored.custom_path, Some("/{id}".to_string()));
@@ -391,6 +405,13 @@ mod tests {
     #[test]
     fn test_extract_tag_strings_values() {
         let arr: syn::ExprArray = syn::parse_quote!(["users", "admin", "api"]);
-        assert_eq!(extract_tag_strings(&arr), Some(vec!["users".to_string(), "admin".to_string(), "api".to_string()]));
+        assert_eq!(
+            extract_tag_strings(&arr),
+            Some(vec![
+                "users".to_string(),
+                "admin".to_string(),
+                "api".to_string()
+            ])
+        );
     }
 }

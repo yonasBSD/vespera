@@ -130,7 +130,6 @@ fn schema_type_to_tokens(st: &SchemaType) -> TokenStream {
     quote! { vespera::schema::SchemaType::#ident }
 }
 
-
 /// Convert `SchemaRef` to `TokenStream` for code generation
 pub fn schema_ref_to_tokens(schema_ref: &SchemaRef) -> TokenStream {
     match schema_ref {

@@ -25,7 +25,11 @@
 //! - [`process_export_app`] - Main `export_app`! macro implementation
 //! - [`generate_and_write_openapi`] - `OpenAPI` generation and file I/O
 
-use std::{collections::HashMap, hash::{Hash, Hasher}, path::Path};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    path::Path,
+};
 
 use proc_macro2::Span;
 use quote::quote;
@@ -120,7 +124,6 @@ fn write_cache(cache_path: &Path, cache: &VesperaCache) {
         let _ = std::fs::write(cache_path, json);
     }
 }
-
 
 /// Generate `OpenAPI` JSON and write to files, returning docs info
 pub fn generate_and_write_openapi(
@@ -252,10 +255,7 @@ pub fn find_target_dir(manifest_path: &Path) -> std::path::PathBuf {
 ///
 /// Matching is by function name. If multiple routes share a function name,
 /// the match is ambiguous and ROUTE_STORAGE data is skipped for safety.
-fn merge_route_storage_data(
-    metadata: &mut CollectedMetadata,
-    route_storage: &[StoredRouteInfo],
-) {
+fn merge_route_storage_data(metadata: &mut CollectedMetadata, route_storage: &[StoredRouteInfo]) {
     if route_storage.is_empty() {
         return;
     }
@@ -318,9 +318,7 @@ fn ensure_openapi_files_from_cache(
             std::fs::write(file_path, pretty).map_err(|e| {
                 syn::Error::new(
                     Span::call_site(),
-                    format!(
-                        "OpenAPI output: failed to write file '{openapi_file_name}': {e}"
-                    ),
+                    format!("OpenAPI output: failed to write file '{openapi_file_name}': {e}"),
                 )
             })?;
         }
@@ -394,9 +392,8 @@ pub fn process_vespera_macro(
 
     // --- Incremental cache check ---
     let cache_path = get_cache_path();
-    let fingerprints = collect_file_fingerprints(&folder_path).map_err(|e| {
-        syn::Error::new(Span::call_site(), format!("vespera! macro: {e}"))
-    })?;
+    let fingerprints = collect_file_fingerprints(&folder_path)
+        .map_err(|e| syn::Error::new(Span::call_site(), format!("vespera! macro: {e}")))?;
     let schema_hash = compute_schema_hash(schema_storage);
     let config_hash = compute_config_hash(processed);
 
@@ -412,6 +409,9 @@ pub fn process_vespera_macro(
         let mut metadata = cache.metadata;
         metadata.structs.extend(schema_storage.values().cloned());
         merge_route_storage_data(&mut metadata, route_storage);
+        metadata
+            .check_duplicate_schema_names()
+            .map_err(|msg| syn::Error::new(Span::call_site(), format!("vespera! macro: {msg}")))?;
 
         // Ensure openapi.json files exist and are up-to-date from cache
         ensure_openapi_files_from_cache(
@@ -436,8 +436,12 @@ pub fn process_vespera_macro(
         let cache_metadata = metadata.clone();
         metadata.structs.extend(schema_storage.values().cloned());
         merge_route_storage_data(&mut metadata, route_storage);
+        metadata
+            .check_duplicate_schema_names()
+            .map_err(|msg| syn::Error::new(Span::call_site(), format!("vespera! macro: {msg}")))?;
 
-        let (_, _, spec_json) = generate_and_write_openapi(processed, &metadata, file_asts, route_storage)?;
+        let (_, _, spec_json) =
+            generate_and_write_openapi(processed, &metadata, file_asts, route_storage)?;
 
         // Read back spec_pretty from first openapi file for caching
         let spec_pretty = processed
@@ -510,10 +514,19 @@ pub fn process_export_app(
     let (mut metadata, file_asts) = collect_metadata(&folder_path, folder_name, route_storage).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to scan route folder '{folder_name}'. Error: {e}. Check that all .rs files have valid Rust syntax.")))?;
     metadata.structs.extend(schema_storage.values().cloned());
     merge_route_storage_data(&mut metadata, route_storage);
+    metadata
+        .check_duplicate_schema_names()
+        .map_err(|msg| syn::Error::new(Span::call_site(), format!("export_app! macro: {msg}")))?;
 
     // Generate OpenAPI spec JSON string
-    let openapi_doc =
-        generate_openapi_doc_with_metadata(None, None, None, &metadata, Some(file_asts), route_storage);
+    let openapi_doc = generate_openapi_doc_with_metadata(
+        None,
+        None,
+        None,
+        &metadata,
+        Some(file_asts),
+        route_storage,
+    );
     let spec_json = serde_json::to_string(&openapi_doc).map_err(|e| syn::Error::new(Span::call_site(), format!("export_app! macro: failed to serialize OpenAPI spec to JSON. Error: {e}. Check that all schema types are serializable.")))?;
 
     // Write spec to temp file for compile-time merging by parent apps
@@ -1326,7 +1339,10 @@ mod tests {
 
         merge_route_storage_data(&mut metadata, &storage);
         assert_eq!(metadata.routes[0].tags, Some(vec!["users".to_string()]));
-        assert_eq!(metadata.routes[0].description, Some("List all users".to_string()));
+        assert_eq!(
+            metadata.routes[0].description,
+            Some("List all users".to_string())
+        );
         assert_eq!(metadata.routes[0].error_status, Some(vec![400, 404]));
     }
 
@@ -1387,7 +1403,7 @@ mod tests {
                 tags: Some(vec!["file-a".to_string()]),
                 description: None,
                 fn_item_str: String::new(),
-            file_path: None,
+                file_path: None,
             },
             StoredRouteInfo {
                 fn_name: "handler".to_string(),
@@ -1397,7 +1413,7 @@ mod tests {
                 tags: Some(vec!["file-b".to_string()]),
                 description: None,
                 fn_item_str: String::new(),
-            file_path: None,
+                file_path: None,
             },
         ];
 
@@ -1435,7 +1451,10 @@ mod tests {
         merge_route_storage_data(&mut metadata, &storage);
         // ROUTE_STORAGE values override when they have explicit values
         assert_eq!(metadata.routes[0].tags, Some(vec!["new-tag".to_string()]));
-        assert_eq!(metadata.routes[0].description, Some("New description".to_string()));
+        assert_eq!(
+            metadata.routes[0].description,
+            Some("New description".to_string())
+        );
         assert_eq!(metadata.routes[0].error_status, Some(vec![400, 404]));
     }
 
@@ -1468,8 +1487,14 @@ mod tests {
 
         merge_route_storage_data(&mut metadata, &storage);
         // Only error_status should be set; tags and description preserved from collector
-        assert_eq!(metadata.routes[0].tags, Some(vec!["from-collector".to_string()]));
-        assert_eq!(metadata.routes[0].description, Some("From doc comment".to_string()));
+        assert_eq!(
+            metadata.routes[0].tags,
+            Some(vec!["from-collector".to_string()])
+        );
+        assert_eq!(
+            metadata.routes[0].description,
+            Some("From doc comment".to_string())
+        );
         assert_eq!(metadata.routes[0].error_status, Some(vec![400]));
     }
 }

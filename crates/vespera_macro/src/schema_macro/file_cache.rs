@@ -184,7 +184,9 @@ fn ensure_struct_definitions(cache: &mut FileCache, path: &Path) -> bool {
     }
 
     if let Some(mtime) = current_mtime {
-        cache.struct_definitions.insert(path.to_path_buf(), (mtime, defs));
+        cache
+            .struct_definitions
+            .insert(path.to_path_buf(), (mtime, defs));
     }
 
     true
@@ -204,7 +206,12 @@ pub fn get_struct_definition(path: &Path, struct_name: &str) -> Option<String> {
         if !ensure_struct_definitions(&mut cache, path) {
             return None;
         }
-        cache.struct_definitions.get(path)?.1.get(struct_name).cloned()
+        cache
+            .struct_definitions
+            .get(path)?
+            .1
+            .get(struct_name)
+            .cloned()
     })
 }
 
@@ -453,7 +460,6 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert!(candidates[0].ends_with("has_model.rs"));
     }
-
 
     #[test]
     fn test_get_struct_candidates_caches_result() {

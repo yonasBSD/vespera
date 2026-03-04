@@ -264,10 +264,13 @@ fn parse_type_impl(
                 "Uuid" => string_with_format("uuid"),
                 "String" | "str" => SchemaRef::Inline(Box::new(Schema::string())),
                 // Date-time types from chrono and time crates
-                "DateTime" | "NaiveDateTime" | "DateTimeWithTimeZone" | "DateTimeUtc"
-                | "DateTimeLocal" | "OffsetDateTime" | "PrimitiveDateTime" => {
-                    string_with_format("date-time")
-                }
+                "DateTime"
+                | "NaiveDateTime"
+                | "DateTimeWithTimeZone"
+                | "DateTimeUtc"
+                | "DateTimeLocal"
+                | "OffsetDateTime"
+                | "PrimitiveDateTime" => string_with_format("date-time"),
                 "NaiveDate" | "Date" => string_with_format("date"),
                 "NaiveTime" | "Time" => string_with_format("time"),
                 // Duration types

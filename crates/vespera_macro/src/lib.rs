@@ -294,7 +294,13 @@ pub fn export_app(input: TokenStream) -> TokenStream {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-    match process_export_app(&name, &folder_name, &schema_storage, &manifest_dir, &route_storage) {
+    match process_export_app(
+        &name,
+        &folder_name,
+        &schema_storage,
+        &manifest_dir,
+        &route_storage,
+    ) {
         Ok(tokens) => tokens.into(),
         Err(e) => e.to_compile_error().into(),
     }

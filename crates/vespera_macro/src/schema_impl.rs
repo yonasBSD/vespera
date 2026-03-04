@@ -122,17 +122,17 @@ fn extract_field_defaults(input: &syn::DeriveInput) -> BTreeMap<String, serde_js
     };
 
     // Read and parse the file
-    let Some(file_ast) =
-        crate::file_utils::read_and_parse_file_warn(&file_path, "derive(Schema) default extraction")
-    else {
+    let Some(file_ast) = crate::file_utils::read_and_parse_file_warn(
+        &file_path,
+        "derive(Schema) default extraction",
+    ) else {
         return defaults;
     };
 
     // Extract default values from functions
     for (field_name, fn_name) in fn_defaults {
         if let Some(func) = crate::openapi_generator::find_function_in_file(&file_ast, &fn_name)
-            && let Some(value) =
-                crate::openapi_generator::extract_default_value_from_function(func)
+            && let Some(value) = crate::openapi_generator::extract_default_value_from_function(func)
         {
             defaults.insert(field_name, value);
         }

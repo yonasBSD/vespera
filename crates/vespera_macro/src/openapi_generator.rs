@@ -211,7 +211,12 @@ fn parse_component_schemas(
                 });
 
             if let Some(ast) = file_ast {
-                process_default_functions(struct_item, ast, &mut schema, &struct_meta.field_defaults);
+                process_default_functions(
+                    struct_item,
+                    ast,
+                    &mut schema,
+                    &struct_meta.field_defaults,
+                );
             }
         }
 
@@ -267,7 +272,8 @@ fn build_path_items(
 
     for route_meta in &metadata.routes {
         // Try ROUTE_STORAGE first (avoids file_cache dependency for known routes)
-        let fn_sig = if let Some(cached_fn) = route_fn_cache.get(route_meta.function_name.as_str()) {
+        let fn_sig = if let Some(cached_fn) = route_fn_cache.get(route_meta.function_name.as_str())
+        {
             &cached_fn.sig
         } else if let Some(fns) = fn_index.get(route_meta.file_path.as_str())
             && let Some(fn_item) = fns.get(&route_meta.function_name)
@@ -756,7 +762,14 @@ pub fn get_user() -> User {
             description: None,
         });
 
-        let doc = generate_openapi_doc_with_metadata(Some("Test API".to_string()), Some("1.0.0".to_string()), None, &metadata, None, &[]);
+        let doc = generate_openapi_doc_with_metadata(
+            Some("Test API".to_string()),
+            Some("1.0.0".to_string()),
+            None,
+            &metadata,
+            None,
+            &[],
+        );
 
         // Check struct schema
         assert!(doc.components.as_ref().unwrap().schemas.is_some());
@@ -955,7 +968,8 @@ pub fn get_users() -> String {
             },
         ];
 
-        let doc = generate_openapi_doc_with_metadata(None, None, Some(servers), &metadata, None, &[]);
+        let doc =
+            generate_openapi_doc_with_metadata(None, None, Some(servers), &metadata, None, &[]);
 
         assert!(doc.servers.is_some());
         let doc_servers = doc.servers.unwrap();

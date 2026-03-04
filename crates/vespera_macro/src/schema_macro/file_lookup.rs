@@ -100,7 +100,8 @@ pub fn find_struct_from_path(
         if !file_path.exists() {
             continue;
         }
-        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name) {
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name)
+        {
             return Some((
                 StructMetadata::new_model(struct_name, definition),
                 type_module_path,
@@ -156,7 +157,9 @@ pub fn find_struct_by_name_in_all_files(
         // Parse only candidate files first
         let mut found_in_candidates: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
         for file_path in &candidates {
-            if let Some(definition) = super::file_cache::get_struct_definition(file_path, struct_name) {
+            if let Some(definition) =
+                super::file_cache::get_struct_definition(file_path, struct_name)
+            {
                 found_in_candidates.push((
                     file_path.clone(),
                     StructMetadata::new_model(struct_name.to_string(), definition),
@@ -200,7 +203,8 @@ pub fn find_struct_by_name_in_all_files(
     let mut found_structs: Vec<(std::path::PathBuf, StructMetadata)> = Vec::new();
 
     for file_path in rs_files {
-        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, struct_name) {
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, struct_name)
+        {
             found_structs.push((
                 file_path.clone(),
                 StructMetadata::new_model(struct_name.to_string(), definition),
@@ -333,7 +337,8 @@ pub fn find_struct_from_schema_path(path_str: &str) -> Option<StructMetadata> {
         if !file_path.exists() {
             continue;
         }
-        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name) {
+        if let Some(definition) = super::file_cache::get_struct_definition(&file_path, &struct_name)
+        {
             return Some(StructMetadata::new_model(struct_name, definition));
         }
     }
