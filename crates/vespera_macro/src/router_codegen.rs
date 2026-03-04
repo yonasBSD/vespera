@@ -537,13 +537,19 @@ pub fn generate_router_code(
 
     if let Some(docs_url) = docs_url {
         router_nests.push(generate_docs_route_tokens(
-            docs_url, SWAGGER_UI_HTML, &merge_spec_code, has_merge,
+            docs_url,
+            SWAGGER_UI_HTML,
+            &merge_spec_code,
+            has_merge,
         ));
     }
 
     if let Some(redoc_url) = redoc_url {
         router_nests.push(generate_docs_route_tokens(
-            redoc_url, REDOC_HTML, &merge_spec_code, has_merge,
+            redoc_url,
+            REDOC_HTML,
+            &merge_spec_code,
+            has_merge,
         ));
     }
 

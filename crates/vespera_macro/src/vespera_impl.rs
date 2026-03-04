@@ -25,13 +25,15 @@
 //! - [`process_export_app`] - Main `export_app`! macro implementation
 //! - [`generate_and_write_openapi`] - `OpenAPI` generation and file I/O
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, hash::{Hash, Hasher}, path::Path};
 
 use proc_macro2::Span;
 use quote::quote;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    collector::collect_metadata,
+    collector::{collect_file_fingerprints, collect_metadata},
     error::{MacroResult, err_call_site},
     metadata::{CollectedMetadata, StructMetadata},
     openapi_generator::generate_openapi_doc_with_metadata,
@@ -40,6 +42,84 @@ use crate::{
 
 /// Docs info tuple type alias for cleaner signatures
 pub type DocsInfo = (Option<String>, Option<String>, Option<String>);
+
+/// Cache for avoiding redundant route scanning and OpenAPI generation.
+/// Persisted to `target/vespera/routes.cache` across builds.
+#[derive(Serialize, Deserialize)]
+struct VesperaCache {
+    /// File path → modification time (secs since UNIX_EPOCH)
+    file_fingerprints: HashMap<String, u64>,
+    /// Hash of SCHEMA_STORAGE contents
+    schema_hash: u64,
+    /// Hash of OpenAPI config (title, version, servers, docs_url, etc.)
+    config_hash: u64,
+    /// Cached route/struct metadata
+    metadata: CollectedMetadata,
+    /// Compact JSON for docs embedding (None if docs disabled)
+    spec_json: Option<String>,
+    /// Pretty JSON for file output (None if no openapi file configured)
+    spec_pretty: Option<String>,
+}
+
+/// Compute a deterministic hash of SCHEMA_STORAGE contents.
+fn compute_schema_hash(schema_storage: &HashMap<String, StructMetadata>) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut keys: Vec<&String> = schema_storage.keys().collect();
+    keys.sort();
+    for key in keys {
+        key.hash(&mut hasher);
+        let meta = &schema_storage[key];
+        meta.name.hash(&mut hasher);
+        meta.definition.hash(&mut hasher);
+        meta.include_in_openapi.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Compute a deterministic hash of OpenAPI config fields.
+fn compute_config_hash(processed: &ProcessedVesperaInput) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    processed.title.hash(&mut hasher);
+    processed.version.hash(&mut hasher);
+    processed.docs_url.hash(&mut hasher);
+    processed.redoc_url.hash(&mut hasher);
+    processed.openapi_file_names.hash(&mut hasher);
+    if let Some(ref servers) = processed.servers {
+        for s in servers {
+            s.url.hash(&mut hasher);
+        }
+    }
+    for merge_path in &processed.merge {
+        quote!(#merge_path).to_string().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Get the path to the routes cache file.
+fn get_cache_path() -> std::path::PathBuf {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let manifest_path = Path::new(&manifest_dir);
+    find_target_dir(manifest_path)
+        .join("vespera")
+        .join("routes.cache")
+}
+
+/// Try to read and deserialize a cache file. Returns None on any failure.
+fn read_cache(cache_path: &Path) -> Option<VesperaCache> {
+    let content = std::fs::read_to_string(cache_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Write cache to disk. Failures are silently ignored (cache is best-effort).
+fn write_cache(cache_path: &Path, cache: &VesperaCache) {
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(cache) {
+        let _ = std::fs::write(cache_path, json);
+    }
+}
+
 
 /// Generate `OpenAPI` JSON and write to files, returning docs info
 pub fn generate_and_write_openapi(
@@ -92,7 +172,12 @@ pub fn generate_and_write_openapi(
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| err_call_site(format!("OpenAPI output: failed to create directory '{}'. Error: {}. Ensure the path is valid and writable.", parent.display(), e)))?;
             }
-            std::fs::write(file_path, &json_pretty).map_err(|e| err_call_site(format!("OpenAPI output: failed to write file '{openapi_file_name}'. Error: {e}. Ensure the file path is writable.")))?;
+            let should_write = std::fs::read_to_string(file_path)
+                .map(|existing| existing != json_pretty)
+                .unwrap_or(true);
+            if should_write {
+                std::fs::write(file_path, &json_pretty).map_err(|e| err_call_site(format!("OpenAPI output: failed to write file '{openapi_file_name}'. Error: {e}. Ensure the file path is writable.")))?;
+            }
         }
     }
 
@@ -177,12 +262,102 @@ pub fn process_vespera_macro(
         ));
     }
 
-    let (mut metadata, file_asts) = collect_metadata(&folder_path, &processed.folder_name).map_err(|e| syn::Error::new(Span::call_site(), format!("vespera! macro: failed to scan route folder '{}'. Error: {}. Check that all .rs files have valid Rust syntax.", processed.folder_name, e)))?;
-    metadata.structs.extend(schema_storage.values().cloned());
+    // --- Incremental cache check ---
+    let cache_path = get_cache_path();
+    let fingerprints = collect_file_fingerprints(&folder_path).map_err(|e| {
+        syn::Error::new(Span::call_site(), format!("vespera! macro: {e}"))
+    })?;
+    let schema_hash = compute_schema_hash(schema_storage);
+    let config_hash = compute_config_hash(processed);
 
-    let (docs_url, redoc_url, spec_json) =
-        generate_and_write_openapi(processed, &metadata, file_asts)?;
+    let cached = read_cache(&cache_path);
+    let cache_hit = cached.as_ref().is_some_and(|c| {
+        c.file_fingerprints == fingerprints
+            && c.schema_hash == schema_hash
+            && c.config_hash == config_hash
+    });
 
+    let (metadata, spec_json) = if cache_hit {
+        let cache = cached.unwrap();
+        let mut metadata = cache.metadata;
+        metadata.structs.extend(schema_storage.values().cloned());
+
+        // Ensure openapi.json files exist and are up-to-date from cache
+        if !processed.openapi_file_names.is_empty() {
+            if let Some(ref pretty) = cache.spec_pretty {
+                for openapi_file_name in &processed.openapi_file_names {
+                    let file_path = Path::new(openapi_file_name);
+                    let should_write = std::fs::read_to_string(file_path)
+                        .map(|existing| existing != *pretty)
+                        .unwrap_or(true);
+                    if should_write {
+                        if let Some(parent) = file_path.parent() {
+                            std::fs::create_dir_all(parent).map_err(|e| {
+                                syn::Error::new(
+                                    Span::call_site(),
+                                    format!(
+                                        "OpenAPI output: failed to create directory '{}': {}",
+                                        parent.display(),
+                                        e
+                                    ),
+                                )
+                            })?;
+                        }
+                        std::fs::write(file_path, pretty).map_err(|e| {
+                            syn::Error::new(
+                                Span::call_site(),
+                                format!(
+                                    "OpenAPI output: failed to write file '{openapi_file_name}': {e}"
+                                ),
+                            )
+                        })?;
+                    }
+                }
+            }
+        }
+
+        (metadata, cache.spec_json)
+    } else {
+        let (mut metadata, file_asts) = collect_metadata(&folder_path, &processed.folder_name)
+            .map_err(|e| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "vespera! macro: failed to scan route folder '{}'. Error: {}. Check that all .rs files have valid Rust syntax.",
+                        processed.folder_name, e
+                    ),
+                )
+            })?;
+
+        // Clone metadata before extending (cache stores file-only structs)
+        let cache_metadata = metadata.clone();
+        metadata.structs.extend(schema_storage.values().cloned());
+
+        let (_, _, spec_json) = generate_and_write_openapi(processed, &metadata, file_asts)?;
+
+        // Read back spec_pretty from first openapi file for caching
+        let spec_pretty = processed
+            .openapi_file_names
+            .first()
+            .and_then(|f| std::fs::read_to_string(f).ok());
+
+        // Persist cache (best-effort, failures are silent)
+        write_cache(
+            &cache_path,
+            &VesperaCache {
+                file_fingerprints: fingerprints,
+                schema_hash,
+                config_hash,
+                metadata: cache_metadata,
+                spec_json: spec_json.clone(),
+                spec_pretty,
+            },
+        );
+
+        (metadata, spec_json)
+    };
+
+    // Write compact spec for include_str! embedding
     let spec_tokens = match spec_json {
         Some(json) => {
             let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
@@ -200,16 +375,21 @@ pub fn process_vespera_macro(
                 )
             })?;
             let spec_file = vespera_dir.join("vespera_spec.json");
-            std::fs::write(&spec_file, &json).map_err(|e| {
-                syn::Error::new(
-                    Span::call_site(),
-                    format!(
-                        "vespera! macro: failed to write spec file '{}': {}",
-                        spec_file.display(),
-                        e
-                    ),
-                )
-            })?;
+            let should_write = std::fs::read_to_string(&spec_file)
+                .map(|existing| existing != json)
+                .unwrap_or(true);
+            if should_write {
+                std::fs::write(&spec_file, &json).map_err(|e| {
+                    syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "vespera! macro: failed to write spec file '{}': {}",
+                            spec_file.display(),
+                            e
+                        ),
+                    )
+                })?;
+            }
             let path_str = spec_file.display().to_string().replace('\\', "/");
             Some(quote::quote! { include_str!(#path_str) })
         }
@@ -218,8 +398,8 @@ pub fn process_vespera_macro(
 
     let result = Ok(generate_router_code(
         &metadata,
-        docs_url.as_deref(),
-        redoc_url.as_deref(),
+        processed.docs_url.as_deref(),
+        processed.redoc_url.as_deref(),
         spec_tokens,
         &processed.merge,
     ));

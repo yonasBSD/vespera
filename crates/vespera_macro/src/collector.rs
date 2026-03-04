@@ -106,6 +106,35 @@ pub fn collect_metadata(
     Ok((metadata, file_asts))
 }
 
+/// Collect file modification times without reading content.
+/// Used for cache invalidation — much cheaper than full `collect_metadata()`.
+pub fn collect_file_fingerprints(folder_path: &Path) -> MacroResult<HashMap<String, u64>> {
+    let files = collect_files(folder_path).map_err(|e| {
+        err_call_site(format!(
+            "vespera! macro: failed to scan route folder '{}': {}",
+            folder_path.display(),
+            e
+        ))
+    })?;
+
+    let mut fingerprints = HashMap::with_capacity(files.len());
+    for file in files {
+        if file.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let mtime = std::fs::metadata(&file)
+            .and_then(|m| m.modified())
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            })
+            .unwrap_or(0);
+        fingerprints.insert(file.display().to_string(), mtime);
+    }
+    Ok(fingerprints)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
