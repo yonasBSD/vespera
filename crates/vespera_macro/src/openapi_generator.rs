@@ -211,7 +211,7 @@ fn parse_component_schemas(
                 });
 
             if let Some(ast) = file_ast {
-                process_default_functions(struct_item, ast, &mut schema);
+                process_default_functions(struct_item, ast, &mut schema, &struct_meta.field_defaults);
             }
         }
 
@@ -338,6 +338,7 @@ fn process_default_functions(
     struct_item: &syn::ItemStruct,
     file_ast: &syn::File,
     schema: &mut vespera_core::schema::Schema,
+    stored_defaults: &BTreeMap<String, serde_json::Value>,
 ) {
     use syn::Fields;
 
@@ -358,6 +359,12 @@ fn process_default_functions(
             );
             let field_name = extract_field_rename(&field.attrs)
                 .unwrap_or_else(|| rename_field(&rust_field_name, struct_rename_all.as_deref()));
+
+            // Priority 0: Pre-extracted defaults from SCHEMA_STORAGE (populated by #[derive(Schema)])
+            if let Some(value) = stored_defaults.get(&rust_field_name) {
+                set_property_default(properties, &field_name, value.clone());
+                continue;
+            }
 
             // Priority 1: #[schema(default = "value")] from schema_type! macro
             if let Some(default_str) = extract_schema_default_attr(&field.attrs) {
@@ -434,7 +441,7 @@ fn parse_default_string_to_json_value(value: &str) -> serde_json::Value {
 }
 
 /// Find a function by name in the file AST
-fn find_function_in_file<'a>(
+pub fn find_function_in_file<'a>(
     file_ast: &'a syn::File,
     function_name: &str,
 ) -> Option<&'a syn::ItemFn> {
@@ -450,7 +457,7 @@ fn find_function_in_file<'a>(
 /// - 42 -> 42
 /// - true -> true
 /// - vec![] -> []
-fn extract_default_value_from_function(func: &syn::ItemFn) -> Option<serde_json::Value> {
+pub fn extract_default_value_from_function(func: &syn::ItemFn) -> Option<serde_json::Value> {
     // Try to find return statement or expression
     for stmt in &func.block.stmts {
         if let syn::Stmt::Expr(expr, _) = stmt {
@@ -472,7 +479,7 @@ fn extract_default_value_from_function(func: &syn::ItemFn) -> Option<serde_json:
 }
 
 /// Extract value from expression
-fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
+pub fn extract_value_from_expr(expr: &syn::Expr) -> Option<serde_json::Value> {
     use syn::{Expr, ExprLit, ExprMacro, Lit};
 
     match expr {
@@ -710,6 +717,7 @@ pub fn get_status() -> Status {
             // which now safely skips this item instead of panicking
             definition: "const CONFIG: i32 = 42;".to_string(),
             include_in_openapi: true,
+            field_defaults: BTreeMap::new(),
         });
 
         // This should gracefully handle the invalid item (skip it) instead of panicking
@@ -1328,7 +1336,7 @@ pub fn get_user() -> User {
         schema.properties = None; // Explicitly set to None
 
         // This should return early without panic
-        process_default_functions(&struct_item, &file_ast, &mut schema);
+        process_default_functions(&struct_item, &file_ast, &mut schema, &BTreeMap::new());
 
         // Schema should remain unchanged
         assert!(schema.properties.is_none());
@@ -1524,6 +1532,7 @@ pub fn create_users() -> String {
             // Invalid Rust syntax - cannot be parsed by syn
             definition: "struct { invalid syntax {{{{".to_string(),
             include_in_openapi: true,
+            field_defaults: BTreeMap::new(),
         });
 
         // Should gracefully skip unparseable definitions
@@ -1681,7 +1690,7 @@ pub fn create_users() -> String {
             "count".to_string(),
             SchemaRef::Inline(Box::new(Schema::integer())),
         );
-        process_default_functions(&struct_item, &file_ast, &mut schema);
+        process_default_functions(&struct_item, &file_ast, &mut schema, &BTreeMap::new());
         if let Some(SchemaRef::Inline(prop_schema)) =
             schema.properties.as_ref().unwrap().get("count")
         {

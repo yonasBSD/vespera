@@ -1,5 +1,7 @@
 //! Metadata collection and storage for routes and schemas
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Route metadata
@@ -40,6 +42,11 @@ pub struct StructMetadata {
     /// - false: from cross-file lookup - only for `schema_type`! source, NOT in openapi.json
     #[serde(default = "default_include_in_openapi")]
     pub include_in_openapi: bool,
+    /// Pre-extracted default values for fields with `#[serde(default = "fn_name")]`.
+    /// Key: Rust field name, Value: extracted default value.
+    /// Populated by `#[derive(Schema)]` to avoid AST re-parsing in `vespera!()`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub field_defaults: BTreeMap<String, serde_json::Value>,
 }
 
 const fn default_include_in_openapi() -> bool {
@@ -51,7 +58,8 @@ impl Default for StructMetadata {
         Self {
             name: String::new(),
             definition: String::new(),
-            include_in_openapi: true, // Default to true (appears in OpenAPI)
+            include_in_openapi: true,
+            field_defaults: BTreeMap::new(),
         }
     }
 }
@@ -63,6 +71,7 @@ impl StructMetadata {
             name,
             definition,
             include_in_openapi: true,
+            field_defaults: BTreeMap::new(),
         }
     }
 
@@ -72,6 +81,7 @@ impl StructMetadata {
             name,
             definition,
             include_in_openapi: false,
+            field_defaults: BTreeMap::new(),
         }
     }
 }
@@ -148,6 +158,7 @@ mod tests {
         assert_eq!(original.name, restored.name);
         assert_eq!(original.definition, restored.definition);
         assert_eq!(original.include_in_openapi, restored.include_in_openapi);
+        assert!(restored.field_defaults.is_empty());
     }
 
     #[test]

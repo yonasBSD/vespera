@@ -31,7 +31,7 @@
 //! - [`process_derive_schema`] - Process the derive macro input and register the type
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{LazyLock, Mutex},
 };
 
@@ -70,9 +70,75 @@ pub fn process_derive_schema(
     // Check for custom schema name from #[schema(name = "...")] attribute
     let schema_name = extract_schema_name_attr(&input.attrs).unwrap_or_else(|| name.to_string());
 
+    // Extract default values from serde(default = "fn_name") attributes at derive time
+    let field_defaults = extract_field_defaults(input);
+
     // Schema-derived types appear in OpenAPI spec (include_in_openapi: true)
-    let metadata = StructMetadata::new(schema_name, quote::quote!(#input).to_string());
+    let mut metadata = StructMetadata::new(schema_name, quote::quote!(#input).to_string());
+    metadata.field_defaults = field_defaults;
     (metadata, proc_macro2::TokenStream::new())
+}
+
+/// Extract default values from `#[serde(default = "fn_name")]` attributes.
+/// Uses `Span::call_site().local_file()` to read the struct's source file
+/// and find the default functions. Only parses the file if at least one field
+/// has a function-based default.
+fn extract_field_defaults(input: &syn::DeriveInput) -> BTreeMap<String, serde_json::Value> {
+    let mut defaults = BTreeMap::new();
+
+    let fields = match &input.data {
+        syn::Data::Struct(data) => match &data.fields {
+            syn::Fields::Named(named) => &named.named,
+            _ => return defaults,
+        },
+        _ => return defaults,
+    };
+
+    // Collect fields with function-based defaults
+    let fn_defaults: Vec<(String, String)> = fields
+        .iter()
+        .filter_map(|f| {
+            let field_name = f.ident.as_ref()?.to_string();
+            if let Some(Some(fn_name)) = crate::parser::extract_default(&f.attrs) {
+                // Only handle simple function names (not paths like "crate::utils::default")
+                if fn_name.contains("::") {
+                    None
+                } else {
+                    Some((field_name, fn_name))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if fn_defaults.is_empty() {
+        return defaults;
+    }
+
+    // Get file path from span
+    let Some(file_path) = proc_macro2::Span::call_site().local_file() else {
+        return defaults;
+    };
+
+    // Read and parse the file
+    let Some(file_ast) =
+        crate::file_utils::read_and_parse_file_warn(&file_path, "derive(Schema) default extraction")
+    else {
+        return defaults;
+    };
+
+    // Extract default values from functions
+    for (field_name, fn_name) in fn_defaults {
+        if let Some(func) = crate::openapi_generator::find_function_in_file(&file_ast, &fn_name)
+            && let Some(value) =
+                crate::openapi_generator::extract_default_value_from_function(func)
+        {
+            defaults.insert(field_name, value);
+        }
+    }
+
+    defaults
 }
 
 #[cfg(test)]
