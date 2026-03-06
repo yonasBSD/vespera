@@ -1140,3 +1140,246 @@ async fn test_form_data_limit_unlimited_keyword() {
     let response = server.post("/limit-test").multipart(form).await;
     response.assert_status_ok();
 }
+
+// ============== #[serde(rename)] and #[serde(default)] tests ==============
+//
+// These tests verify that `#[derive(Multipart)]` correctly handles serde
+// attributes for field renaming and default values.
+
+fn default_greeting() -> String {
+    "hello".to_string()
+}
+
+/// Test struct with serde rename and default attributes.
+#[derive(Debug, Multipart)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct SerdeAttrTestRequest {
+    /// Uses camelCase rename from struct-level rename_all.
+    pub user_name: String,
+    /// Explicit field rename overrides rename_all.
+    #[serde(rename = "customTag")]
+    pub tag_value: String,
+    /// `#[serde(default)]` uses `Default::default()` when missing.
+    #[serde(default)]
+    pub score: i32,
+    /// `#[serde(default = "fn")]` calls custom function when missing.
+    #[serde(default = "default_greeting")]
+    pub greeting: String,
+}
+
+async fn serde_attr_handler(
+    TypedMultipart(req): TypedMultipart<SerdeAttrTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "userName": req.user_name,
+        "tagValue": req.tag_value,
+        "score": req.score,
+        "greeting": req.greeting,
+    }))
+}
+
+/// Test struct with struct-level `#[serde(default)]`.
+#[derive(Debug, Multipart)]
+#[serde(default)]
+#[allow(dead_code)]
+struct StructDefaultTestRequest {
+    pub name: String,
+    pub count: i32,
+    pub active: bool,
+}
+
+async fn struct_default_handler(
+    TypedMultipart(req): TypedMultipart<StructDefaultTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "count": req.count,
+        "active": req.active,
+    }))
+}
+
+fn create_serde_test_app() -> axum::Router {
+    axum::Router::new()
+        .route("/serde-test", axum::routing::post(serde_attr_handler))
+        .route(
+            "/struct-default-test",
+            axum::routing::post(struct_default_handler),
+        )
+}
+
+// ─── serde(rename_all) tests ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_serde_rename_all_camel_case() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Field "user_name" is renamed to "userName" by rename_all = "camelCase"
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("customTag", "rust");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["userName"], "Alice");
+    assert_eq!(result["tagValue"], "rust");
+}
+
+#[tokio::test]
+async fn test_serde_rename_all_rust_name_rejected() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Using Rust field name "user_name" instead of "userName" should fail
+    let form = MultipartForm::new()
+        .add_text("user_name", "Alice")
+        .add_text("customTag", "rust");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    // "userName" is missing → MissingField error
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+// ─── serde(rename = "...") tests ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_serde_rename_explicit() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // "tag_value" is renamed to "customTag" by #[serde(rename = "customTag")]
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("customTag", "explicit");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["tagValue"], "explicit");
+}
+
+#[tokio::test]
+async fn test_serde_rename_camel_case_of_field_rejected() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // "tagValue" (camelCase of Rust name) should NOT work — explicit rename takes priority
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("tagValue", "wrong");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    // "customTag" is missing → MissingField error
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+// ─── serde(default) field-level tests ───────────────────────────────────────
+
+#[tokio::test]
+async fn test_serde_default_uses_default_trait() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Omit "score" (has #[serde(default)]) — should get i32::default() = 0
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("customTag", "test");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["score"], 0, "score should default to 0");
+}
+
+#[tokio::test]
+async fn test_serde_default_fn_uses_custom_function() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Omit "greeting" (has #[serde(default = "default_greeting")])
+    // Should get "hello" from the custom function
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("customTag", "test");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(
+        result["greeting"], "hello",
+        "greeting should default to 'hello' from default_greeting()"
+    );
+}
+
+#[tokio::test]
+async fn test_serde_default_overridden_when_provided() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Provide both default fields — explicit values should win
+    let form = MultipartForm::new()
+        .add_text("userName", "Alice")
+        .add_text("customTag", "test")
+        .add_text("score", "42")
+        .add_text("greeting", "world");
+
+    let response = server.post("/serde-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["score"], 42);
+    assert_eq!(result["greeting"], "world");
+}
+
+// ─── serde(default) struct-level tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_struct_level_serde_default_all_omitted() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // No recognized fields — struct has #[serde(default)], all get Default::default().
+    // Send an unrecognized field to produce a valid multipart body (non-strict ignores it).
+    let form = MultipartForm::new().add_text("_ignored", "");
+
+    let response = server.post("/struct-default-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["name"], "", "String::default() is empty string");
+    assert_eq!(result["count"], 0, "i32::default() is 0");
+    assert_eq!(result["active"], false, "bool::default() is false");
+}
+
+#[tokio::test]
+async fn test_struct_level_serde_default_partial() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Only provide "name" — other fields should get defaults
+    let form = MultipartForm::new().add_text("name", "Bob");
+
+    let response = server.post("/struct-default-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["name"], "Bob");
+    assert_eq!(result["count"], 0);
+    assert_eq!(result["active"], false);
+}
+
+#[tokio::test]
+async fn test_struct_level_serde_default_all_provided() {
+    let server = TestServer::new(create_serde_test_app());
+
+    // Provide all fields — explicit values should win
+    let form = MultipartForm::new()
+        .add_text("name", "Charlie")
+        .add_text("count", "99")
+        .add_text("active", "true");
+
+    let response = server.post("/struct-default-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["name"], "Charlie");
+    assert_eq!(result["count"], 99);
+    assert_eq!(result["active"], true);
+}

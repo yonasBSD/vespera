@@ -22,7 +22,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Fields, Type};
 
-use crate::parser::{extract_field_rename, extract_rename_all, rename_field};
+use crate::parser::{extract_default, extract_field_rename, extract_rename_all, rename_field};
 
 /// Collected codegen fragments for each struct field.
 struct FieldCodegen<'a> {
@@ -32,11 +32,22 @@ struct FieldCodegen<'a> {
     idents: Vec<&'a syn::Ident>,
 }
 
+/// How a missing field should be handled.
+enum DefaultKind {
+    /// No default — field is required; emit `MissingField` error.
+    None,
+    /// Use `Default::default()` — from `#[serde(default)]` or `#[form_data(default)]`.
+    Trait,
+    /// Call a custom function — from `#[serde(default = "path::to::fn")]`.
+    Function(String),
+}
+
 /// Process all named fields into codegen fragments.
 fn process_fields<'a>(
     fields: impl Iterator<Item = &'a syn::Field>,
     rename_all: Option<&str>,
     strict: bool,
+    struct_default: bool,
 ) -> FieldCodegen<'a> {
     let mut cg = FieldCodegen {
         declarations: Vec::new(),
@@ -52,7 +63,7 @@ fn process_fields<'a>(
         let is_option = is_option_type(ty);
         let field_name = resolve_field_name(ident, &field.attrs, rename_all);
         let limit_tokens = extract_limit_tokens(&field.attrs);
-        let has_default = extract_default_flag(&field.attrs);
+        let default_kind = resolve_default_kind(&field.attrs, struct_default);
 
         // The concrete type for TryFromFieldWithState turbofish. For Option<T>
         // and Vec<T> the derive wraps the parsed value, so the trait Self is T.
@@ -110,18 +121,28 @@ fn process_fields<'a>(
 
         // Post-loop: required field checks / defaults
         if !is_option && !is_vec {
-            if has_default {
-                cg.post_loop.push(quote! {
-                    let #ident: #ty = #ident.unwrap_or_default();
-                });
-            } else {
-                cg.post_loop.push(quote! {
-                    let #ident = #ident.ok_or(
-                        vespera::multipart::TypedMultipartError::MissingField {
-                            field_name: std::string::String::from(#field_name)
-                        }
-                    )?;
-                });
+            match &default_kind {
+                DefaultKind::Trait => {
+                    cg.post_loop.push(quote! {
+                        let #ident: #ty = #ident.unwrap_or_default();
+                    });
+                }
+                DefaultKind::Function(fn_path) => {
+                    let path: syn::ExprPath =
+                        syn::parse_str(fn_path).expect("invalid default function path");
+                    cg.post_loop.push(quote! {
+                        let #ident: #ty = #ident.unwrap_or_else(#path);
+                    });
+                }
+                DefaultKind::None => {
+                    cg.post_loop.push(quote! {
+                        let #ident = #ident.ok_or(
+                            vespera::multipart::TypedMultipartError::MissingField {
+                                field_name: std::string::String::from(#field_name)
+                            }
+                        )?;
+                    });
+                }
             }
         }
 
@@ -136,6 +157,7 @@ pub fn process_derive(input: &DeriveInput) -> TokenStream {
     let struct_name = &input.ident;
     let rename_all = extract_rename_all(&input.attrs);
     let strict = extract_strict(&input.attrs);
+    let struct_default = extract_struct_default(&input.attrs);
 
     let fields = match &input.data {
         syn::Data::Struct(data) => match &data.fields {
@@ -157,7 +179,7 @@ pub fn process_derive(input: &DeriveInput) -> TokenStream {
         }
     };
 
-    let mut cg = process_fields(fields.iter(), rename_all.as_deref(), strict);
+    let mut cg = process_fields(fields.iter(), rename_all.as_deref(), strict, struct_default);
 
     if strict {
         cg.assignments.push(quote! {
@@ -317,8 +339,35 @@ fn extract_limit_tokens(attrs: &[syn::Attribute]) -> TokenStream {
     quote! { std::option::Option::None }
 }
 
+/// Resolve the default behavior for a field.
+///
+/// Priority:
+/// 1. `#[form_data(default)]` — explicit form_data override (bare default)
+/// 2. `#[serde(default)]` — bare default via `Default::default()`
+/// 3. `#[serde(default = "fn_path")]` — custom default function
+/// 4. Struct-level `#[serde(default)]` — all fields get `Default::default()`
+/// 5. No default — field is required
+fn resolve_default_kind(attrs: &[syn::Attribute], struct_default: bool) -> DefaultKind {
+    // 1. Check #[form_data(default)]
+    if extract_form_data_default(attrs) {
+        return DefaultKind::Trait;
+    }
+
+    // 2-3. Check #[serde(default)] or #[serde(default = "fn")]
+    if let Some(serde_default) = extract_default(attrs) {
+        return serde_default.map_or(DefaultKind::Trait, DefaultKind::Function);
+    }
+
+    // 4. Struct-level #[serde(default)]
+    if struct_default {
+        return DefaultKind::Trait;
+    }
+
+    DefaultKind::None
+}
+
 /// Extract `default` flag from `#[form_data(default)]`.
-fn extract_default_flag(attrs: &[syn::Attribute]) -> bool {
+fn extract_form_data_default(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if attr.path().is_ident("form_data") {
             let mut has_default = false;
@@ -334,6 +383,13 @@ fn extract_default_flag(attrs: &[syn::Attribute]) -> bool {
         }
     }
     false
+}
+
+/// Check if the struct has `#[serde(default)]` at the struct level.
+fn extract_struct_default(attrs: &[syn::Attribute]) -> bool {
+    // Reuse extract_default — if it returns Some(None), it's bare #[serde(default)]
+    // For struct-level, we only support bare default (no custom function)
+    extract_default(attrs).is_some()
 }
 
 // ─── Type Utilities ─────────────────────────────────────────────────────────
