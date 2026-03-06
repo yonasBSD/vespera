@@ -89,35 +89,21 @@ fn process_fields<'a>(
         // Field value parsing — explicit turbofish types are required because
         // RPITIT opaque return types prevent the compiler from inferring
         // `TryFromFieldWithState::Self` through `.await`.
-        let parse_value = quote! {
-            <#parse_ty as vespera::multipart::TryFromFieldWithState<__VesperaS__>>::try_from_field_with_state(
-                __field__, #limit_tokens, __state__
-            ).await?
-        };
+        let try_from_call = quote! { <#parse_ty as vespera::multipart::TryFromFieldWithState<__VesperaS__>>::try_from_field_with_state };
+        let parse_value = quote! { #try_from_call(__field__, #limit_tokens, __state__).await? };
 
         let assignment = if is_vec {
             quote! { #ident.push(#parse_value); }
         } else if strict {
-            quote! {
-                if #ident.is_none() {
-                    #ident = std::option::Option::Some(#parse_value);
-                } else {
-                    return std::result::Result::Err(
-                        vespera::multipart::TypedMultipartError::DuplicateField {
-                            field_name: std::string::String::from(#field_name)
-                        }
-                    );
-                }
-            }
+            let set_value = quote! { #ident = std::option::Option::Some(#parse_value) };
+            let dup_err = quote! { return std::result::Result::Err(vespera::multipart::TypedMultipartError::DuplicateField { field_name: std::string::String::from(#field_name) }) };
+            quote! { if #ident.is_none() { #set_value ; } else { #dup_err ; } }
         } else {
             quote! { #ident = std::option::Option::Some(#parse_value); }
         };
 
-        cg.assignments.push(quote! {
-            if __field_name__ == #field_name {
-                #assignment
-            }
-        });
+        let field_match = quote! { if __field_name__ == #field_name { #assignment } };
+        cg.assignments.push(field_match);
 
         // Post-loop: required field checks / defaults
         if !is_option && !is_vec {
