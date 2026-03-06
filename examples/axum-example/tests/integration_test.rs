@@ -1330,6 +1330,366 @@ async fn test_serde_default_overridden_when_provided() {
     assert_eq!(result["greeting"], "world");
 }
 
+// ─── Vec<T> field, strict mode, form_data(field_name), numeric/char tests ───
+
+/// Test struct with Vec<T> field for repeated multipart fields.
+#[derive(Debug, Multipart)]
+#[allow(dead_code)]
+struct VecFieldTestRequest {
+    pub name: String,
+    pub tags: Vec<String>,
+}
+
+async fn vec_field_handler(
+    TypedMultipart(req): TypedMultipart<VecFieldTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "tags": req.tags,
+    }))
+}
+
+/// Test struct with strict mode enabled.
+#[derive(Debug, Multipart)]
+#[try_from_multipart(strict)]
+#[allow(dead_code)]
+struct StrictModeTestRequest {
+    pub name: String,
+    pub age: i32,
+}
+
+async fn strict_mode_handler(
+    TypedMultipart(req): TypedMultipart<StrictModeTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "age": req.age,
+    }))
+}
+
+/// Test struct with form_data(field_name) override.
+#[derive(Debug, Multipart)]
+#[allow(dead_code)]
+struct FieldNameOverrideTestRequest {
+    pub name: String,
+    #[form_data(field_name = "custom_field")]
+    pub data: String,
+}
+
+async fn field_name_override_handler(
+    TypedMultipart(req): TypedMultipart<FieldNameOverrideTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "data": req.data,
+    }))
+}
+
+/// Test struct with form_data(default) attribute.
+#[derive(Debug, Multipart)]
+#[allow(dead_code)]
+struct FormDataDefaultTestRequest {
+    pub name: String,
+    #[form_data(default)]
+    pub count: i32,
+}
+
+async fn form_data_default_handler(
+    TypedMultipart(req): TypedMultipart<FormDataDefaultTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "count": req.count,
+    }))
+}
+
+/// Test struct with numeric and char fields for type parsing coverage.
+#[derive(Debug, Multipart)]
+#[allow(dead_code)]
+struct NumericCharTestRequest {
+    pub name: String,
+    pub count: i32,
+    pub score: f64,
+    pub initial: char,
+}
+
+async fn numeric_char_handler(
+    TypedMultipart(req): TypedMultipart<NumericCharTestRequest>,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "name": req.name,
+        "count": req.count,
+        "score": req.score,
+        "initial": req.initial.to_string(),
+    }))
+}
+
+fn create_coverage_test_app() -> axum::Router {
+    axum::Router::new()
+        .route("/vec-test", axum::routing::post(vec_field_handler))
+        .route("/strict-test", axum::routing::post(strict_mode_handler))
+        .route(
+            "/field-name-test",
+            axum::routing::post(field_name_override_handler),
+        )
+        .route(
+            "/form-data-default-test",
+            axum::routing::post(form_data_default_handler),
+        )
+        .route(
+            "/numeric-char-test",
+            axum::routing::post(numeric_char_handler),
+        )
+}
+
+// ─── Vec<T> field tests ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_vec_field_multiple_values() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("tags", "rust")
+        .add_text("tags", "web")
+        .add_text("tags", "api");
+
+    let response = server.post("/vec-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["name"], "Alice");
+    assert_eq!(result["tags"], json!(["rust", "web", "api"]));
+}
+
+#[tokio::test]
+async fn test_vec_field_empty() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // No "tags" fields — Vec should be empty
+    let form = MultipartForm::new().add_text("name", "Bob");
+
+    let response = server.post("/vec-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["tags"], json!([]));
+}
+
+#[tokio::test]
+async fn test_vec_field_single_value() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new()
+        .add_text("name", "Charlie")
+        .add_text("tags", "solo");
+
+    let response = server.post("/vec-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["tags"], json!(["solo"]));
+}
+
+// ─── Strict mode tests ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_strict_mode_valid_request() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("age", "30");
+
+    let response = server.post("/strict-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["name"], "Alice");
+    assert_eq!(result["age"], 30);
+}
+
+#[tokio::test]
+async fn test_strict_mode_unknown_field() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "extra" is not a field in StrictModeTestRequest → UnknownField error
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("age", "30")
+        .add_text("extra", "rejected");
+
+    let response = server.post("/strict-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = response.text();
+    assert!(
+        body.contains("Unknown field"),
+        "Should mention unknown field: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_strict_mode_duplicate_field() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // Sending "name" twice in strict mode → DuplicateField error
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("name", "Bob")
+        .add_text("age", "30");
+
+    let response = server.post("/strict-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = response.text();
+    assert!(
+        body.contains("Duplicate field"),
+        "Should mention duplicate field: {body}"
+    );
+}
+
+// ─── form_data(field_name) tests ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_form_data_field_name_override() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "data" field is mapped to "custom_field" via form_data(field_name)
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("custom_field", "payload");
+
+    let response = server.post("/field-name-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["data"], "payload");
+}
+
+#[tokio::test]
+async fn test_form_data_field_name_rust_name_rejected() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // Using Rust field name "data" instead of "custom_field" → MissingField
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("data", "payload");
+
+    let response = server.post("/field-name-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+}
+
+// ─── form_data(default) tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_form_data_default_uses_default_trait() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // Omit "count" (has #[form_data(default)]) → Default::default() = 0
+    let form = MultipartForm::new().add_text("name", "Alice");
+
+    let response = server.post("/form-data-default-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["count"], 0);
+}
+
+#[tokio::test]
+async fn test_form_data_default_overridden_when_provided() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "42");
+
+    let response = server.post("/form-data-default-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["count"], 42);
+}
+
+// ─── Numeric and char field parsing tests ───────────────────────────────────
+
+#[tokio::test]
+async fn test_numeric_char_valid_values() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "42")
+        .add_text("score", "9.75")
+        .add_text("initial", "A");
+
+    let response = server.post("/numeric-char-test").multipart(form).await;
+    response.assert_status_ok();
+
+    let result: serde_json::Value = response.json();
+    assert_eq!(result["count"], 42);
+    assert!((result["score"].as_f64().unwrap() - 9.75).abs() < f64::EPSILON);
+    assert_eq!(result["initial"], "A");
+}
+
+#[tokio::test]
+async fn test_numeric_field_invalid_value() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "not_a_number" for i32 field → WrongFieldType
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "not_a_number")
+        .add_text("score", "9.75")
+        .add_text("initial", "A");
+
+    let response = server.post("/numeric-char-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn test_float_field_invalid_value() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "abc" for f64 field → WrongFieldType
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "10")
+        .add_text("score", "abc")
+        .add_text("initial", "A");
+
+    let response = server.post("/numeric-char-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn test_char_field_multiple_chars() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "AB" for char field → WrongFieldType (expects exactly one character)
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "10")
+        .add_text("score", "1.0")
+        .add_text("initial", "AB");
+
+    let response = server.post("/numeric-char-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn test_char_field_empty_string() {
+    let server = TestServer::new(create_coverage_test_app());
+
+    // "" for char field → WrongFieldType (expects exactly one character)
+    let form = MultipartForm::new()
+        .add_text("name", "Alice")
+        .add_text("count", "10")
+        .add_text("score", "1.0")
+        .add_text("initial", "");
+
+    let response = server.post("/numeric-char-test").multipart(form).await;
+    response.assert_status(axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
 // ─── serde(default) struct-level tests ──────────────────────────────────────
 
 #[tokio::test]

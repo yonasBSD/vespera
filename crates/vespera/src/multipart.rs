@@ -135,10 +135,9 @@ impl std::error::Error for TypedMultipartError {}
 impl IntoResponse for TypedMultipartError {
     fn into_response(self) -> Response {
         let status = match &self {
-            Self::InvalidRequest { .. } | Self::InvalidRequestBody { .. } => {
-                StatusCode::BAD_REQUEST
-            }
-            Self::MissingField { .. }
+            Self::InvalidRequest { .. }
+            | Self::InvalidRequestBody { .. }
+            | Self::MissingField { .. }
             | Self::DuplicateField { .. }
             | Self::UnknownField { .. }
             | Self::InvalidEnumValue { .. }
@@ -507,6 +506,8 @@ impl<S: Send + Sync> TryFromFieldWithState<S> for tempfile::NamedTempFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
 
     #[test]
     fn test_str_to_bool_truthy() {
@@ -533,6 +534,8 @@ mod tests {
         }
     }
 
+    // ─── Display tests for all error variants ───────────────────────────
+
     #[test]
     fn test_error_display() {
         let err = TypedMultipartError::MissingField {
@@ -558,5 +561,151 @@ mod tests {
             err.to_string(),
             "Wrong type for field `age` (expected i32): invalid digit"
         );
+    }
+
+    #[test]
+    fn test_error_display_duplicate_field() {
+        let err = TypedMultipartError::DuplicateField {
+            field_name: "email".to_string(),
+        };
+        assert_eq!(err.to_string(), "Duplicate field: `email`");
+    }
+
+    #[test]
+    fn test_error_display_unknown_field() {
+        let err = TypedMultipartError::UnknownField {
+            field_name: "foo".to_string(),
+        };
+        assert_eq!(err.to_string(), "Unknown field: `foo`");
+    }
+
+    #[test]
+    fn test_error_display_invalid_enum_value() {
+        let err = TypedMultipartError::InvalidEnumValue {
+            field_name: "status".to_string(),
+            value: "maybe".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Invalid enum value `maybe` for field `status`"
+        );
+    }
+
+    #[test]
+    fn test_error_display_nameless_field() {
+        let err = TypedMultipartError::NamelessField;
+        assert_eq!(err.to_string(), "Encountered a field without a name");
+    }
+
+    #[test]
+    fn test_error_display_other() {
+        let err = TypedMultipartError::Other {
+            source: "something went wrong".to_string(),
+        };
+        assert_eq!(err.to_string(), "something went wrong");
+    }
+
+    // ─── IntoResponse status code tests ─────────────────────────────────
+
+    #[test]
+    fn test_into_response_duplicate_field() {
+        let err = TypedMultipartError::DuplicateField {
+            field_name: "x".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_into_response_unknown_field() {
+        let err = TypedMultipartError::UnknownField {
+            field_name: "x".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_into_response_invalid_enum_value() {
+        let err = TypedMultipartError::InvalidEnumValue {
+            field_name: "x".to_string(),
+            value: "bad".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_into_response_nameless_field() {
+        let err = TypedMultipartError::NamelessField;
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_into_response_wrong_field_type() {
+        let err = TypedMultipartError::WrongFieldType {
+            field_name: "age".to_string(),
+            wanted: "i32".to_string(),
+            source: "err".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn test_into_response_field_too_large() {
+        let err = TypedMultipartError::FieldTooLarge {
+            field_name: "file".to_string(),
+            limit_bytes: 100,
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn test_into_response_other() {
+        let err = TypedMultipartError::Other {
+            source: "err".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_into_response_missing_field() {
+        let err = TypedMultipartError::MissingField {
+            field_name: "x".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ─── Error trait ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_error_trait_is_implemented() {
+        let err: Box<dyn std::error::Error> = Box::new(TypedMultipartError::Other {
+            source: "test".to_string(),
+        });
+        assert_eq!(err.to_string(), "test");
+    }
+
+    // ─── TypedMultipart Deref / DerefMut ────────────────────────────────
+
+    #[test]
+    fn test_typed_multipart_deref() {
+        let tm = TypedMultipart("hello".to_string());
+        // Deref: &TypedMultipart<String> → &String
+        assert_eq!(&*tm, "hello");
+        assert_eq!(tm.len(), 5); // auto-deref to String method
+    }
+
+    #[test]
+    fn test_typed_multipart_deref_mut() {
+        let mut tm = TypedMultipart(vec![1, 2, 3]);
+        // DerefMut: &mut TypedMultipart<Vec<i32>> → &mut Vec<i32>
+        tm.push(4);
+        assert_eq!(&*tm, &[1, 2, 3, 4]);
     }
 }

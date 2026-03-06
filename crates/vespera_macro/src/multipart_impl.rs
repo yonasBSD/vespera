@@ -486,8 +486,502 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_byte_unit_all_suffixes() {
+        assert_eq!(parse_byte_unit("1GiB"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_byte_unit("2KiB"), Some(2 * 1024));
+        assert_eq!(parse_byte_unit("3MB"), Some(3_000_000));
+        assert_eq!(parse_byte_unit("4B"), Some(4));
+        assert_eq!(parse_byte_unit("  5MiB  "), Some(5 * 1024 * 1024));
+    }
+
+    #[test]
     fn test_strip_raw_prefix() {
         assert_eq!(strip_raw_prefix("r#type"), "type");
         assert_eq!(strip_raw_prefix("normal"), "normal");
+    }
+
+    // ─── extract_inner_generic ──────────────────────────────────────────
+
+    #[test]
+    fn test_extract_inner_generic_option() {
+        let ty: syn::Type = syn::parse_str("Option<String>").unwrap();
+        let inner = extract_inner_generic(&ty).unwrap();
+        assert_eq!(quote!(#inner).to_string(), "String");
+    }
+
+    #[test]
+    fn test_extract_inner_generic_vec() {
+        let ty: syn::Type = syn::parse_str("Vec<i32>").unwrap();
+        let inner = extract_inner_generic(&ty).unwrap();
+        assert_eq!(quote!(#inner).to_string(), "i32");
+    }
+
+    #[test]
+    fn test_extract_inner_generic_no_generics() {
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        assert!(extract_inner_generic(&ty).is_none());
+    }
+
+    #[test]
+    fn test_extract_inner_generic_non_path() {
+        let ty: syn::Type = syn::parse_str("(i32, String)").unwrap();
+        assert!(extract_inner_generic(&ty).is_none());
+    }
+
+    // ─── is_option_type / is_vec_type ───────────────────────────────────
+
+    #[test]
+    fn test_is_option_type() {
+        let ty: syn::Type = syn::parse_str("Option<String>").unwrap();
+        assert!(is_option_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("std::option::Option<i32>").unwrap();
+        assert!(is_option_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("Vec<String>").unwrap();
+        assert!(!is_option_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        assert!(!is_option_type(&ty));
+    }
+
+    #[test]
+    fn test_is_vec_type() {
+        let ty: syn::Type = syn::parse_str("Vec<String>").unwrap();
+        assert!(is_vec_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("std::vec::Vec<i32>").unwrap();
+        assert!(is_vec_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("Option<String>").unwrap();
+        assert!(!is_vec_type(&ty));
+
+        let ty: syn::Type = syn::parse_str("String").unwrap();
+        assert!(!is_vec_type(&ty));
+    }
+
+    // ─── matches_type_name ──────────────────────────────────────────────
+
+    #[test]
+    fn test_matches_type_name_simple() {
+        let ty: syn::Type = syn::parse_str("Option<i32>").unwrap();
+        assert!(matches_type_name(&ty, &["Option"]));
+        assert!(!matches_type_name(&ty, &["Vec"]));
+    }
+
+    #[test]
+    fn test_matches_type_name_qualified() {
+        let ty: syn::Type = syn::parse_str("std::option::Option<i32>").unwrap();
+        assert!(matches_type_name(&ty, &["std::option::Option"]));
+        assert!(!matches_type_name(&ty, &["Option"])); // qualified doesn't match simple
+    }
+
+    #[test]
+    fn test_matches_type_name_non_path() {
+        let ty: syn::Type = syn::parse_str("(i32, String)").unwrap();
+        assert!(!matches_type_name(&ty, &["Option", "Vec"]));
+    }
+
+    // ─── extract_form_data_field_name ───────────────────────────────────
+
+    fn parse_field(code: &str) -> syn::Field {
+        let input: syn::DeriveInput = syn::parse_str(&format!("struct T {{ {code} }}")).unwrap();
+        match &input.data {
+            syn::Data::Struct(s) => match &s.fields {
+                Fields::Named(n) => n.named.first().unwrap().clone(),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_attrs(code: &str) -> Vec<syn::Attribute> {
+        parse_field(code).attrs
+    }
+
+    #[test]
+    fn test_extract_form_data_field_name_present() {
+        let attrs = parse_attrs(r#"#[form_data(field_name = "custom")] pub x: String"#);
+        assert_eq!(
+            extract_form_data_field_name(&attrs),
+            Some("custom".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_form_data_field_name_absent() {
+        let attrs = parse_attrs("pub x: String");
+        assert_eq!(extract_form_data_field_name(&attrs), None);
+    }
+
+    #[test]
+    fn test_extract_form_data_field_name_other_form_data_attr() {
+        let attrs = parse_attrs(r#"#[form_data(limit = "100")] pub x: String"#);
+        assert_eq!(extract_form_data_field_name(&attrs), None);
+    }
+
+    // ─── extract_strict ─────────────────────────────────────────────────
+
+    fn parse_struct_attrs(code: &str) -> Vec<syn::Attribute> {
+        let input: syn::DeriveInput = syn::parse_str(code).unwrap();
+        input.attrs
+    }
+
+    #[test]
+    fn test_extract_strict_present() {
+        let attrs = parse_struct_attrs("#[try_from_multipart(strict)] struct T { }");
+        assert!(extract_strict(&attrs));
+    }
+
+    #[test]
+    fn test_extract_strict_absent() {
+        let attrs = parse_struct_attrs("struct T { }");
+        assert!(!extract_strict(&attrs));
+    }
+
+    #[test]
+    fn test_extract_strict_other_attr() {
+        let attrs =
+            parse_struct_attrs("#[try_from_multipart(rename_all = \"camelCase\")] struct T { }");
+        assert!(!extract_strict(&attrs));
+    }
+
+    // ─── extract_form_data_default ──────────────────────────────────────
+
+    #[test]
+    fn test_extract_form_data_default_present() {
+        let attrs = parse_attrs("#[form_data(default)] pub x: i32");
+        assert!(extract_form_data_default(&attrs));
+    }
+
+    #[test]
+    fn test_extract_form_data_default_absent() {
+        let attrs = parse_attrs("pub x: i32");
+        assert!(!extract_form_data_default(&attrs));
+    }
+
+    #[test]
+    fn test_extract_form_data_default_other_form_data() {
+        let attrs = parse_attrs(r#"#[form_data(limit = "100")] pub x: i32"#);
+        assert!(!extract_form_data_default(&attrs));
+    }
+
+    // ─── extract_struct_default ─────────────────────────────────────────
+
+    #[test]
+    fn test_extract_struct_default_present() {
+        let attrs = parse_struct_attrs("#[serde(default)] struct T { }");
+        assert!(extract_struct_default(&attrs));
+    }
+
+    #[test]
+    fn test_extract_struct_default_absent() {
+        let attrs = parse_struct_attrs("struct T { }");
+        assert!(!extract_struct_default(&attrs));
+    }
+
+    // ─── resolve_default_kind ───────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_default_kind_none() {
+        let attrs = parse_attrs("pub x: i32");
+        assert!(matches!(
+            resolve_default_kind(&attrs, false),
+            DefaultKind::None
+        ));
+    }
+
+    #[test]
+    fn test_resolve_default_kind_serde_default() {
+        let attrs = parse_attrs("#[serde(default)] pub x: i32");
+        assert!(matches!(
+            resolve_default_kind(&attrs, false),
+            DefaultKind::Trait
+        ));
+    }
+
+    #[test]
+    fn test_resolve_default_kind_serde_default_fn() {
+        let attrs = parse_attrs(r#"#[serde(default = "my_fn")] pub x: i32"#);
+        assert!(
+            matches!(resolve_default_kind(&attrs, false), DefaultKind::Function(ref f) if f == "my_fn")
+        );
+    }
+
+    #[test]
+    fn test_resolve_default_kind_form_data_default() {
+        let attrs = parse_attrs("#[form_data(default)] pub x: i32");
+        assert!(matches!(
+            resolve_default_kind(&attrs, false),
+            DefaultKind::Trait
+        ));
+    }
+
+    #[test]
+    fn test_resolve_default_kind_struct_level() {
+        let attrs = parse_attrs("pub x: i32");
+        assert!(matches!(
+            resolve_default_kind(&attrs, true),
+            DefaultKind::Trait
+        ));
+    }
+
+    #[test]
+    fn test_resolve_default_kind_form_data_overrides_struct_default() {
+        // form_data(default) takes priority, but result is the same (Trait)
+        let attrs = parse_attrs("#[form_data(default)] pub x: i32");
+        assert!(matches!(
+            resolve_default_kind(&attrs, true),
+            DefaultKind::Trait
+        ));
+    }
+
+    // ─── resolve_field_name ─────────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_field_name_plain() {
+        let field = parse_field("pub my_field: String");
+        let name = resolve_field_name(field.ident.as_ref().unwrap(), &field.attrs, None);
+        assert_eq!(name, "my_field");
+    }
+
+    #[test]
+    fn test_resolve_field_name_rename_all() {
+        let field = parse_field("pub my_field: String");
+        let name = resolve_field_name(
+            field.ident.as_ref().unwrap(),
+            &field.attrs,
+            Some("camelCase"),
+        );
+        assert_eq!(name, "myField");
+    }
+
+    #[test]
+    fn test_resolve_field_name_serde_rename() {
+        let field = parse_field(r#"#[serde(rename = "custom")] pub my_field: String"#);
+        let name = resolve_field_name(
+            field.ident.as_ref().unwrap(),
+            &field.attrs,
+            Some("camelCase"),
+        );
+        assert_eq!(name, "custom"); // explicit rename beats rename_all
+    }
+
+    #[test]
+    fn test_resolve_field_name_form_data_field_name() {
+        let field = parse_field(
+            r#"#[form_data(field_name = "override")] #[serde(rename = "serde_name")] pub my_field: String"#,
+        );
+        let name = resolve_field_name(
+            field.ident.as_ref().unwrap(),
+            &field.attrs,
+            Some("camelCase"),
+        );
+        assert_eq!(name, "override"); // form_data field_name beats everything
+    }
+
+    // ─── extract_limit_tokens ───────────────────────────────────────────
+
+    #[test]
+    fn test_extract_limit_tokens_none() {
+        let attrs = parse_attrs("pub x: String");
+        let tokens = extract_limit_tokens(&attrs);
+        assert_eq!(tokens.to_string(), "std :: option :: Option :: None");
+    }
+
+    #[test]
+    fn test_extract_limit_tokens_with_value() {
+        let attrs = parse_attrs(r#"#[form_data(limit = "100")] pub x: String"#);
+        let tokens = extract_limit_tokens(&attrs);
+        assert_eq!(
+            tokens.to_string(),
+            "std :: option :: Option :: Some (100usize)"
+        );
+    }
+
+    #[test]
+    fn test_extract_limit_tokens_unlimited() {
+        let attrs = parse_attrs(r#"#[form_data(limit = "unlimited")] pub x: String"#);
+        let tokens = extract_limit_tokens(&attrs);
+        assert_eq!(tokens.to_string(), "std :: option :: Option :: None");
+    }
+
+    #[test]
+    fn test_extract_limit_tokens_mib() {
+        let attrs = parse_attrs(r#"#[form_data(limit = "10MiB")] pub x: String"#);
+        let tokens = extract_limit_tokens(&attrs);
+        let expected = 10 * 1024 * 1024;
+        assert_eq!(
+            tokens.to_string(),
+            format!("std :: option :: Option :: Some ({expected}usize)")
+        );
+    }
+
+    // ─── process_derive ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_process_derive_basic_struct() {
+        let input: syn::DeriveInput =
+            syn::parse_str("struct MyForm { pub name: String, pub age: i32 }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("TryFromMultipartWithState"),
+            "should generate trait impl"
+        );
+        assert!(code.contains("MyForm"), "should reference the struct name");
+        assert!(code.contains("\"name\""), "should reference field name");
+        assert!(code.contains("\"age\""), "should reference field name");
+    }
+
+    #[test]
+    fn test_process_derive_with_option_field() {
+        let input: syn::DeriveInput =
+            syn::parse_str("struct MyForm { pub name: String, pub bio: Option<String> }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(code.contains("TryFromMultipartWithState"));
+        // Option fields get initialized to None, no MissingField check
+        assert!(code.contains("Option :: None"));
+    }
+
+    #[test]
+    fn test_process_derive_with_vec_field() {
+        let input: syn::DeriveInput =
+            syn::parse_str("struct MyForm { pub name: String, pub tags: Vec<String> }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("Vec :: new"),
+            "Vec fields should be initialized with Vec::new()"
+        );
+        assert!(code.contains("push"), "Vec fields should use push()");
+    }
+
+    #[test]
+    fn test_process_derive_strict_mode() {
+        let input: syn::DeriveInput =
+            syn::parse_str("#[try_from_multipart(strict)] struct MyForm { pub name: String }")
+                .unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("DuplicateField"),
+            "strict mode should check for duplicates"
+        );
+        assert!(
+            code.contains("UnknownField"),
+            "strict mode should reject unknown fields"
+        );
+        assert!(
+            code.contains("NamelessField"),
+            "strict mode should reject nameless fields"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_with_rename_all() {
+        let input: syn::DeriveInput = syn::parse_str(
+            r#"#[serde(rename_all = "camelCase")] struct MyForm { pub user_name: String }"#,
+        )
+        .unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("\"userName\""),
+            "rename_all should convert to camelCase"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_with_serde_default() {
+        let input: syn::DeriveInput =
+            syn::parse_str("#[serde(default)] struct MyForm { pub count: i32 }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("unwrap_or_default"),
+            "struct-level default should use unwrap_or_default"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_with_field_default_fn() {
+        let input: syn::DeriveInput =
+            syn::parse_str(r#"struct MyForm { #[serde(default = "my_default")] pub val: String }"#)
+                .unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("unwrap_or_else"),
+            "field default fn should use unwrap_or_else"
+        );
+        assert!(
+            code.contains("my_default"),
+            "should reference the default function"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_non_struct_errors() {
+        let input: syn::DeriveInput = syn::parse_str("enum Foo { A, B }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("compile_error"),
+            "enums should produce compile error"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_tuple_struct_errors() {
+        let input: syn::DeriveInput = syn::parse_str("struct Foo(String, i32);").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("compile_error"),
+            "tuple structs should produce compile error"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_form_data_field_name() {
+        let input: syn::DeriveInput = syn::parse_str(
+            r#"struct MyForm { #[form_data(field_name = "custom")] pub data: String }"#,
+        )
+        .unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("\"custom\""),
+            "form_data field_name should be used"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_form_data_default() {
+        let input: syn::DeriveInput =
+            syn::parse_str("struct MyForm { #[form_data(default)] pub count: i32 }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            code.contains("unwrap_or_default"),
+            "form_data(default) should use unwrap_or_default"
+        );
+    }
+
+    #[test]
+    fn test_process_derive_non_strict_no_duplicate_check() {
+        let input: syn::DeriveInput = syn::parse_str("struct MyForm { pub name: String }").unwrap();
+        let tokens = process_derive(&input);
+        let code = tokens.to_string();
+        assert!(
+            !code.contains("DuplicateField"),
+            "non-strict should not check for duplicates"
+        );
+        assert!(
+            !code.contains("UnknownField"),
+            "non-strict should not check for unknown fields"
+        );
     }
 }
