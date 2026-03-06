@@ -1831,3 +1831,40 @@ async fn test_multipart_error_malformed_body_stream() {
         "Expected InvalidRequestBody Display output, got: {body}"
     );
 }
+
+#[tokio::test]
+async fn test_missing_required_field() {
+    // Send only "name" but omit required "age" → MissingField error from post-loop check
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new().add_text("name", "Alice");
+    let response = server.post("/strict-test").multipart(form).await;
+
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = response.text();
+    assert!(
+        body.contains("Missing field"),
+        "Expected MissingField error, got: {body}"
+    );
+    assert!(
+        body.contains("age"),
+        "Should name the missing field 'age', got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_missing_multiple_required_fields() {
+    // Send only "name" to numeric-char-test which requires name, count, score, initial.
+    // Non-strict endpoint: the unmatched fields simply stay None → MissingField in post-loop.
+    let server = TestServer::new(create_coverage_test_app());
+
+    let form = MultipartForm::new().add_text("name", "Alice");
+    let response = server.post("/numeric-char-test").multipart(form).await;
+
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body = response.text();
+    assert!(
+        body.contains("Missing field"),
+        "Expected MissingField error, got: {body}"
+    );
+}
