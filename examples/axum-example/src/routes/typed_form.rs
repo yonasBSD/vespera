@@ -30,6 +30,7 @@ pub struct CreateFileUploadRequest {
 }
 
 #[derive(Debug, TryFromMultipart, Schema)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateFileUploadRequest {
     pub name: Option<String>,
     #[form_data(limit = "10MiB")]

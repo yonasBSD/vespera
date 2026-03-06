@@ -3778,7 +3778,7 @@ expression: "std::fs::read_to_string(\"openapi.json\").unwrap()"
             "format": "binary",
             "nullable": true
           },
-          "is_active": {
+          "isActive": {
             "type": "boolean",
             "nullable": true
           },
