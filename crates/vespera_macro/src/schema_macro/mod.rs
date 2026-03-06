@@ -580,14 +580,14 @@ pub fn generate_schema_type_code(
 
     // Generate the new struct (with inline types for circular relations first)
     let generated_tokens = if input.multipart {
-        // Multipart mode: derive TryFromMultipart instead of serde
-        // Still emit #[serde(rename_all = ...)] so Schema derive can read it for OpenAPI field naming
-        // (Schema derive registers `serde` as a helper attribute, so this is valid without Serialize/Deserialize)
+        // Multipart mode: derive Multipart instead of serde
+        // Emit #[serde(rename_all = ...)] so Multipart applies the rename at runtime
+        // AND Schema derive reads it via extract_rename_all() fallback for OpenAPI field naming
         quote! {
             #(#inline_type_definitions)*
 
             #(#struct_doc_attrs)*
-            #[derive(vespera::axum_typed_multipart::TryFromMultipart, #clone_derive #schema_derive)]
+            #[derive(vespera::Multipart, #clone_derive #schema_derive)]
             #schema_name_attr
             #[serde(rename_all = #effective_rename_all)]
             pub struct #new_type_name {

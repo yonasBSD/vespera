@@ -3774,7 +3774,7 @@
             "format": "binary",
             "nullable": true
           },
-          "is_active": {
+          "isActive": {
             "type": "boolean",
             "nullable": true
           },
