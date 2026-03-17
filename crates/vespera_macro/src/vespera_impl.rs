@@ -953,6 +953,80 @@ mod tests {
         let _ = result;
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_process_vespera_macro_with_cron_storage() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create src/ subfolder structure to simulate a real project
+        let src_dir = temp_dir.path().join("src");
+        std::fs::create_dir_all(src_dir.join("routes")).expect("create routes dir");
+        std::fs::write(src_dir.join("routes").join("health.rs"), "// empty\n")
+            .expect("write health.rs");
+
+        // Set CARGO_MANIFEST_DIR so module path derivation works
+        let old_manifest = std::env::var("CARGO_MANIFEST_DIR").ok();
+        unsafe {
+            std::env::set_var(
+                "CARGO_MANIFEST_DIR",
+                temp_dir.path().to_string_lossy().as_ref(),
+            );
+        }
+
+        // Populate CRON_STORAGE with a fake cron entry
+        {
+            let mut storage = crate::CRON_STORAGE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            storage.push(crate::cron_impl::StoredCronInfo {
+                fn_name: "test_cron_job".to_string(),
+                expression: "0 */5 * * * *".to_string(),
+                file_path: Some(
+                    src_dir
+                        .join("routes")
+                        .join("health.rs")
+                        .display()
+                        .to_string(),
+                ),
+            });
+        }
+
+        let processed = ProcessedVesperaInput {
+            folder_name: src_dir.join("routes").to_string_lossy().to_string(),
+            openapi_file_names: vec![],
+            title: None,
+            version: None,
+            docs_url: None,
+            redoc_url: None,
+            servers: None,
+            merge: vec![],
+        };
+
+        // This exercises the CRON_STORAGE → CronMetadata derivation path
+        let result = process_vespera_macro(&processed, &HashMap::new(), &[]);
+        assert!(
+            result.is_ok(),
+            "Should succeed with cron storage: {result:?}"
+        );
+
+        // Clean up CRON_STORAGE
+        {
+            let mut storage = crate::CRON_STORAGE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            storage.retain(|s| s.fn_name != "test_cron_job");
+        }
+
+        // Restore CARGO_MANIFEST_DIR
+        unsafe {
+            if let Some(val) = old_manifest {
+                std::env::set_var("CARGO_MANIFEST_DIR", val);
+            } else {
+                std::env::remove_var("CARGO_MANIFEST_DIR");
+            }
+        }
+    }
+
     // ========== Tests for process_export_app ==========
 
     #[test]

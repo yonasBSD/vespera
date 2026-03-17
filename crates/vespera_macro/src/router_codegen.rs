@@ -1783,6 +1783,63 @@ pub fn get_users() -> String {
         );
     }
 
+    // ========== Tests for generate_router_code with cron jobs ==========
+
+    #[test]
+    fn test_generate_router_code_with_merge_and_cron() {
+        let metadata = CollectedMetadata::new();
+        let merge_apps: Vec<syn::Path> = vec![syn::parse_quote!(third::ThirdApp)];
+        let cron_jobs = vec![CronMetadata {
+            expression: "0 */5 * * * *".to_string(),
+            function_name: "cleanup".to_string(),
+            module_path: "tasks".to_string(),
+            file_path: "src/tasks.rs".to_string(),
+        }];
+
+        let result = generate_router_code(&metadata, None, None, None, &merge_apps, &cron_jobs);
+        let code = result.to_string();
+
+        assert!(
+            code.contains("VesperaRouter"),
+            "Should use VesperaRouter for merge, got: {code}"
+        );
+        assert!(
+            code.contains("JobScheduler"),
+            "Should contain cron scheduler code, got: {code}"
+        );
+        assert!(
+            code.contains("cleanup"),
+            "Should reference cron function, got: {code}"
+        );
+    }
+
+    #[test]
+    fn test_generate_router_code_with_cron_no_merge() {
+        let metadata = CollectedMetadata::new();
+        let cron_jobs = vec![CronMetadata {
+            expression: "1/10 * * * * *".to_string(),
+            function_name: "heartbeat".to_string(),
+            module_path: "cron::health".to_string(),
+            file_path: "src/cron/health.rs".to_string(),
+        }];
+
+        let result = generate_router_code(&metadata, None, None, None, &[], &cron_jobs);
+        let code = result.to_string();
+
+        assert!(
+            !code.contains("VesperaRouter"),
+            "Should NOT use VesperaRouter without merge, got: {code}"
+        );
+        assert!(
+            code.contains("JobScheduler"),
+            "Should contain cron scheduler code, got: {code}"
+        );
+        assert!(
+            code.contains("heartbeat"),
+            "Should reference cron function, got: {code}"
+        );
+    }
+
     // ========== Tests for ExportAppInput parsing ==========
 
     #[test]

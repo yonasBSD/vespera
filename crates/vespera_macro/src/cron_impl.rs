@@ -69,18 +69,8 @@ pub fn process_cron_attribute(
     attr: proc_macro2::TokenStream,
     item: proc_macro2::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    let expression: syn::LitStr = syn::parse2(attr).map_err(|_| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "#[cron] attribute: expected a cron expression string. Example: #[cron(\"0 */5 * * * *\")]",
-        )
-    })?;
-    let item_fn: syn::ItemFn = syn::parse2(item.clone()).map_err(|e| {
-        syn::Error::new(
-            e.span(),
-            "#[cron] attribute: can only be applied to functions, not other items. Move or remove the attribute.",
-        )
-    })?;
+    let expression: syn::LitStr = syn::parse2(attr).map_err(|_| syn::Error::new(proc_macro2::Span::call_site(), "#[cron] attribute: expected a cron expression string. Example: #[cron(\"0 */5 * * * *\")]"))?;
+    let item_fn: syn::ItemFn = syn::parse2(item.clone()).map_err(|e| syn::Error::new(e.span(), "#[cron] attribute: can only be applied to functions, not other items. Move or remove the attribute."))?;
     validate_cron_fn(&item_fn)?;
 
     let stored = StoredCronInfo {
