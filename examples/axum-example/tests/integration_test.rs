@@ -4,7 +4,7 @@ use axum_test::multipart::{MultipartForm, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use vespera::multipart::{FieldData, TypedMultipart};
-use vespera::{Multipart, Schema, schema};
+use vespera::{Multipart, Schema, schema, axum};
 
 #[tokio::test]
 async fn test_health_endpoint() {

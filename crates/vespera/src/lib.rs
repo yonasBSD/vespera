@@ -121,3 +121,13 @@ where
 // Re-export tower_layer and tower_service for the layer method
 pub use tower_layer;
 pub use tower_service;
+
+// In-process transport: dispatch HTTP-like requests through an axum
+// Router without a TCP socket.
+#[cfg(feature = "inprocess")]
+pub mod inprocess;
+
+// JNI wrapper around inprocess dispatch.
+#[cfg(feature = "jni")]
+#[allow(unsafe_code)]
+pub mod jni;

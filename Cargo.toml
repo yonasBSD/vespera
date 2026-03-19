@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "examples/*"]
+exclude = ["examples/java-jni-demo"]
 
 [workspace.package]
 version = "0.1.44"
