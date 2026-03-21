@@ -22,7 +22,6 @@ pub use vespera_inprocess;
 /// vespera::jni_app!(create_app);
 /// ```
 #[macro_export]
-#[cfg(not(tarpaulin_include))]
 macro_rules! jni_app {
     ($factory:expr) => {
         #[unsafe(no_mangle)]
