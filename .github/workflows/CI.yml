@@ -78,6 +78,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Make gradlew executable
+        working-directory: ./libs/vespera-bridge
+        run: chmod +x gradlew
       - uses: changepacks/action@main
         id: changepacks
         with:
