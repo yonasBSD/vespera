@@ -83,7 +83,7 @@ cd examples/rust-jni-demo/java
 # Single file, no -Djava.library.path needed:
 java -jar demo-app/build/libs/demo-app-0.1.0.jar
 
-# Windows PowerShell (quotes required)
+# Windows PowerShell
 java "-Djava.library.path=..\..\..\target\release" -jar demo-app\build\libs\demo-app-0.1.0.jar
 ```
 
@@ -104,22 +104,25 @@ cargo test -p rust-jni-demo
 ## Project structure
 
 ```
+crates/
+├── vespera/                # OpenAPI framework + re-exports inprocess/jni via features
+├── vespera_inprocess/      # In-process dispatch + app factory (shared FFI pattern)
+└── vespera_jni/            # JNI glue: Runtime + JNI symbol (never depended on directly)
+
+libs/
+└── vespera-bridge/         # Java JAR (com.devfive.vespera.bridge)
+
 examples/rust-jni-demo/
-├── Cargo.toml
+├── Cargo.toml              # depends on vespera only: features = ["jni"]
 ├── src/
 │   ├── lib.rs              # create_app() + vespera::jni_app!(create_app)
-│   ├── main.rs             # Mode A: axum::serve on :3000
+│   ├── main.rs             # Mode A: vespera::axum::serve on :3000
 │   └── routes/
 │       ├── documents.rs    # POST /documents/validate
 │       └── health.rs       # GET /health
 └── java/
-    └── demo-app/           # Mode B: Spring Boot proxy (16 lines)
+    └── demo-app/           # Mode B: Spring Boot proxy
         └── src/.../DemoApplication.java
-
-libs/
-└── vespera-bridge/         # Reusable JAR (com.devfive.vespera.bridge)
-    └── src/.../VesperaBridge.java
-    └── src/.../VesperaProxyController.java
 ```
 
 ## How it works
@@ -127,6 +130,9 @@ libs/
 ### Rust side
 
 ```rust
+// Cargo.toml — single dependency
+// vespera = { features = ["jni"] }
+
 // lib.rs — the entire JNI integration:
 pub fn create_app() -> axum::Router {
     vespera!(title = "Document Validation API", version = "0.1.0")
@@ -138,7 +144,6 @@ vespera::jni_app!(create_app);
 ### Java side
 
 ```java
-// DemoApplication.java — the entire Spring app:
 @SpringBootApplication
 @ComponentScan(basePackages = {"kr.go.demo", "com.devfive.vespera.bridge"})
 public class DemoApplication {
@@ -149,13 +154,14 @@ public class DemoApplication {
 }
 ```
 
-### What happens
+### What happens at runtime
 
-1. `vespera::jni_app!` generates `JNI_OnLoad` which registers the router factory
-2. `vespera::jni` exports a fixed JNI symbol matching `com.devfive.vespera.bridge.VesperaBridge`
-3. `VesperaBridge.init()` loads the native library (from JAR or system path)
-4. `VesperaProxyController` (in vespera-bridge JAR) catches all HTTP requests and dispatches to Rust via `VesperaBridge.dispatch(json)`
-5. Rust routes through `router.oneshot()` — no TCP between Java and Rust
+1. `vespera::jni_app!` generates `JNI_OnLoad` → calls `vespera::inprocess::register_app(create_app)`
+2. Java calls `VesperaBridge.init("rust_jni_demo")` → loads cdylib → triggers `JNI_OnLoad`
+3. `VesperaProxyController` catches all HTTP requests → calls `VesperaBridge.dispatch(json)`
+4. JNI symbol delegates to `vespera::inprocess::dispatch_from_json()`
+5. `dispatch_from_json` gets the registered factory → builds Router → `router.oneshot(request)`
+6. No TCP between Java and Rust
 
 ### Maven/Gradle dependency
 

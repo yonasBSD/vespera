@@ -122,12 +122,23 @@ where
 pub use tower_layer;
 pub use tower_service;
 
-// In-process transport: dispatch HTTP-like requests through an axum
-// Router without a TCP socket.
+/// In-process dispatch — drive an axum Router without a TCP socket.
 #[cfg(feature = "inprocess")]
-pub mod inprocess;
+pub use vespera_inprocess as inprocess;
 
-// JNI wrapper around inprocess dispatch.
+/// JNI bridge — call Rust axum apps from Java.
 #[cfg(feature = "jni")]
-#[allow(unsafe_code)]
-pub mod jni;
+pub use vespera_jni as jni;
+
+/// Generate the `JNI_OnLoad` export that registers your app.
+///
+/// ```ignore
+/// vespera::jni_app!(create_app);
+/// ```
+#[cfg(feature = "jni")]
+#[macro_export]
+macro_rules! jni_app {
+    ($factory:expr) => {
+        $crate::jni::jni_app!($factory);
+    };
+}

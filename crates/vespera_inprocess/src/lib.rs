@@ -1,43 +1,44 @@
 //! In-process transport: dispatch HTTP-like requests through an axum
 //! [`Router`] without a TCP socket.
 //!
-//! This module is **transport-agnostic** — it knows nothing about JNI,
-//! C FFI, or WASM.  It converts a [`RequestEnvelope`] into an
-//! [`http::Request`], drives the router via
-//! [`tower::ServiceExt::oneshot`], and returns a [`ResponseEnvelope`].
+//! This crate is **transport-agnostic** — it knows nothing about JNI,
+//! C FFI, or WASM.  It provides:
 //!
-//! # Consumers
+//! 1. [`dispatch`] / [`dispatch_typed`] — drive a Router with an envelope
+//! 2. [`register_app`] / [`dispatch_from_json`] — global app factory
+//!    for any FFI boundary (JNI, C, WASM)
 //!
-//! * [`crate::jni`] — JNI cdylib boundary (feature `jni`)
-//! * Tests — call [`dispatch`] directly
-//! * CLI tools — call [`dispatch`] directly
-//! * Future WASM / C FFI — same interface
-//!
-//! # Example
+//! # Example (direct)
 //!
 //! ```ignore
-//! use vespera::inprocess::{RequestEnvelope, dispatch};
-//!
-//! let envelope = RequestEnvelope {
-//!     method: "GET".into(),
-//!     path: "/health".into(),
-//!     ..Default::default()
-//! };
 //! let json = dispatch(router, &envelope).await;
+//! ```
+//!
+//! # Example (FFI pattern)
+//!
+//! ```ignore
+//! // At init time (e.g. JNI_OnLoad, DllMain, _start)
+//! vespera_inprocess::register_app(|| create_app());
+//!
+//! // On each FFI call
+//! let response_json = vespera_inprocess::dispatch_from_json(request_json);
 //! ```
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
-use axum::{Router, body::Body};
+use axum::body::Body;
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
 
-// ── Envelope Types (public API) ──────────────────────────────────────
+/// Re-export `axum::Router` so consumers don't need a direct axum dependency.
+pub use axum::Router;
 
-/// Inbound request envelope — JSON-serialisable representation of an
-/// HTTP request that can cross any FFI boundary as a string.
+// ── Envelope Types ───────────────────────────────────────────────────
+
+/// Inbound request envelope.
 #[derive(Debug, Default, Deserialize)]
 pub struct RequestEnvelope {
     pub method: String,
@@ -51,15 +52,10 @@ pub struct RequestEnvelope {
 }
 
 /// Response header value — single string or multiple values.
-///
-/// * Single-value headers serialise as `"value"`
-/// * Multi-value headers (e.g. `set-cookie`) serialise as `["v1", "v2"]`
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum HeaderValue {
-    /// Exactly one value for this header name.
     Single(String),
-    /// Two or more values (e.g. multiple `Set-Cookie` headers).
     Multi(Vec<String>),
 }
 
@@ -69,7 +65,7 @@ pub struct ResponseMetadata {
     pub version: String,
 }
 
-/// Outbound response envelope — the JSON returned to the caller.
+/// Outbound response envelope.
 #[derive(Debug, Serialize)]
 pub struct ResponseEnvelope {
     pub status: u16,
@@ -78,25 +74,16 @@ pub struct ResponseEnvelope {
     pub metadata: ResponseMetadata,
 }
 
-// ── Core Dispatch ────────────────────────────────────────────────────
+// ── Dispatch (direct) ────────────────────────────────────────────────
 
 /// Dispatch a [`RequestEnvelope`] through an axum [`Router`] and
 /// return the serialised [`ResponseEnvelope`] JSON.
-///
-/// This is the **single reusable entry-point** for driving an axum
-/// router without a network socket.
 pub async fn dispatch(router: Router, envelope: &RequestEnvelope) -> String {
     let result = dispatch_inner(router, envelope).await;
-
-    serde_json::to_string(&result).unwrap_or_else(|e| {
-        let version = result.metadata.version;
-        format!(r#"{{"status":500,"headers":{{}},"body":"serialize: {e}","metadata":{{"version":"{version}"}}}}"#)
-    })
+    serde_json::to_string(&result).expect("ResponseEnvelope serialization is infallible")
 }
 
-/// Typed dispatch — returns a [`ResponseEnvelope`] instead of a JSON
-/// string.  Useful for tests and programmatic callers that want to
-/// inspect the envelope without re-parsing JSON.
+/// Typed dispatch — returns a [`ResponseEnvelope`] directly.
 pub async fn dispatch_typed(router: Router, envelope: &RequestEnvelope) -> ResponseEnvelope {
     dispatch_inner(router, envelope).await
 }
@@ -123,12 +110,62 @@ pub fn error_envelope(message: &str) -> ResponseEnvelope {
     }
 }
 
+// ── App Factory (shared FFI pattern) ─────────────────────────────────
+
+type AppFactory = Box<dyn Fn() -> Router + Send + Sync>;
+
+static APP_FACTORY: OnceLock<AppFactory> = OnceLock::new();
+
+/// Register a global router factory.
+///
+/// Any FFI boundary (JNI, C, WASM) calls this once at init time,
+/// then uses [`dispatch_from_json`] on each request.
+///
+/// # Panics
+///
+/// Panics if called more than once.
+pub fn register_app<F>(factory: F)
+where
+    F: Fn() -> Router + Send + Sync + 'static,
+{
+    assert!(
+        APP_FACTORY.set(Box::new(factory)).is_ok(),
+        "vespera_inprocess::register_app called more than once"
+    );
+}
+
+/// Dispatch a JSON request string through the registered app.
+///
+/// Returns a JSON response envelope string. Requires a tokio runtime
+/// on the current thread (the caller provides it — e.g. JNI crate
+/// uses a `LazyLock<Runtime>`).
+///
+/// # Panics
+///
+/// Panics if no app has been registered via [`register_app`].
+pub fn dispatch_from_json(input: &str, runtime: &tokio::runtime::Runtime) -> String {
+    let Some(factory) = APP_FACTORY.get() else {
+        return serde_json::to_string(&error_envelope(
+            "no app registered — call register_app() at init time",
+        ))
+        .expect("error_envelope serialization is infallible");
+    };
+
+    match parse_request(input) {
+        Ok(envelope) => {
+            let router = factory();
+            runtime.block_on(dispatch(router, &envelope))
+        }
+        Err(msg) => serde_json::to_string(&error_envelope(&msg))
+            .expect("error_envelope serialization is infallible"),
+    }
+}
+
 // ── Internal ─────────────────────────────────────────────────────────
 
 async fn dispatch_inner(router: Router, envelope: &RequestEnvelope) -> ResponseEnvelope {
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
-    // Build URI
     let uri = if envelope.query.is_empty() {
         envelope.path.clone()
     } else {
@@ -137,7 +174,6 @@ async fn dispatch_inner(router: Router, envelope: &RequestEnvelope) -> ResponseE
 
     let http_method = envelope.method.parse::<Method>().unwrap_or(Method::GET);
 
-    // Build request with all headers
     let mut builder = Request::builder().method(http_method).uri(&uri);
     for (name, value) in &envelope.headers {
         builder = builder.header(name.as_str(), value.as_str());
@@ -146,19 +182,10 @@ async fn dispatch_inner(router: Router, envelope: &RequestEnvelope) -> ResponseE
         builder = builder.header("content-type", "application/json");
     }
 
-    let request = match builder.body(Body::from(envelope.body.clone())) {
-        Ok(r) => r,
-        Err(e) => {
-            return ResponseEnvelope {
-                status: 500,
-                headers: HashMap::new(),
-                body: format!("failed to build request: {e}"),
-                metadata: ResponseMetadata { version },
-            };
-        }
-    };
+    let request = builder
+        .body(Body::from(envelope.body.clone()))
+        .expect("request construction should not fail with valid URI");
 
-    // Dispatch
     let response = router
         .oneshot(request)
         .await
@@ -166,7 +193,6 @@ async fn dispatch_inner(router: Router, envelope: &RequestEnvelope) -> ResponseE
 
     let status = response.status().as_u16();
 
-    // Collect response headers (multi-value aware)
     let mut raw_headers: HashMap<String, Vec<String>> = HashMap::new();
     for (name, value) in response.headers() {
         raw_headers
@@ -186,7 +212,6 @@ async fn dispatch_inner(router: Router, envelope: &RequestEnvelope) -> ResponseE
         })
         .collect();
 
-    // Collect body
     let body_str = response.into_body().collect().await.map_or_else(
         |_| String::new(),
         |c| String::from_utf8(c.to_bytes().to_vec()).unwrap_or_default(),

@@ -2376,8 +2376,6 @@ dependencies = [
 name = "rust-jni-demo"
 version = "0.1.0"
 dependencies = [
- "axum",
- "jni",
  "serde",
  "serde_json",
  "tokio",
@@ -3575,18 +3573,15 @@ dependencies = [
  "axum",
  "axum-extra",
  "chrono",
- "http",
- "http-body-util",
- "jni",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-cron-scheduler",
- "tower",
  "tower-layer",
  "tower-service",
  "vespera_core",
+ "vespera_inprocess",
+ "vespera_jni",
  "vespera_macro",
 ]
 
@@ -3597,6 +3592,29 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "vespera_inprocess"
+version = "0.1.44"
+dependencies = [
+ "axum",
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "vespera_jni"
+version = "0.1.44"
+dependencies = [
+ "jni",
+ "serde_json",
+ "tokio",
+ "vespera_inprocess",
 ]
 
 [[package]]

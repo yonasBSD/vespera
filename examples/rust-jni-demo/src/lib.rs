@@ -219,11 +219,33 @@ mod tests {
         assert_eq!(parse(&json)["status"], 404);
     }
 
-    // ── Coverage: jni::register_app + dispatch_test ──────────────
-    #[tokio::test]
-    async fn jni_dispatch_test_helper() {
-        use vespera::jni::dispatch_test;
-        let json = dispatch_test(create_app, &req("GET", "/health", "")).await;
-        assert!(json.contains("\"status\":200"));
+    // ── Coverage: register_app + dispatch_from_json (now in inprocess) ─
+
+    #[test]
+    fn register_and_dispatch_from_json() {
+        use vespera::inprocess::{dispatch_from_json, register_app};
+
+        // Register the app factory (OnceLock — first and only call)
+        register_app(create_app);
+
+        // Need a runtime for dispatch_from_json
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Valid dispatch
+        let json = dispatch_from_json(r#"{"method":"GET","path":"/health"}"#, &rt);
+        let v = parse(&json);
+        assert_eq!(v["status"], 200);
+        assert!(v["body"].as_str().unwrap().contains("ok"));
+
+        // Invalid JSON
+        let json = dispatch_from_json("not json", &rt);
+        let v = parse(&json);
+        assert_eq!(v["status"], 500);
+        assert!(
+            v["body"]
+                .as_str()
+                .unwrap()
+                .contains("invalid request envelope")
+        );
     }
 }
