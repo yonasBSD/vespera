@@ -82,6 +82,9 @@ cd examples/rust-jni-demo/java
 
 # Single file, no -Djava.library.path needed:
 java -jar demo-app/build/libs/demo-app-0.1.0.jar
+
+# Windows PowerShell (quotes required)
+java "-Djava.library.path=..\..\..\target\release" -jar demo-app\build\libs\demo-app-0.1.0.jar
 ```
 
 Spring starts on `http://localhost:8080` and proxies every request to Rust:
@@ -110,15 +113,18 @@ examples/rust-jni-demo/
 │       ├── documents.rs    # POST /documents/validate
 │       └── health.rs       # GET /health
 └── java/
-    └── demo-app/           # Mode B: Spring Boot proxy
+    └── demo-app/           # Mode B: Spring Boot proxy (16 lines)
         └── src/.../DemoApplication.java
 
 libs/
-└── vespera-bridge/         # Reusable JAR (io.vespera.bridge.VesperaBridge)
+└── vespera-bridge/         # Reusable JAR (com.devfive.vespera.bridge)
     └── src/.../VesperaBridge.java
+    └── src/.../VesperaProxyController.java
 ```
 
 ## How it works
+
+### Rust side
 
 ```rust
 // lib.rs — the entire JNI integration:
@@ -129,7 +135,36 @@ pub fn create_app() -> axum::Router {
 vespera::jni_app!(create_app);
 ```
 
-- `vespera::jni_app!` generates `JNI_OnLoad` which registers the router factory
-- `vespera::jni` exports a fixed JNI symbol matching `io.vespera.bridge.VesperaBridge`
-- Java calls `VesperaBridge.dispatch(json)` — Rust dispatches through `router.oneshot()`
-- No HTTP between Java and Rust, no JNI boilerplate in user code
+### Java side
+
+```java
+// DemoApplication.java — the entire Spring app:
+@SpringBootApplication
+@ComponentScan(basePackages = {"kr.go.demo", "com.devfive.vespera.bridge"})
+public class DemoApplication {
+    public static void main(String[] args) {
+        VesperaBridge.init("rust_jni_demo");
+        SpringApplication.run(DemoApplication.class, args);
+    }
+}
+```
+
+### What happens
+
+1. `vespera::jni_app!` generates `JNI_OnLoad` which registers the router factory
+2. `vespera::jni` exports a fixed JNI symbol matching `com.devfive.vespera.bridge.VesperaBridge`
+3. `VesperaBridge.init()` loads the native library (from JAR or system path)
+4. `VesperaProxyController` (in vespera-bridge JAR) catches all HTTP requests and dispatches to Rust via `VesperaBridge.dispatch(json)`
+5. Rust routes through `router.oneshot()` — no TCP between Java and Rust
+
+### Maven/Gradle dependency
+
+```kotlin
+// build.gradle.kts
+repositories {
+    maven { url = uri("https://maven.pkg.github.com/dev-five-git/vespera") }
+}
+dependencies {
+    implementation("com.devfive.vespera:vespera-bridge:0.1.0")
+}
+```

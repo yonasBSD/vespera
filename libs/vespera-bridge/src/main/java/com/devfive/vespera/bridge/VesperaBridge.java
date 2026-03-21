@@ -1,4 +1,4 @@
-package io.vespera.bridge;
+package com.devfive.vespera.bridge;
 
 import java.io.*;
 import java.nio.file.*;

@@ -1,4 +1,4 @@
-package io.vespera.bridge;
+package com.devfive.vespera.bridge;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +16,7 @@ import java.util.*;
 
 /**
  * Catch-all proxy controller — auto-configured by Spring when
- * {@code io.vespera.bridge} is on the classpath.
+ * {@code com.devfive.vespera.bridge} is on the classpath.
  *
  * <p>Forwards every HTTP request to Rust via JNI and returns the
  * response verbatim (status, headers, body).
@@ -48,7 +48,6 @@ public class VesperaProxyController {
             @RequestBody(required = false) String body
     ) throws IOException {
 
-        // Build request envelope
         ObjectNode envelope = mapper.createObjectNode();
         envelope.put("method", request.getMethod());
         envelope.put("path", request.getRequestURI());
@@ -66,16 +65,13 @@ public class VesperaProxyController {
         String reqJson = mapper.writeValueAsString(envelope);
         log.debug("-> Rust  {}", reqJson);
 
-        // JNI dispatch
         String respJson = VesperaBridge.dispatch(reqJson);
         log.debug("<- Rust  {}", respJson);
 
-        // Parse envelope
         JsonNode resp = mapper.readTree(respJson);
         int status = resp.path("status").asInt(500);
         String respBody = resp.path("body").asText("");
 
-        // Forward response headers
         HttpHeaders httpHeaders = new HttpHeaders();
         JsonNode respHeaders = resp.path("headers");
         if (respHeaders.isObject()) {

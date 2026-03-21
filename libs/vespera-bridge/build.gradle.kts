@@ -3,8 +3,8 @@ plugins {
     `maven-publish`
 }
 
-group = "io.vespera"
-version = "0.0.0"
+group = "com.devfive.vespera"
+version = "0.1.0"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

@@ -13,4 +13,10 @@ coverage-report
 .gradle/
 build/
 bin/
+
+# IDE
 .settings/
+.classpath
+.project
+*.iml
+.idea/

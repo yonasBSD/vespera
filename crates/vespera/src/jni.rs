@@ -9,9 +9,9 @@
 //!
 //! The [`jni_app!`](crate::jni_app) macro generates the `JNI_OnLoad`
 //! export that registers your router factory.  The JNI dispatch symbol
-//! (`Java_io_vespera_bridge_VesperaBridge_dispatch`) is already
+//! (`Java_com_devfive_vespera_bridge_VesperaBridge_dispatch`) is already
 //! exported by this module — matching the fixed Java class
-//! `io.vespera.bridge.VesperaBridge`.
+//! `com.devfive.vespera.bridge.VesperaBridge`.
 
 use std::sync::{LazyLock, OnceLock};
 
@@ -100,9 +100,9 @@ pub async fn dispatch_test(
 
 // ── JNI Export ────────────────────────────────────────────────────────
 //
-// Java class: io.vespera.bridge.VesperaBridge
+// Java class: com.devfive.vespera.bridge.VesperaBridge
 // Method:     public static native String dispatch(String json)
-// Symbol:     Java_io_vespera_bridge_VesperaBridge_dispatch
+// Symbol:     Java_com_devfive_vespera_bridge_VesperaBridge_dispatch
 // ─────────────────────────────────────────────────────────────────────
 
 /// The single JNI entry point.
@@ -111,7 +111,7 @@ pub async fn dispatch_test(
 /// The router is obtained from the factory registered via
 /// [`register_app`].
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_vespera_bridge_VesperaBridge_dispatch<'local>(
+pub extern "system" fn Java_com_devfive_vespera_bridge_VesperaBridge_dispatch<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     request_json: JString<'local>,

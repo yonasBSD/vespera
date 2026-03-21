@@ -1,12 +1,12 @@
 package kr.go.demo;
 
-import io.vespera.bridge.VesperaBridge;
+import com.devfive.vespera.bridge.VesperaBridge;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 
 @SpringBootApplication
-@ComponentScan(basePackages = {"kr.go.demo", "io.vespera.bridge"})
+@ComponentScan(basePackages = {"kr.go.demo", "com.devfive.vespera.bridge"})
 public class DemoApplication {
 
     public static void main(String[] args) {
