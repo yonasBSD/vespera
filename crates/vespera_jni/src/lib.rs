@@ -12,6 +12,7 @@
 //! class `com.devfive.vespera.bridge.VesperaBridge`.
 
 #![allow(unsafe_code)]
+#[cfg(not(tarpaulin_include))]
 
 pub use jni;
 pub use vespera_inprocess;
@@ -24,17 +25,13 @@ pub use vespera_inprocess;
 #[macro_export]
 macro_rules! jni_app {
     ($factory:expr) => {
-        #[cfg(not(tarpaulin_include))]
         #[unsafe(no_mangle)]
         pub extern "system" fn JNI_OnLoad(
             _vm: $crate::jni::JavaVM,
             _: *mut ::std::ffi::c_void,
         ) -> $crate::jni::sys::jint {
-            #[cfg(not(tarpaulin_include))]
-            {
-                $crate::vespera_inprocess::register_app($factory);
-                $crate::jni::sys::JNI_VERSION_1_8
-            }
+            $crate::vespera_inprocess::register_app($factory);
+            $crate::jni::sys::JNI_VERSION_1_8
         }
     };
 }
