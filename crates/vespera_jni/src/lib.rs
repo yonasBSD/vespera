@@ -12,7 +12,7 @@
 //! class `com.devfive.vespera.bridge.VesperaBridge`.
 
 #![allow(unsafe_code)]
-#[cfg(not(tarpaulin_include))]
+#![cfg(not(tarpaulin_include))]
 
 pub use jni;
 pub use vespera_inprocess;
