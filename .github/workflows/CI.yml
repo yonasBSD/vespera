@@ -87,6 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - changepacks
+    if: contains(needs.changepacks.outputs.changepacks, 'libs/vespera-bridge')
     permissions:
       packages: write
     steps:
