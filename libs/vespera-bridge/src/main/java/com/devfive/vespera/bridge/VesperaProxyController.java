@@ -15,7 +15,7 @@ import java.io.IOException;
 import java.util.*;
 
 /**
- * Catch-all proxy controller — auto-configured by Spring when
+ * Catch-all proxy controller - auto-configured by Spring when
  * {@code com.devfive.vespera.bridge} is on the classpath.
  *
  * <p>Forwards every HTTP request to Rust via JNI and returns the

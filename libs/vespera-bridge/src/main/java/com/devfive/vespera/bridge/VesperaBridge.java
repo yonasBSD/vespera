@@ -6,7 +6,7 @@ import java.nio.file.*;
 /**
  * JNI bridge to any Rust cdylib built with vespera's JNI feature.
  *
- * <h3>Usage — single line in your Spring Boot app</h3>
+ * <p><strong>Usage - single line in your Spring Boot app</strong></p>
  * <pre>{@code
  * VesperaBridge.init("rust_jni_demo");
  * }</pre>
@@ -40,7 +40,7 @@ public class VesperaBridge {
      */
     public static native String dispatch(String requestEnvelopeJson);
 
-    // ── Internal: bundled native lib extraction ──────────────────────
+    // --- Internal: bundled native lib extraction ---
 
     private static void loadBundled(String libraryName) {
         String os = detectOs();
