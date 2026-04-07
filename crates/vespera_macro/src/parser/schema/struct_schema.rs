@@ -350,6 +350,31 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_struct_to_schema_description_strips_slash_prefix() {
+        // When doc attributes have "/ " prefix (without leading space), descriptions should be clean.
+        // This can happen in certain TokenStream roundtrip scenarios.
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            #[doc = "/ Struct description"]
+            struct Admin {
+                #[doc = "/ Field description"]
+                id: i32,
+            }
+        "#,
+        )
+        .unwrap();
+        let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
+        assert_eq!(
+            schema.description,
+            Some("Struct description".to_string())
+        );
+        let props = schema.properties.unwrap();
+        if let SchemaRef::Inline(id_schema) = props.get("id").unwrap() {
+            assert_eq!(id_schema.description, Some("Field description".to_string()));
+        }
+    }
+
+    #[test]
     fn test_parse_struct_to_schema_with_flatten() {
         let struct_item: syn::ItemStruct = syn::parse_str(
             r"
