@@ -21,7 +21,7 @@ thread_local! {
 
 use super::{
     generics::substitute_type,
-    serde_attrs::{capitalize_first, extract_schema_name_from_entity},
+    serde_attrs::{capitalize_first, extract_schema_name_from_entity, extract_schema_ref_override},
     struct_schema::parse_struct_to_schema,
 };
 
@@ -317,6 +317,19 @@ fn parse_type_impl(
                     };
 
                     if known_schemas.contains(&resolved_name) {
+                        if let Some(def) = struct_definitions.get(&resolved_name)
+                            && let Ok(parsed_struct) = syn::parse_str::<syn::ItemStruct>(def)
+                            && let Some((schema_name, nullable)) =
+                                extract_schema_ref_override(&parsed_struct.attrs)
+                        {
+                            return SchemaRef::Inline(Box::new(Schema {
+                                ref_path: Some(format!("#/components/schemas/{schema_name}")),
+                                schema_type: None,
+                                nullable: nullable.then_some(true),
+                                ..Schema::new(SchemaType::Object)
+                            }));
+                        }
+
                         // Check if this is a generic type with type parameters
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             // This is a concrete generic type like GenericStruct<String>
@@ -1456,5 +1469,37 @@ mod tests {
         let ty: Type = syn::parse_str("BTreeSet").unwrap();
         let schema_ref = parse_type_to_schema_ref(&ty, &HashSet::new(), &HashMap::new());
         assert!(matches!(schema_ref, SchemaRef::Inline(_)));
+    }
+
+    #[test]
+    fn test_known_schema_ref_override_returns_inline_ref_schema() {
+        let mut known = HashSet::new();
+        known.insert("UserSchema".to_string());
+
+        let mut defs = HashMap::new();
+        defs.insert(
+            "UserSchema".to_string(),
+            r#"
+            #[schema(ref = "ExternalUser", nullable)]
+            struct UserSchema {
+                id: i32,
+            }
+            "#
+            .to_string(),
+        );
+
+        let ty: Type = syn::parse_str("UserSchema").unwrap();
+        let schema_ref = parse_type_to_schema_ref(&ty, &known, &defs);
+
+        match schema_ref {
+            SchemaRef::Inline(schema) => {
+                assert_eq!(
+                    schema.ref_path.as_deref(),
+                    Some("#/components/schemas/ExternalUser")
+                );
+                assert_eq!(schema.nullable, Some(true));
+            }
+            SchemaRef::Ref(_) => panic!("expected inline schema ref override"),
+        }
     }
 }

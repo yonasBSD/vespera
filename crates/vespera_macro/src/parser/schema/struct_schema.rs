@@ -11,7 +11,8 @@ use vespera_core::schema::{Schema, SchemaRef, SchemaType};
 use super::{
     serde_attrs::{
         extract_doc_comment, extract_field_rename, extract_flatten, extract_rename_all,
-        extract_skip, rename_field, strip_raw_prefix_owned,
+        extract_schema_ref_override, extract_skip, extract_transparent, rename_field,
+        strip_raw_prefix_owned,
     },
     type_schema::parse_type_to_schema_ref,
 };
@@ -40,6 +41,45 @@ pub fn parse_struct_to_schema(
 
     // Extract struct-level doc comment for schema description
     let struct_description = extract_doc_comment(&struct_item.attrs);
+
+    if let Some((schema_name, nullable)) = extract_schema_ref_override(&struct_item.attrs) {
+        return Schema {
+            ref_path: Some(format!("#/components/schemas/{schema_name}")),
+            nullable: nullable.then_some(true),
+            description: struct_description,
+            ..Default::default()
+        };
+    }
+
+    // Transparent single-field wrappers should use the inner field schema directly.
+    if extract_transparent(&struct_item.attrs) {
+        let inner_field_ty = match &struct_item.fields {
+            Fields::Named(fields_named) if fields_named.named.len() == 1 => {
+                fields_named.named.first().map(|field| &field.ty)
+            }
+            Fields::Unnamed(fields_unnamed) if fields_unnamed.unnamed.len() == 1 => {
+                fields_unnamed.unnamed.first().map(|field| &field.ty)
+            }
+            _ => None,
+        };
+
+        if let Some(field_ty) = inner_field_ty {
+            let schema_ref = parse_type_to_schema_ref(field_ty, known_schemas, struct_definitions);
+            return match schema_ref {
+                SchemaRef::Inline(mut schema) => {
+                    if schema.description.is_none() {
+                        schema.description = struct_description;
+                    }
+                    *schema
+                }
+                SchemaRef::Ref(reference) => Schema {
+                    description: struct_description,
+                    all_of: Some(vec![SchemaRef::Ref(reference)]),
+                    ..Default::default()
+                },
+            };
+        }
+    }
 
     // Extract rename_all attribute from struct
     let rename_all = extract_rename_all(&struct_item.attrs);
@@ -243,6 +283,43 @@ mod tests {
         let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
         assert!(schema.properties.is_none());
         assert!(schema.required.is_none());
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_serde_transparent_named_wrapper_uses_inner_schema() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r"
+            #[serde(transparent)]
+            struct Wrapper {
+                value: Box<String>,
+            }
+        ",
+        )
+        .unwrap();
+
+        let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
+        assert_eq!(schema.schema_type, Some(SchemaType::String));
+        assert!(schema.properties.is_none());
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_schema_ref_override() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r#"
+            #[schema(ref = "UserSchema", nullable)]
+            struct Wrapper {
+                value: Option<String>,
+            }
+        "#,
+        )
+        .unwrap();
+
+        let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
+        assert_eq!(
+            schema.ref_path.as_deref(),
+            Some("#/components/schemas/UserSchema")
+        );
+        assert_eq!(schema.nullable, Some(true));
     }
 
     // Test struct with skip field
@@ -474,5 +551,50 @@ mod tests {
             "Simple struct should not have allOf"
         );
         assert!(schema.properties.is_some());
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_transparent_tuple_wrapper_uses_ref_schema() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r"
+            #[serde(transparent)]
+            struct Wrapper(User);
+        ",
+        )
+        .unwrap();
+
+        let mut struct_defs = HashMap::new();
+        struct_defs.insert("User".to_string(), "struct User { id: i32 }".to_string());
+        let mut known = HashSet::new();
+        known.insert("User".to_string());
+
+        let schema = parse_struct_to_schema(&struct_item, &known, &struct_defs);
+        assert!(schema.all_of.is_some());
+        let all_of = schema.all_of.unwrap();
+        assert_eq!(all_of.len(), 1);
+        match &all_of[0] {
+            SchemaRef::Ref(reference) => {
+                assert_eq!(reference.ref_path, "#/components/schemas/User");
+            }
+            SchemaRef::Inline(_) => {
+                panic!("expected $ref wrapper for transparent tuple known schema")
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_struct_to_schema_transparent_multi_field_tuple_falls_back() {
+        let struct_item: syn::ItemStruct = syn::parse_str(
+            r"
+            #[serde(transparent)]
+            struct Wrapper(String, String);
+        ",
+        )
+        .unwrap();
+
+        let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
+        assert_eq!(schema.schema_type, Some(SchemaType::Object));
+        assert!(schema.properties.is_none());
+        assert!(schema.all_of.is_none());
     }
 }
