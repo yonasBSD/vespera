@@ -212,12 +212,14 @@ fn render_path_arguments(args: &PathArguments, source_module_path: &[String]) ->
             let rendered_args: Vec<_> = angle_args
                 .args
                 .iter()
-                .map(|arg| match arg {
-                    GenericArgument::Type(inner_ty) => {
-                        let resolved = normalize_known_type_in_generic(inner_ty, source_module_path);
+                .map(|arg| {
+                    if let GenericArgument::Type(inner_ty) = arg {
+                        let resolved =
+                            normalize_known_type_in_generic(inner_ty, source_module_path);
                         quote! { #resolved }
+                    } else {
+                        quote! { #arg }
                     }
-                    _ => quote! { #arg },
                 })
                 .collect();
 

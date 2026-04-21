@@ -715,7 +715,11 @@ mod tests {
         let ty: syn::Type = syn::parse_str("Json").unwrap();
         let tokens = convert_type_with_chrono(
             &ty,
-            &["crate".to_string(), "models".to_string(), "json_case".to_string()],
+            &[
+                "crate".to_string(),
+                "models".to_string(),
+                "json_case".to_string(),
+            ],
         );
         let output = tokens.to_string();
         assert_eq!(output.trim(), "vespera :: serde_json :: Value");

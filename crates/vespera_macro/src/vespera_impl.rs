@@ -181,9 +181,8 @@ pub fn generate_and_write_openapi(
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| err_call_site(format!("OpenAPI output: failed to create directory '{}'. Error: {}. Ensure the path is valid and writable.", parent.display(), e)))?;
             }
-            let should_write = std::fs::read_to_string(file_path)
-                .map(|existing| existing != json_pretty)
-                .unwrap_or(true);
+            let should_write =
+                std::fs::read_to_string(file_path).map_or(true, |existing| existing != json_pretty);
             if should_write {
                 std::fs::write(file_path, &json_pretty).map_err(|e| err_call_site(format!("OpenAPI output: failed to write file '{openapi_file_name}'. Error: {e}. Ensure the file path is writable.")))?;
             }
@@ -302,9 +301,8 @@ pub fn ensure_openapi_files_from_cache(
     };
     for openapi_file_name in openapi_file_names {
         let file_path = Path::new(openapi_file_name);
-        let should_write = std::fs::read_to_string(file_path)
-            .map(|existing| existing != *pretty)
-            .unwrap_or(true);
+        let should_write =
+            std::fs::read_to_string(file_path).map_or(true, |existing| existing != *pretty);
         if should_write {
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
@@ -351,9 +349,8 @@ fn write_spec_for_embedding(
         )
     })?;
     let spec_file = vespera_dir.join("vespera_spec.json");
-    let should_write = std::fs::read_to_string(&spec_file)
-        .map(|existing| existing != json)
-        .unwrap_or(true);
+    let should_write =
+        std::fs::read_to_string(&spec_file).map_or(true, |existing| existing != json);
     if should_write {
         std::fs::write(&spec_file, &json).map_err(|e| {
             syn::Error::new(

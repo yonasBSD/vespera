@@ -64,8 +64,7 @@ mod jni_impl {
         unowned_env
             .with_env(|env| -> jni::errors::Result<JObject<'local>> {
                 let Ok(input) = request_json.try_to_string(env) else {
-                    let err =
-                        vespera_inprocess::serialize_error("invalid request envelope string");
+                    let err = vespera_inprocess::serialize_error("invalid request envelope string");
                     return Ok(env.new_string(err)?.into());
                 };
 
