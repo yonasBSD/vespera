@@ -364,10 +364,7 @@ mod tests {
         )
         .unwrap();
         let schema = parse_struct_to_schema(&struct_item, &HashSet::new(), &HashMap::new());
-        assert_eq!(
-            schema.description,
-            Some("Struct description".to_string())
-        );
+        assert_eq!(schema.description, Some("Struct description".to_string()));
         let props = schema.properties.unwrap();
         if let SchemaRef::Inline(id_schema) = props.get("id").unwrap() {
             assert_eq!(id_schema.description, Some("Field description".to_string()));

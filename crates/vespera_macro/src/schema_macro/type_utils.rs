@@ -5,7 +5,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use serde_json;
-use syn::Type;
+use syn::{GenericArgument, PathArguments, Type};
 
 /// Primitive type names shared across the crate.
 /// Used by both `is_primitive_type()` (parser) and `is_parseable_type()` (schema_macro).
@@ -154,6 +154,81 @@ pub fn is_primitive_or_known_type(name: &str) -> bool {
     )
 }
 
+fn resolve_public_type_path(name: &str) -> Option<TokenStream> {
+    match name {
+        // SeaORM re-exports `serde_json::Value` as `Json`; emit a stable public path.
+        "Json" | "Value" => Some(quote! { vespera::serde_json::Value }),
+        _ => None,
+    }
+}
+
+fn normalize_known_type_in_generic(ty: &Type, source_module_path: &[String]) -> TokenStream {
+    let Type::Path(type_path) = ty else {
+        return quote! { #ty };
+    };
+
+    let Some(segment) = type_path.path.segments.last() else {
+        return quote! { #ty };
+    };
+
+    let ident_str = segment.ident.to_string();
+
+    if let Some(public_path) = resolve_public_type_path(&ident_str) {
+        return quote! { #public_path };
+    }
+
+    if type_path.path.segments.len() > 1 {
+        let rendered_segments: Vec<_> = type_path
+            .path
+            .segments
+            .iter()
+            .map(|segment| {
+                let ident = &segment.ident;
+                let args = render_path_arguments(&segment.arguments, source_module_path);
+                quote! { #ident #args }
+            })
+            .collect();
+
+        if type_path.path.leading_colon.is_some() {
+            return quote! { :: #(#rendered_segments)::* };
+        }
+
+        return quote! { #(#rendered_segments)::* };
+    }
+
+    if is_primitive_or_known_type(&ident_str) {
+        let ident = &segment.ident;
+        let args = render_path_arguments(&segment.arguments, source_module_path);
+        return quote! { #ident #args };
+    }
+
+    quote! { #ty }
+}
+
+fn render_path_arguments(args: &PathArguments, source_module_path: &[String]) -> TokenStream {
+    match args {
+        PathArguments::None => quote! {},
+        PathArguments::AngleBracketed(angle_args) => {
+            let rendered_args: Vec<_> = angle_args
+                .args
+                .iter()
+                .map(|arg| {
+                    if let GenericArgument::Type(inner_ty) = arg {
+                        let resolved =
+                            normalize_known_type_in_generic(inner_ty, source_module_path);
+                        quote! { #resolved }
+                    } else {
+                        quote! { #arg }
+                    }
+                })
+                .collect();
+
+            quote! { <#(#rendered_args),*> }
+        }
+        PathArguments::Parenthesized(_) => quote! { #args },
+    }
+}
+
 /// Resolve a simple type to an absolute path using the source module path.
 ///
 /// For example, if `source_module_path` is `["crate", "models", "memo"]` and
@@ -166,9 +241,28 @@ pub fn resolve_type_to_absolute_path(ty: &Type, source_module_path: &[String]) -
         return quote! { #ty };
     };
 
+    if type_path.path.segments.is_empty() {
+        return quote! { #ty };
+    }
+
     // If path has multiple segments (already qualified like `crate::foo::Bar`), return as-is
     if type_path.path.segments.len() > 1 {
-        return quote! { #ty };
+        let rendered_segments: Vec<_> = type_path
+            .path
+            .segments
+            .iter()
+            .map(|segment| {
+                let ident = &segment.ident;
+                let args = render_path_arguments(&segment.arguments, source_module_path);
+                quote! { #ident #args }
+            })
+            .collect();
+
+        if type_path.path.leading_colon.is_some() {
+            return quote! { :: #(#rendered_segments)::* };
+        }
+
+        return quote! { #(#rendered_segments)::* };
     }
 
     // Get the single segment
@@ -177,15 +271,22 @@ pub fn resolve_type_to_absolute_path(ty: &Type, source_module_path: &[String]) -
     };
 
     let ident_str = segment.ident.to_string();
+    let args = render_path_arguments(&segment.arguments, source_module_path);
+
+    if let Some(public_path) = resolve_public_type_path(&ident_str) {
+        return quote! { #public_path };
+    }
 
     // If it's a primitive or known type, return as-is
     if is_primitive_or_known_type(&ident_str) {
-        return quote! { #ty };
+        let type_ident = &segment.ident;
+        return quote! { #type_ident #args };
     }
 
     // If no source module path, return as-is
     if source_module_path.is_empty() {
-        return quote! { #ty };
+        let type_ident = &segment.ident;
+        return quote! { #type_ident #args };
     }
 
     // Build absolute path: source_module_path + type_name
@@ -194,7 +295,6 @@ pub fn resolve_type_to_absolute_path(ty: &Type, source_module_path: &[String]) -
         .map(|s| syn::Ident::new(s, proc_macro2::Span::call_site()))
         .collect();
     let type_ident = &segment.ident;
-    let args = &segment.arguments;
 
     quote! { #(#path_idents)::* :: #type_ident #args }
 }
@@ -557,6 +657,33 @@ mod tests {
         let output = tokens.to_string();
         // Decimal is a known type — must NOT be resolved to crate::models::review::Decimal
         assert_eq!(output.trim(), "Decimal");
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_json_alias_uses_public_path() {
+        let ty: syn::Type = syn::parse_str("Json").unwrap();
+        let module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "json_case".to_string(),
+        ];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "vespera :: serde_json :: Value");
+    }
+
+    #[test]
+    fn test_resolve_type_to_absolute_path_known_container_normalizes_inner_json_alias() {
+        let ty: syn::Type = syn::parse_str("HashMap<String, Json>").unwrap();
+        let module_path = vec![
+            "crate".to_string(),
+            "models".to_string(),
+            "json_case".to_string(),
+        ];
+        let tokens = resolve_type_to_absolute_path(&ty, &module_path);
+        let output = tokens.to_string();
+        assert!(output.contains("HashMap < String , vespera :: serde_json :: Value >"));
+        assert!(!output.contains("crate :: models :: json_case :: Json"));
     }
 
     #[test]

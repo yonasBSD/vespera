@@ -710,6 +710,21 @@ mod tests {
         assert_eq!(output.trim(), "vespera :: tempfile :: NamedTempFile");
     }
 
+    #[test]
+    fn test_convert_type_with_chrono_json_alias_uses_public_value_path() {
+        let ty: syn::Type = syn::parse_str("Json").unwrap();
+        let tokens = convert_type_with_chrono(
+            &ty,
+            &[
+                "crate".to_string(),
+                "models".to_string(),
+                "json_case".to_string(),
+            ],
+        );
+        let output = tokens.to_string();
+        assert_eq!(output.trim(), "vespera :: serde_json :: Value");
+    }
+
     // =========================================================================
     // Tests for convert_relation_type_to_schema_with_info
     // =========================================================================

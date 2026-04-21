@@ -2029,3 +2029,59 @@ pub struct Model {
     let output = tokens.to_string();
     assert!(output.contains("UserSchema"));
 }
+
+#[test]
+#[serial]
+fn test_generate_schema_type_code_cross_module_json_alias_uses_public_path() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let src_dir = temp_dir.path().join("src");
+    let models_dir = src_dir.join("models");
+    let routes_dir = src_dir.join("routes");
+    std::fs::create_dir_all(&models_dir).unwrap();
+    std::fs::create_dir_all(&routes_dir).unwrap();
+
+    let json_case_model = r#"
+use sea_orm::entity::prelude::*;
+
+#[sea_orm::model]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "json_case")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: i32,
+    pub payload: Json,
+}
+
+impl ActiveModelBehavior for ActiveModel {}
+"#;
+    std::fs::write(models_dir.join("json_case.rs"), json_case_model).unwrap();
+    std::fs::write(
+        routes_dir.join("json_case.rs"),
+        "vespera::schema_type!(RouteJsonCaseSchema from crate::models::json_case::Model);",
+    )
+    .unwrap();
+
+    let original_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok();
+    unsafe { std::env::set_var("CARGO_MANIFEST_DIR", temp_dir.path()) };
+
+    let tokens = quote!(RouteJsonCaseSchema from crate::models::json_case::Model);
+    let input: SchemaTypeInput = syn::parse2(tokens).unwrap();
+    let storage: HashMap<String, StructMetadata> = HashMap::new();
+    let result = generate_schema_type_code(&input, &storage);
+
+    unsafe {
+        if let Some(dir) = original_manifest_dir {
+            std::env::set_var("CARGO_MANIFEST_DIR", dir);
+        } else {
+            std::env::remove_var("CARGO_MANIFEST_DIR");
+        }
+    }
+
+    assert!(result.is_ok());
+    let (tokens, _metadata) = result.unwrap();
+    let output = tokens.to_string();
+    assert!(output.contains("pub payload : vespera :: serde_json :: Value"));
+    assert!(!output.contains("crate :: models :: json_case :: Json"));
+}

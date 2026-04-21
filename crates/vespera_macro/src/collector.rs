@@ -173,12 +173,11 @@ pub fn collect_file_fingerprints(folder_path: &Path) -> MacroResult<HashMap<Stri
         }
         let mtime = std::fs::metadata(&file)
             .and_then(|m| m.modified())
-            .map(|t| {
+            .map_or(0, |t| {
                 t.duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs()
-            })
-            .unwrap_or(0);
+            });
         fingerprints.insert(file.display().to_string(), mtime);
     }
     Ok(fingerprints)
