@@ -1,4 +1,5 @@
 import { Box, Center, css, Flex, Image } from '@devup-ui/react'
+import Link from 'next/link'
 
 import { Hamburger } from '../mobile-menu/hamburger'
 import { SheetBoundary, SheetTrigger } from '../sheet'
@@ -20,22 +21,28 @@ export function Header() {
           flexDir={[null, null, null, 'row']}
           gap={[null, null, null, '16px']}
         >
-          <Flex alignItems="center" gap="8px">
-            <Image h="28px" src="/icons/logo-image.svg" w="21px" />
-            <Box
-              bg="$title"
-              h="28px"
-              maskImage="url('/icons/logo-text.svg')"
-              maskPos="center"
-              maskRepeat="no-repeat"
-              maskSize="contain"
-              w="112px"
-            />
-          </Flex>
+          <Link href="/">
+            <Flex alignItems="center" gap="8px">
+              <Image h="28px" src="/icons/logo-image.svg" w="21px" />
+              <Box
+                bg="$title"
+                h="28px"
+                maskImage="url('/icons/logo-text.svg')"
+                maskPos="center"
+                maskRepeat="no-repeat"
+                maskSize="contain"
+                w="112px"
+              />
+            </Flex>
+          </Link>
 
           <Flex alignItems="center" display={['none', null, null, 'flex']}>
-            <Menu>Documentation</Menu>
-            <Menu>About us</Menu>
+            <Link href="/documentation">
+              <Menu>Documentation</Menu>
+            </Link>
+            <Link href="/about-us">
+              <Menu>About us</Menu>
+            </Link>
           </Flex>
         </Center>
         <Flex alignItems="center" gap="$spacingSpacing24">

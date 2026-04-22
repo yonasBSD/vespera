@@ -11,6 +11,9 @@ import { SheetProvider } from '@/components/sheet'
 resetCss()
 
 globalCss({
+  a: {
+    textDecoration: 'none',
+  },
   pre: {
     borderRadius: '10px',
   },

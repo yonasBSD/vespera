@@ -13,10 +13,10 @@ export function HeaderContainer(props: ComponentProps<typeof Center<'div'>>) {
       bg={transparent ? '#FFFFFF03' : '$containerBackground'}
       flexDir="column"
       left="0px"
-      pl={['16px', null, null, null, 'initial']}
+      pl="16px"
       pos="fixed"
-      pr={['4px', null, null, null, 'initial']}
-      py={['12px', null, null, null, '4px']}
+      pr="4px"
+      py="12px"
       right="0px"
       styleOrder={1}
       top="0px"
