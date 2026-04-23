@@ -1,3 +1,43 @@
+import { Grid, Text, VStack } from '@devup-ui/react'
+
+import { AboutUs } from '@/components/about-us'
 export default function Page() {
-  return <></>
+  return (
+    <VStack
+      flex="1"
+      gap="16px"
+      maxW="1000px"
+      minH="calc(100vh - 212px)"
+      mx="auto"
+      overflow="hidden"
+      py="100px"
+      w="100%"
+    >
+      <Text color="$caption" typography="captionB">
+        About us
+      </Text>
+      <VStack gap="$spacingSpacing40">
+        <VStack gap="8px">
+          <Text color="$title" typography="h2">
+            Title
+          </Text>
+          <Text color="$text" typography="body">
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nullam
+            venenatis, elit in hendrerit porta, augue ante scelerisque diam, ac
+            egestas lacus est nec urna. Cras commodo risus hendrerit, suscipit
+            nibh at, porttitor dui.
+          </Text>
+        </VStack>
+        <Grid
+          gap="$spacingSpacing16"
+          gridTemplateColumns="repeat(3, 1fr)"
+          gridTemplateRows="repeat(2, 1fr)"
+        >
+          <AboutUs />
+          <AboutUs />
+          <AboutUs />
+        </Grid>
+      </VStack>
+    </VStack>
+  )
 }

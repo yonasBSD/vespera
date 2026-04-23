@@ -15,7 +15,7 @@ export default function PageLayout({
   children: React.ReactNode
 }) {
   return (
-    <Flex maxW="1440px" mx="auto" pt="68px" w="100%">
+    <Flex maxW="1440px" minH="calc(100vh - 212px)" mx="auto" pt="68px" w="100%">
       <Box
         borderRight="solid 1px $border"
         display={['none', null, null, 'block']}
