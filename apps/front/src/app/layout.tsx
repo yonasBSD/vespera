@@ -11,6 +11,9 @@ import { SheetProvider } from '@/components/sheet'
 resetCss()
 
 globalCss({
+  html: {
+    scrollPaddingTop: '68px',
+  },
   a: {
     textDecoration: 'none',
   },

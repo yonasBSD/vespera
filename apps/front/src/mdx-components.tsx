@@ -1,5 +1,6 @@
 import { Box, Text } from '@devup-ui/react'
 import type { MDXComponents } from 'mdx/types'
+import { ComponentProps } from 'react'
 
 import { Code } from './components/code'
 
@@ -18,26 +19,20 @@ export const _components = {
       </code>
     )
   },
-  h1({ children }: { children: React.ReactNode }) {
-    return (
-      <Text as="h1" color="$title" typography="h1">
-        {children}
-      </Text>
-    )
+  h1(props: ComponentProps<typeof Text<'h1'>>) {
+    return <Text as="h1" color="$title" typography="h1" {...props} />
   },
-  h2({ children }: { children: React.ReactNode }) {
-    return (
-      <Text as="h2" color="$title" typography="h2">
-        {children}
-      </Text>
-    )
+  h2(props: ComponentProps<typeof Text<'h2'>>) {
+    return <Text as="h2" color="$title" typography="h2" {...props} />
   },
-  h3({ children }: { children: React.ReactNode }) {
-    return (
-      <Text as="h3" color="$title" typography="h3">
-        {children}
-      </Text>
-    )
+  h3(props: ComponentProps<typeof Text<'h3'>>) {
+    return <Text as="h3" color="$title" typography="h3" {...props} />
+  },
+  h4(props: ComponentProps<typeof Text<'h4'>>) {
+    return <Text as="h4" color="$title" typography="h4" {...props} />
+  },
+  h5(props: ComponentProps<typeof Text<'h5'>>) {
+    return <Text as="h5" color="$title" typography="h5" {...props} />
   },
   p({ children }: { children: React.ReactNode }) {
     return (

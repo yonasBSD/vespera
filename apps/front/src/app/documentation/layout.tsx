@@ -2,6 +2,11 @@ import { Box, Flex, Text, VStack } from '@devup-ui/react'
 
 import { SideMenu } from '@/components/side-menu'
 import { SideMenuProvider } from '@/components/side-menu/side-menu-provider'
+import { TableOfContentsProvider } from '@/components/table-of-contents'
+import {
+  TableOfContentsAnchor,
+  TableOfContentsIterator,
+} from '@/components/table-of-contents/iterator'
 import { SIDE_MENU_ITEMS } from '@/constants'
 
 export default function PageLayout({
@@ -39,40 +44,42 @@ export default function PageLayout({
           </VStack>
         </SideMenuProvider>
       </Box>
-      <Box
-        className="markdown-body"
-        flex="1"
-        px={['20px', null, '$spacingSpacing48']}
-        py={['20px', null, '$spacingSpacing32']}
-      >
-        {children}
-      </Box>
-      <Box display={['none', null, null, 'block']}>
-        <VStack
-          gap="16px"
-          overflow="hidden"
-          pos="sticky"
-          px="$spacingSpacing16"
-          py="28px"
-          top="68px"
-          w="180px"
+      <TableOfContentsProvider>
+        <Box
+          className="markdown-body"
+          flex="1"
+          px={['20px', null, '$spacingSpacing48']}
+          py={['20px', null, '$spacingSpacing32']}
         >
-          <VStack borderBottom="solid 1px $border" pb="$spacingSpacing08">
-            <Flex alignItems="center" py="6px">
-              <Text color="$text" flex="1" typography="captionB">
-                Contents
-              </Text>
-              {/* <MenuIcon Property1="bottom" /> */}
-            </Flex>
-            <VStack>
-              {/* <Anchor property1="selected" />
-              <Anchor property1="default" />
-              <Anchor property1="default" /> */}
+          {children}
+        </Box>
+        <Box display={['none', null, null, 'block']}>
+          <VStack
+            gap="16px"
+            overflow="hidden"
+            pos="sticky"
+            px="$spacingSpacing16"
+            py="28px"
+            top="68px"
+            w="180px"
+          >
+            <VStack borderBottom="solid 1px $border" pb="$spacingSpacing08">
+              <Flex alignItems="center" py="6px">
+                <Text color="$text" flex="1" typography="captionB">
+                  Contents
+                </Text>
+                {/* <MenuIcon Property1="bottom" /> */}
+              </Flex>
+              <VStack>
+                <TableOfContentsIterator>
+                  <TableOfContentsAnchor />
+                </TableOfContentsIterator>
+              </VStack>
             </VStack>
+            {/* <Edit property1="default" /> */}
           </VStack>
-          {/* <Edit property1="default" /> */}
-        </VStack>
-      </Box>
+        </Box>
+      </TableOfContentsProvider>
     </Flex>
   )
 }
