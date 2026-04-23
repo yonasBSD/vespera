@@ -7,6 +7,8 @@ import { GnbIcon } from '../header/gnb-icon'
 import { SheetContainer } from '../sheet'
 import { SideMenu } from '../side-menu'
 import { SideMenuProvider } from '../side-menu/side-menu-provider'
+import { LightThemeBoundary } from '../theme/light-theme-boundary'
+import { ThemeToggle } from '../theme/theme-toggle'
 import { SideMenuClickDetector } from './side-menu-click-detector'
 
 export function MobileMenu() {
@@ -75,7 +77,16 @@ export function MobileMenu() {
               <GnbIcon icon="kakao" />
             </Effect>
             <Effect>
-              <GnbIcon icon="theme-light" />
+              <LightThemeBoundary>
+                <ThemeToggle>
+                  <GnbIcon icon="theme-light" />
+                </ThemeToggle>
+              </LightThemeBoundary>
+              <LightThemeBoundary reverse>
+                <ThemeToggle>
+                  <GnbIcon icon="theme-dark" />
+                </ThemeToggle>
+              </LightThemeBoundary>
             </Effect>
           </Flex>
         </SideMenuClickDetector>

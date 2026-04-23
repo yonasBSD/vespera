@@ -3,6 +3,8 @@ import Link from 'next/link'
 
 import { Hamburger } from '../mobile-menu/hamburger'
 import { SheetBoundary, SheetTrigger } from '../sheet'
+import { LightThemeBoundary } from '../theme/light-theme-boundary'
+import { ThemeToggle } from '../theme/theme-toggle'
 import { Effect } from './effect'
 import { GnbIcon } from './gnb-icon'
 import { HeaderContainer } from './header-container'
@@ -69,7 +71,16 @@ export function Header() {
               <GnbIcon icon="kakao" />
             </Effect>
             <Effect>
-              <GnbIcon icon="theme-light" />
+              <LightThemeBoundary>
+                <ThemeToggle>
+                  <GnbIcon icon="theme-light" />
+                </ThemeToggle>
+              </LightThemeBoundary>
+              <LightThemeBoundary reverse>
+                <ThemeToggle>
+                  <GnbIcon icon="theme-dark" />
+                </ThemeToggle>
+              </LightThemeBoundary>
             </Effect>
           </Flex>
         </Flex>
