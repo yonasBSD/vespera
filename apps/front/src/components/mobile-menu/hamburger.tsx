@@ -1,18 +1,29 @@
 'use client'
 
 import { css } from '@devup-ui/react'
+import clsx from 'clsx'
+import { ComponentProps } from 'react'
 
 import { useSheet } from '../sheet'
 
-export function Hamburger() {
+export function Hamburger({ className, ...props }: ComponentProps<'svg'>) {
   const { isOpen } = useSheet()
   return (
     <svg
+      className={clsx(
+        css({
+          color: isOpen ? '#FAFAFA' : '$title',
+          styleOrder: 1,
+          transition: 'all 0.2s ease-in-out',
+        }),
+        className,
+      )}
       fill="none"
       height="24"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"
+      {...props}
     >
       <g clipPath="url(#clip0_81_174)">
         <path
@@ -22,7 +33,7 @@ export function Hamburger() {
             transformOrigin: 'top center',
           })}
           d="M3 5H21"
-          stroke="#10131F"
+          stroke="currentColor"
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="2"
@@ -33,7 +44,7 @@ export function Hamburger() {
             transition: 'opacity 0.2s ease-in-out',
           })}
           d="M3 12H21"
-          stroke="#10131F"
+          stroke="currentColor"
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="2"
@@ -45,7 +56,7 @@ export function Hamburger() {
             transformOrigin: 'bottom center',
           })}
           d="M3 19H21"
-          stroke="#10131F"
+          stroke="currentColor"
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="2"

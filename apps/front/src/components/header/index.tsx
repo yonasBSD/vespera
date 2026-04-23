@@ -1,13 +1,15 @@
-import { Box, Center, css, Flex, Image } from '@devup-ui/react'
+import { Center, css, Flex, Image } from '@devup-ui/react'
 import Link from 'next/link'
 
-import { Hamburger } from '../mobile-menu/hamburger'
 import { SheetBoundary, SheetTrigger } from '../sheet'
 import { LightThemeBoundary } from '../theme/light-theme-boundary'
 import { ThemeToggle } from '../theme/theme-toggle'
 import { Effect } from './effect'
 import { GnbIcon } from './gnb-icon'
 import { HeaderContainer } from './header-container'
+import { HeaderGnbIcon } from './header-gnb-icon'
+import { HeaderHamburger } from './header-hamburger'
+import { HeaderLogoText } from './header-logo-text'
 import { Menu } from './menu'
 
 export function Header() {
@@ -26,15 +28,7 @@ export function Header() {
           <Link href="/">
             <Flex alignItems="center" gap="8px">
               <Image h="28px" src="/icons/logo-image.svg" w="21px" />
-              <Box
-                bg="$title"
-                h="28px"
-                maskImage="url('/icons/logo-text.svg')"
-                maskPos="center"
-                maskRepeat="no-repeat"
-                maskSize="contain"
-                w="112px"
-              />
+              <HeaderLogoText />
             </Flex>
           </Link>
 
@@ -51,12 +45,12 @@ export function Header() {
           <Flex alignItems="center" display={['flex', null, null, 'none']}>
             <SheetBoundary reverse>
               <Effect className={css({ _hover: { bg: 'revert' } })}>
-                <GnbIcon icon="search" />
+                <HeaderGnbIcon icon="search" />
               </Effect>
             </SheetBoundary>
             <SheetTrigger>
               <Effect className={css({ _hover: { bg: 'revert' } })}>
-                <Hamburger />
+                <HeaderHamburger />
               </Effect>
             </SheetTrigger>
           </Flex>

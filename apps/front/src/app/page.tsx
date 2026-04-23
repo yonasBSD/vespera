@@ -1,8 +1,38 @@
 import { Box, Center, css, Flex, Text, VStack } from '@devup-ui/react'
 import { Image } from '@devup-ui/react'
 
+import {
+  ExampleContainer,
+  ExampleImage,
+  ExampleProvider,
+} from '@/components/app/example'
 import { Button } from '@/components/button'
 import { GnbIcon } from '@/components/header/gnb-icon'
+import { HeaderSentinel } from '@/components/header/header-sentinel'
+
+const EXAMPLES = [
+  {
+    id: '1',
+    title: 'How to Use',
+    description:
+      'Lorem ipsum dolor sit amet. Etiam sit amet feugiat turpis. Proin nec ante a sem vestibulum sodales non ut ex.',
+    imageUrl: '/images/hero.webp',
+  },
+  {
+    id: '2',
+    title: 'How to Use',
+    description:
+      'Lorem ipsum dolor sit amet. Etiam sit amet feugiat turpis. Proin nec ante a sem vestibulum sodales non ut ex.',
+    imageUrl: '/images/join-us-bg.webp',
+  },
+  {
+    id: '3',
+    title: 'How to Use',
+    description:
+      'Lorem ipsum dolor sit amet. Etiam sit amet feugiat turpis. Proin nec ante a sem vestibulum sodales non ut ex.',
+    imageUrl: '/images/code.webp',
+  },
+]
 
 export default function HomePage() {
   return (
@@ -17,14 +47,6 @@ export default function HomePage() {
           pt="128px"
           px="40px"
         >
-          <Box
-            bg="url(/icons/image.png) center/cover no-repeat"
-            bottom="2px"
-            h="100%"
-            left="1074px"
-            mixBlendMode="overlay"
-            pos="absolute"
-          />
           <VStack
             alignItems="center"
             gap="$spacingSpacing64"
@@ -97,104 +119,92 @@ export default function HomePage() {
           </VStack>
         </Center>
 
-        <Center
-          bg="#10131F"
-          flexDir="column"
-          overflow="hidden"
-          px="20px"
-          py={['80px', null, null, '120px']}
-        >
-          <VStack gap="40px" maxW={[null, null, null, '1280px']} w="100%">
-            <VStack gap="16px">
-              <Text color="#FFF" typography="h3">
-                Title
-              </Text>
-              <Text color="#FFF" typography="body">
-                Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nullam
-                venenatis ac egestas lacus est nec urna.{' '}
-              </Text>
-            </VStack>
-            <VStack
-              alignItems="center"
-              flexDir={[null, null, null, 'row-reverse']}
-              gap="$spacingSpacing32"
-              pos="relative"
-            >
-              <Flex
-                bg="linear-gradient(90deg, #161A2A 0%, #121F33 100%)"
-                borderRadius="$spacingSpacing08"
-                flexShrink="0"
-                h="424px"
-                justifyContent="center"
-                overflow="hidden"
+        <ExampleProvider defaultSelected={EXAMPLES[0].id} examples={EXAMPLES}>
+          <HeaderSentinel
+            className={css({
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              bg: '#10131F',
+              flexDir: 'column',
+              overflow: 'hidden',
+              px: '20px',
+              py: ['80px', null, null, '120px'],
+            })}
+          >
+            <VStack gap="40px" maxW={[null, null, null, '1280px']} w="100%">
+              <VStack gap="16px">
+                <Text color="#FFF" typography="h3">
+                  Title
+                </Text>
+                <Text color="#FFF" typography="body">
+                  Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+                  Nullam venenatis ac egestas lacus est nec urna.{' '}
+                </Text>
+              </VStack>
+              <VStack
+                alignItems="center"
+                flexDir={[null, null, null, 'row-reverse']}
+                gap="$spacingSpacing32"
                 pos="relative"
-                px="$spacingSpacing20"
-                py="20px"
-                w="624px"
               >
-                <Image
-                  left="76px"
-                  pos="absolute"
-                  right="0px"
-                  src="/images/code.webp"
-                  top="47px"
-                  w="100%"
-                />
-                <Box
-                  bottom="27px"
-                  left="50%"
-                  pos="absolute"
-                  transform="translateX(-50%)"
+                <Flex
+                  bg="linear-gradient(90deg, #161A2A 0%, #121F33 100%)"
+                  borderRadius="$spacingSpacing08"
+                  flexShrink="0"
+                  h={['320px', null, null, '424px']}
+                  justifyContent="center"
+                  overflow="hidden"
+                  pos="relative"
+                  px="$spacingSpacing20"
+                  py="20px"
+                  w={['100%', null, null, '624px']}
                 >
-                  <Button>Learn more</Button>
-                </Box>
-              </Flex>
-              <VStack gap="$spacingSpacing12" w="100%">
-                {[1, 2, 3].map((i) => (
-                  <Flex
-                    key={i}
-                    _hover={{
-                      bg: '#1F2737',
-                    }}
-                    // selected:
-                    //   'linear-gradient(90deg, #161A2A 0%, #121F33 100%)',
-                    bg="linear-gradient(90deg, #161A2A 0%, #121F33 100%)"
-                    border="solid 2px $caption"
-                    borderRadius="$spacingSpacing08"
-                    overflow="hidden"
-                    px="$spacingSpacing24"
-                    py="$spacingSpacing20"
-                    transition="all .1s"
+                  <ExampleImage />
+                  <Box
+                    bottom="27px"
+                    left="50%"
+                    pos="absolute"
+                    transform="translateX(-50%)"
                   >
-                    <VStack
-                      flex="1"
-                      gap={['10px', null, null, '$spacingSpacing12']}
-                    >
-                      <Text color="#FFF" typography="title">
-                        How to Use
-                      </Text>
-                      <Text color="#FFF" typography="body">
-                        Lorem ipsum dolor sit amet. Etiam sit amet feugiat
-                        turpis. Proin nec ante a sem vestibulum sodales non ut
-                        ex.{' '}
-                      </Text>
-                    </VStack>
-                  </Flex>
-                ))}
+                    <Button>Learn more</Button>
+                  </Box>
+                </Flex>
+                <VStack gap="$spacingSpacing12" w="100%">
+                  {EXAMPLES.map(({ id, title, description }) => (
+                    <ExampleContainer key={id} value={id}>
+                      <VStack
+                        flex="1"
+                        gap={['10px', null, null, '$spacingSpacing12']}
+                      >
+                        <Text color="#FFF" typography="title">
+                          {title}
+                        </Text>
+                        <Text color="#FFF" typography="body">
+                          {description}
+                        </Text>
+                      </VStack>
+                    </ExampleContainer>
+                  ))}
+                </VStack>
               </VStack>
             </VStack>
-          </VStack>
-        </Center>
+          </HeaderSentinel>
+        </ExampleProvider>
 
-        <VStack
-          alignItems={[null, null, null, 'flex-end']}
-          bg="#000"
-          gap="40px"
-          h={['600px', null, null, 'unset']}
-          overflow="hidden"
-          pos="relative"
-          px={['20px', null, null, '40px']}
-          py={['80px', null, null, '120px']}
+        <HeaderSentinel
+          className={css({
+            alignItems: [null, null, null, 'flex-end'],
+            bg: '#000',
+            gap: '40px',
+            h: ['600px', null, null, 'unset'],
+            overflow: 'hidden',
+            pos: 'relative',
+            px: ['20px', null, null, '40px'],
+            py: ['80px', null, null, '120px'],
+            display: 'flex',
+            flexDir: 'column',
+          })}
         >
           <VStack
             gap="40px"
@@ -274,7 +284,7 @@ export default function HomePage() {
             pos="absolute"
             src="/images/join-us-bg.webp"
           />
-        </VStack>
+        </HeaderSentinel>
       </Box>
     </>
   )

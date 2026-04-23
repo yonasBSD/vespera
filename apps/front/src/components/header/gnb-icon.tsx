@@ -37,6 +37,7 @@ export function GnbIcon({
       maskRepeat="no-repeat"
       maskSize="contain"
       styleOrder={1}
+      transition="all 0.2s ease-in-out"
       {...props}
     />
   )
