@@ -9,6 +9,8 @@ import {
 } from '@/components/table-of-contents/iterator'
 import { SIDE_MENU_ITEMS } from '@/constants'
 
+import { Edit } from './_components/edit'
+
 export default function PageLayout({
   children,
 }: {
@@ -82,7 +84,7 @@ export default function PageLayout({
                 </TableOfContentsIterator>
               </VStack>
             </VStack>
-            {/* <Edit property1="default" /> */}
+            <Edit />
           </VStack>
         </Box>
       </TableOfContentsProvider>

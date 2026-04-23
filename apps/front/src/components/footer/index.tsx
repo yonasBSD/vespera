@@ -36,7 +36,7 @@ export function Footer() {
             DEVFIVE{' '}
           </Text>
           <Box
-            bg="$base"
+            bg="#FFF"
             boxSize="24px"
             maskImage="url('/icons/external-link.svg')"
             maskPos="center"
